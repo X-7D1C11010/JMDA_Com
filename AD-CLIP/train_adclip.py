@@ -56,6 +56,10 @@ from adclip_model import (
     PromptLearner, TextEncoder, CustomCLIP, entropy_loss
 )
 
+# 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from data_paths import remap_data_path
+
 
 class ImageListDataset(Dataset):
     def __init__(self, list_path, transform=None):
@@ -66,7 +70,7 @@ class ImageListDataset(Dataset):
                 if not line:
                     continue
                 parts = line.split()
-                self.samples.append((parts[0], int(parts[1])))
+                self.samples.append((remap_data_path(parts[0]), int(parts[1])))
         self.transform = transform
 
     def __len__(self):
@@ -125,8 +129,11 @@ def main():
     parser.add_argument('--epochs', type=int, default=3)
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=5e-4)
-    parser.add_argument('--data-dir', type=str, default=r'd:\Code\JMDA_Com\data_lists')
-    parser.add_argument('--save-dir', type=str, default=r'd:\Code\JMDA_Com\AD-CLIP\output')
+    parser.add_argument('--data-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                             'data_lists'))
+    parser.add_argument('--save-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)

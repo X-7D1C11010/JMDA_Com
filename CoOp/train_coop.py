@@ -23,6 +23,10 @@ sys.path.insert(0, COOP_DIR)
 import clip as clip_pkg
 from coop_model import CustomCLIP
 
+# 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from data_paths import remap_data_path
+
 
 class SimpleCfg:
     class INPUT:
@@ -51,7 +55,7 @@ class ImageListDataset(Dataset):
                 if not line:
                     continue
                 parts = line.split()
-                self.samples.append((parts[0], int(parts[1])))
+                self.samples.append((remap_data_path(parts[0]), int(parts[1])))
         self.transform = transform
 
     def __len__(self):
@@ -86,8 +90,11 @@ def main():
     parser.add_argument('--epochs', type=int, default=3)
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=2e-3)
-    parser.add_argument('--data-dir', type=str, default=r'd:\Code\JMDA_Com\data_lists')
-    parser.add_argument('--save-dir', type=str, default=r'd:\Code\JMDA_Com\CoOp\output')
+    parser.add_argument('--data-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                             'data_lists'))
+    parser.add_argument('--save-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)

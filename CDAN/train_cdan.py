@@ -22,6 +22,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pytorch'))
 from network import ResNetFc, AdversarialNetwork, RandomLayer, calc_coeff
 from loss import CDAN, Entropy
 
+# 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from data_paths import remap_data_path
+
 
 class ImageListDataset(Dataset):
     def __init__(self, list_path, transform=None):
@@ -32,7 +36,7 @@ class ImageListDataset(Dataset):
                 if not line:
                     continue
                 parts = line.split()
-                self.samples.append((parts[0], int(parts[1])))
+                self.samples.append((remap_data_path(parts[0]), int(parts[1])))
         self.transform = transform
 
     def __len__(self):
@@ -84,8 +88,14 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--method', type=str, default='CDAN',
                         choices=['CDAN', 'CDAN+E'])
-    parser.add_argument('--data-dir', type=str, default=r'd:\Code\JMDA_Com\data_lists')
-    parser.add_argument('--save-dir', type=str, default=r'd:\Code\JMDA_Com\CDAN\output')
+    parser.add_argument('--data-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                             'data_lists'))
+    parser.add_argument('--save-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
+    parser.add_argument('--efficiency_output_dir', type=str, default=None,
+                        help='Directory for efficiency logging output')
+    parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -129,7 +139,18 @@ def main():
 
     best_acc = 0.0
     iter_num = 0
+    # Efficiency logging (optional, does not affect training)
+    eff = None
+    if args.efficiency_output_dir:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+        from efficiency_common import EfficiencyLogger
+        eff = EfficiencyLogger(args.efficiency_output_dir, 'CDAN',
+                                seed=args.seed, device=str(device), modalities='VIS')
+        print(f'Efficiency logging -> {eff.run_dir}')
+
     for epoch in range(args.epochs):
+        if eff:
+            eff.epoch_start(epoch)
         model.train()
         ad_net.train()
         src_iter = iter(src_loader)
@@ -138,6 +159,8 @@ def main():
 
         for i in range(n_batches):
             iter_num += 1
+            if eff:
+                eff.step_start()
             try:
                 src_imgs, src_labels = next(src_iter)
             except StopIteration:
@@ -151,6 +174,9 @@ def main():
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
             tgt_imgs = tgt_imgs.to(device)
+
+            if eff:
+                eff.dataloader_done()
 
             # Concatenate source and target
             inputs = torch.cat((src_imgs, tgt_imgs), dim=0)
@@ -173,6 +199,8 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if eff:
+                eff.step_end()
 
             if (i + 1) % 10 == 0:
                 print(f'  Epoch [{epoch+1}/{args.epochs}] batch [{i+1}/{n_batches}] '
@@ -183,7 +211,11 @@ def main():
         if acc > best_acc:
             best_acc = acc
             torch.save(model.state_dict(), os.path.join(args.save_dir, f'cdan_{args.target}_best.pth'))
+        if eff:
+            eff.epoch_end(epoch)
 
+    if eff:
+        eff.finalize(extra_metrics={'best_acc': best_acc, 'target': args.target})
     print(f'\nCDAN smoke test finished. Best target val accuracy ({args.target}): {best_acc:.4f}')
 
 

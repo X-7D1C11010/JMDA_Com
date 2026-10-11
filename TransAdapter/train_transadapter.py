@@ -20,6 +20,10 @@ from torch.autograd import Function
 from PIL import Image
 import timm
 
+# 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from data_paths import remap_data_path
+
 
 class ReverseLayerF(Function):
     @staticmethod
@@ -42,7 +46,7 @@ class ImageListDataset(Dataset):
                 if not line:
                     continue
                 parts = line.split()
-                self.samples.append((parts[0], int(parts[1])))
+                self.samples.append((remap_data_path(parts[0]), int(parts[1])))
         self.transform = transform
 
     def __len__(self):
@@ -126,8 +130,14 @@ def main():
     parser.add_argument('--epochs', type=int, default=3)
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=5e-5)
-    parser.add_argument('--data-dir', type=str, default=r'd:\Code\JMDA_Com\data_lists')
-    parser.add_argument('--save-dir', type=str, default=r'd:\Code\JMDA_Com\TransAdapter\output')
+    parser.add_argument('--data-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                             'data_lists'))
+    parser.add_argument('--save-dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
+    parser.add_argument('--efficiency_output_dir', type=str, default=None,
+                        help='Directory for efficiency logging output')
+    parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -160,7 +170,18 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     best_acc = 0.0
+    # Efficiency logging (optional, does not affect training)
+    eff = None
+    if args.efficiency_output_dir:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+        from efficiency_common import EfficiencyLogger
+        eff = EfficiencyLogger(args.efficiency_output_dir, 'TransAdapter',
+                                seed=args.seed, device=str(device), modalities='VIS')
+        print(f'Efficiency logging -> {eff.run_dir}')
+
     for epoch in range(args.epochs):
+        if eff:
+            eff.epoch_start(epoch)
         model.train()
         p = (epoch + 1) / args.epochs
         alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
@@ -170,6 +191,8 @@ def main():
         n_batches = min(len(src_loader), len(tgt_loader))
 
         for i in range(n_batches):
+            if eff:
+                eff.step_start()
             try:
                 src_imgs, src_labels = next(src_iter)
             except StopIteration:
@@ -183,6 +206,9 @@ def main():
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
             tgt_imgs = tgt_imgs.to(device)
+
+            if eff:
+                eff.dataloader_done()
 
             # Source classification
             src_class_out, src_domain_out, _ = model(src_imgs, alpha)
@@ -200,6 +226,8 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if eff:
+                eff.step_end()
 
             if (i + 1) % 5 == 0:
                 print(f'  Epoch [{epoch+1}/{args.epochs}] batch [{i+1}/{n_batches}] '
@@ -210,7 +238,11 @@ def main():
         if acc > best_acc:
             best_acc = acc
             torch.save(model.state_dict(), os.path.join(args.save_dir, f'transadapter_{args.target}_best.pth'))
+        if eff:
+            eff.epoch_end(epoch)
 
+    if eff:
+        eff.finalize(extra_metrics={'best_acc': best_acc, 'target': args.target})
     print(f'\nTransAdapter smoke test finished. Best target val accuracy ({args.target}): {best_acc:.4f}')
 
 
