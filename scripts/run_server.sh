@@ -10,8 +10,8 @@
 # 环境变量:
 #   JMDA_DATA_ROOT  数据根目录（默认 /mnt/data/lixiang/data/Data）
 #   PYTHON          Python 解释器（默认 python）
-#   JMDA_DIR        JMDA 自身仓库路径（默认与本仓库同级的 ../JMDA）
 #
+# 本仓库 JMDA-Net/ 子目录为本文方法（JMDA-Net）的源码镜像，与对比方法目录区分。
 # 每次运行的日志 -> server_logs/<protocol>/，效率结果 -> efficiency_results/<protocol>/
 # =============================================================================
 set -uo pipefail
@@ -26,11 +26,7 @@ esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 PYTHON="${PYTHON:-python}"
-if [ -d "${JMDA_DIR:-}" ]; then
-  JMDA_DIR_FULL="$JMDA_DIR"
-else
-  JMDA_DIR_FULL="$HERE/../JMDA"
-fi
+JMDA_NET_DIR="$HERE/JMDA-Net"
 
 LOG_ROOT="$HERE/server_logs/$PROTOCOL"
 EFF_DIR="$HERE/efficiency_results/$PROTOCOL"
@@ -72,9 +68,9 @@ if [ "$PROTOCOL" = "sda" ]; then
     run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc_sda.py"               --target "$t" "${COMMON[@]}"
     run "modfinity_$t"    "$PYTHON" "$HERE/Modfinity/train_modfinity_sda.py"   --target "$t" "${COMMON[@]}"
     run "boomda_$t"       "$PYTHON" "$HERE/Boomda/train_boomda_sda.py"         --target "$t" "${COMMON[@]}"
-    # JMDA-Net-SDA（位于独立 JMDA 仓库，同级目录）
+    # JMDA-Net-SDA（本文方法，仓库内 JMDA-Net/ 目录）
     run "jmda_net_sda_$t" bash -c \
-      "cd '$JMDA_DIR_FULL' && JMDA_SDA_LIST_DIR='$HERE/data_lists' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS'"
+      "cd '$JMDA_NET_DIR' && JMDA_SDA_LIST_DIR='$HERE/data_lists' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS'"
   done
 
 elif [ "$PROTOCOL" = "uda" ]; then
@@ -89,9 +85,9 @@ elif [ "$PROTOCOL" = "uda" ]; then
     run "boomda_$t"       "$PYTHON" "$HERE/Boomda/train_boomda_jmda.py"    --target "$t" "${COMMON[@]}"
     run "transadapter_$t" "$PYTHON" "$HERE/TransAdapter/train_transadapter.py" --target "$t" "${COMMON[@]}"
     run "adclip_$t"       "$PYTHON" "$HERE/AD-CLIP/train_adclip.py"         --target "$t" --epochs "$EPOCHS"
-    # JMDA-Net-UDA：目标标签比例=0、目标分类权重=0（独立 JMDA 仓库）
+    # JMDA-Net-UDA：目标标签比例=0、目标分类权重=0（本文方法，仓库内 JMDA-Net/ 目录）
     run "jmda_net_uda_$t" bash -c \
-      "cd '$JMDA_DIR_FULL' && '$PYTHON' Ablation/module_ablation.py \
+      "cd '$JMDA_NET_DIR' && '$PYTHON' Ablation/module_ablation.py \
          --source_root '$DATA_ROOT/晴天' --target_root '$DATA_ROOT/$(
            case "$t" in backlight) echo 逆光;; rainy) echo 雨天;; foggy) echo 雾天;; dark) echo 黑天;; esac)' \
          --epochs '$EPOCHS' \

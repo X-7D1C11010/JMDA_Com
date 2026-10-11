@@ -420,7 +420,7 @@ python D:\Code\JMDA_Com\run_new_methods.py
 - SDA 基线（新目录 **`SDA_Baselines/`**）：`sda_baselines_impl.py`、`train_source_only_sda.py`、`train_joint_training.py`、`train_target_only.py`
 - 工具：`tools/make_sda_lists.py`、`tools/data_paths.py`（跨平台路径重映射）、`tools/efficiency_common.py`、`tools/benchmark_efficiency.py`（protocol/标签预算/骨干字段）
 - 服务器批量入口：`scripts/run_server.sh`
-- JMDA-Net-SDA 入口位于独立 JMDA 仓库：`main_sda.py`（新文件，不动 `main.py`）；JMDA-Net-UDA 入口为 `Ablation/module_ablation.py --target_label_ratio 0 --target_cls_weight 0`
+- JMDA-Net 本体源码镜像（2026-10 起统一归入本仓库，与对比方法目录区分）：顶层 **`JMDA-Net/`** 目录。其中 `JMDA-Net/main_sda.py` 为 JMDA-Net-SDA 入口（原 `main.py` 未修改），`JMDA-Net/Ablation/module_ablation.py` 为 JMDA-Net-UDA 入口（`--target_label_ratio 0 --target_cls_weight 0`）。镜像仅含源码，遵循 JMDA-Net 自身 `.gitignore`，第三方实验目录（MambaOut-main 等）、数据、日志、权重、文档均不纳入；镜像内的 main_sda.py 已适配仓库布局（自动定位 `../data_lists` 与 `../tools`，数据根回退 `/mnt/data/lixiang/data/Data`）
 
 ### 11.4 跨平台路径重映射（本地零影响）
 
@@ -446,28 +446,28 @@ python D:\Code\JMDA_Com\run_new_methods.py
 
 ### 11.6 服务器正式训练步骤
 
-服务器数据根：`/mnt/data/lixiang/data/Data`（含 黑天/逆光/晴天/雾天/雨天/AIS/M4-SAR）。仓库布局：`~/lx/JMDA` 与 `~/lx/JMDA_Com` 同级。
+服务器数据根：`/mnt/data/lixiang/data/Data`（含 黑天/逆光/晴天/雾天/雨天/AIS/M4-SAR）。自 2026-10 起，JMDA-Net 本体源码也在本仓库 `JMDA-Net/` 目录内，服务器只需克隆 JMDA_Com 一个仓库。
 
 ```bash
-# 1) 拉取两个仓库最新代码（JMDA_Com 与 JMDA）
+# 1) 拉取最新代码
 cd ~/lx/JMDA_Com && git pull
-cd ~/lx/JMDA     && git pull
 
 # 2) 指定数据根（run_server.sh 默认已是该路径，此处显式导出更稳妥）
 export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data
 
 # 3) 分协议运行（默认 100 epochs；日志 -> server_logs/<protocol>/，
 #    效率结果 -> efficiency_results/<protocol>/）
-cd ~/lx/JMDA_Com
 bash scripts/run_server.sh sda 100     # SDA 论文主表（含 JMDA-Net-SDA）
 bash scripts/run_server.sh uda 100     # 严格 UDA（含 JMDA-Net-UDA）
 bash scripts/run_server.sh vlm 100     # CoOp，独立 VLM 表
 ```
 
-说明：脚本自动编排全部方法 × 4 目标域（backlight/rainy/foggy/dark）；JMDA-Net-SDA 与 JMDA-Net-UDA 通过 `JMDA_DIR`（默认 `../JMDA`）调用独立 JMDA 仓库。单方法也可直接运行，例如：
+说明：脚本自动编排全部方法 × 4 目标域（backlight/rainy/foggy/dark）；JMDA-Net-SDA 与 JMDA-Net-UDA 调用本仓库 `JMDA-Net/` 目录中的代码。单方法也可直接运行，例如：
 
 ```bash
+cd JMDA-Net
 JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data \
-  python DANN/train_dann_sda.py --target backlight --epochs 100
+  JMDA_SDA_LIST_DIR=../data_lists \
+  python main_sda.py --target backlight --epochs 100
 ```
 
