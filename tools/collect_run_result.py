@@ -17,6 +17,30 @@ from datetime import datetime
 TARGET_NAMES = ('backlight', 'rainy', 'foggy', 'dark')
 
 
+CSV_FIELDNAMES = [
+    'timestamp', 'run_tag', 'method', 'protocol', 'target', 'seed', 'epochs',
+    'status', 'exit_code', 'duration_seconds', 'final_acc', 'best_acc',
+    'precision_macro', 'recall_macro', 'f1_macro', 'accuracy_values_count',
+    'log_path', 'efficiency_dir',
+]
+
+
+def _failure_summary(text, status, max_lines=30, max_chars=6000):
+    """Keep a compact traceback tail in JSON when remote logs are not copied."""
+    if status != 'failed':
+        return None, None
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    tail = '\n'.join(lines[-max_lines:])[-max_chars:]
+    matches = re.findall(
+        r'(?m)^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt)):\s*(.*)$',
+        text,
+    )
+    if matches:
+        error_type, message = matches[-1]
+        return error_type, (message.strip() or tail)
+    return 'ProcessError', tail or 'Process failed without captured output.'
+
+
 def _last_float(text, patterns):
     matches = []
     for pattern in patterns:
@@ -98,6 +122,7 @@ def main():
 
     method, target = _infer_method_target(args.run_tag)
     metrics = parse_metrics(text)
+    error_type, error_summary = _failure_summary(text, args.status)
     timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     record = {
         'timestamp': timestamp,
@@ -118,6 +143,8 @@ def main():
         'accuracy_values_count': metrics['accuracy_values_count'],
         'log_path': os.path.abspath(args.log),
         'efficiency_dir': os.path.abspath(args.efficiency_dir) if args.efficiency_dir else '',
+        'error_type': error_type,
+        'error_summary': error_summary,
     }
 
     protocol_dir = os.path.join(args.results_dir, args.protocol.lower())
@@ -127,13 +154,13 @@ def main():
         json.dump(record, handle, ensure_ascii=False, indent=2)
 
     csv_path = os.path.join(args.results_dir, 'runs.csv')
-    fieldnames = list(record.keys())
     write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
     with open(csv_path, 'a', encoding='utf-8-sig', newline='') as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDNAMES,
+                                extrasaction='ignore')
         if write_header:
             writer.writeheader()
-        writer.writerow(record)
+        writer.writerow({name: record.get(name) for name in CSV_FIELDNAMES})
 
     print(json.dumps(record, ensure_ascii=False))
 

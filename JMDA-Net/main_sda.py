@@ -25,6 +25,7 @@ Environment overrides (same style as main.py): JMDA_DATA_ROOT, JMDA_SOURCE_ROOT,
 JMDA_EFFICIENCY_OUTPUT_DIR, JMDA_TRANSPORT_MODE, JMDA_OT_*.
 """
 import os
+import ntpath
 import argparse
 import torch
 import torch.nn as nn
@@ -106,12 +107,26 @@ def _remap_data_path(path):
     root = os.environ.get('JMDA_DATA_ROOT', '').strip()
     if not root:
         return path
-    p_norm = os.path.normcase(os.path.normpath(path))
+    # Shared lists contain Windows separators even when training on Linux.
+    # Parse the stored path with ntpath, then join its relative components
+    # using the host OS path implementation.
+    p_norm = ntpath.normcase(ntpath.normpath(str(path).replace('/', '\\')))
     for base in (r'd:\Code\JMDA-Net\Data', r'D:\Code\JMDA-Net\Data'):
-        b_norm = os.path.normcase(os.path.normpath(base))
-        if p_norm == b_norm or p_norm.startswith(b_norm + os.sep):
-            rel = os.path.relpath(p_norm, b_norm)
-            return os.path.normpath(os.path.join(root, rel))
+        b_norm = ntpath.normcase(ntpath.normpath(base))
+        try:
+            if ntpath.commonpath([p_norm, b_norm]) != b_norm:
+                continue
+        except ValueError:
+            continue
+        rel = ntpath.relpath(p_norm, b_norm)
+        if rel == '.':
+            return os.path.normpath(root)
+        rel_parts = [
+            part for part in rel.split('\\') if part not in ('', '.')
+        ]
+        if not rel_parts or any(part == '..' for part in rel_parts):
+            continue
+        return os.path.normpath(os.path.join(root, *rel_parts))
     return path
 
 

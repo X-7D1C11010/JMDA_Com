@@ -16,6 +16,7 @@ data_lists/*.txt 在生成时写死了本机 Windows 数据根
 * ``data_path(*parts)``：拼接当前数据根下的文件（如 AIS .mat）。
 """
 import os
+import ntpath
 
 # list 文件生成时写入的本机数据根（Windows，大小写两种写法）
 _LIST_DATA_ROOTS = (
@@ -29,18 +30,44 @@ def get_data_root():
     return os.environ.get('JMDA_DATA_ROOT', '').strip()
 
 
+def _relative_data_parts(path):
+    """Return path components relative to a known Windows data root.
+
+    The list files always store Windows paths.  Parsing them with ``os.path``
+    on Linux is incorrect because backslashes are not separators there.
+    ``ntpath`` gives identical results on Windows and Linux; only the final
+    join is performed with the host OS path implementation.
+    """
+    stored = ntpath.normcase(
+        ntpath.normpath(str(path).strip().replace('/', '\\'))
+    )
+    for base in _LIST_DATA_ROOTS:
+        base_norm = ntpath.normcase(ntpath.normpath(base))
+        try:
+            if ntpath.commonpath([stored, base_norm]) != base_norm:
+                continue
+        except ValueError:
+            continue
+        relative = ntpath.relpath(stored, base_norm)
+        if relative == '.':
+            return ()
+        parts = tuple(
+            part for part in relative.split('\\') if part not in ('', '.')
+        )
+        if parts and not any(part == '..' for part in parts):
+            return parts
+    return None
+
+
 def remap_data_path(path):
     """将 list 中的绝对路径重映射到当前数据根；无需重映射时原样返回。"""
     root = get_data_root()
     if not root:
         return path
-    p_norm = os.path.normcase(os.path.normpath(path))
-    for base in _LIST_DATA_ROOTS:
-        b_norm = os.path.normcase(os.path.normpath(base))
-        if p_norm == b_norm or p_norm.startswith(b_norm + os.sep):
-            rel = os.path.relpath(p_norm, b_norm)
-            return os.path.normpath(os.path.join(root, rel))
-    return path
+    parts = _relative_data_parts(path)
+    if parts is None:
+        return path
+    return os.path.normpath(os.path.join(root, *parts))
 
 
 def data_path(*parts):

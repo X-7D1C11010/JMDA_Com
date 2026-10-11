@@ -39,13 +39,40 @@ export JMDA_DATA_ROOT="$DATA_ROOT"
 export JMDA_EFFICIENCY_OUTPUT_DIR="$EFF_DIR"
 mkdir -p "$LOG_ROOT" "$EFF_DIR" "$RESULTS_DIR"
 
-TARGETS=(backlight rainy foggy dark)
+read -r -a TARGETS <<< "${JMDA_TARGETS:-backlight rainy foggy dark}"
+VALID_TARGETS=" backlight rainy foggy dark "
+for target in "${TARGETS[@]}"; do
+  if [[ "$VALID_TARGETS" != *" $target "* ]]; then
+    echo "未知目标域: $target（允许: backlight rainy foggy dark）"
+    exit 1
+  fi
+done
 
 if [ ! -d "$DATA_ROOT" ]; then
   echo "数据根不存在: $DATA_ROOT（可用 JMDA_DATA_ROOT 指定）"; exit 1
 fi
 echo "协议=$PROTOCOL 轮数=$EPOCHS 数据根=$DATA_ROOT"
 echo "日志目录=$LOG_ROOT"
+
+PREFLIGHT_ARGS=(
+  --protocol "$PROTOCOL"
+  --data-root "$DATA_ROOT"
+  --jmda-net-dir "$JMDA_NET_DIR"
+  --targets "${TARGETS[@]}"
+)
+if [ "${JMDA_REQUIRE_CUDA:-1}" = "1" ]; then
+  PREFLIGHT_ARGS+=(--require-cuda)
+fi
+if [ "${JMDA_CHECK_ALL_PATHS:-0}" = "1" ]; then
+  PREFLIGHT_ARGS+=(--check-all-paths)
+fi
+echo "运行公共配置预检..."
+if ! "$PYTHON" "$HERE/tools/preflight_server.py" "${PREFLIGHT_ARGS[@]}"; then
+  echo "公共配置预检失败；尚未启动任何训练任务。"
+  exit 1
+fi
+
+FAILURES=0
 
 run() {  # run "<log-tag>" <cmd...>
   local tag="$1"; shift
@@ -61,6 +88,10 @@ run() {  # run "<log-tag>" <cmd...>
     exit_code=$?
     status="failed"
     echo "    FAILED: $tag (见 $log_path)"
+    echo "    ---- error tail ----"
+    tail -n 30 "$log_path" || true
+    echo "    --------------------"
+    FAILURES=$((FAILURES + 1))
   fi
   finished="$(date +%s)"
   elapsed=$((finished - started))
@@ -98,7 +129,7 @@ if [ "$PROTOCOL" = "sda" ]; then
     run "boomda_$t"       "$PYTHON" "$HERE/Boomda/train_boomda_sda.py"         --target "$t" "${COMMON[@]}"
     # JMDA-Net-SDA（本文方法，仓库内 JMDA-Net/ 目录）
     run "jmda_net_sda_$t" bash -c \
-      "cd '$JMDA_NET_DIR' && JMDA_SDA_LIST_DIR='$HERE/data_lists' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS' --sda-seed '$SEED'"
+      "cd '$JMDA_NET_DIR' && JMDA_SDA_LIST_DIR='$HERE/data_lists' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS' --num-iterations '${JMDA_NUM_ITERATIONS:-5}' --sda-seed '$SEED'"
   done
 
 elif [ "$PROTOCOL" = "jmda_uda" ]; then
@@ -141,4 +172,8 @@ else
   done
 fi
 
-echo "全部任务结束（$PROTOCOL）。失败项见上方 FAILED 行。"
+echo "阶段结束（$PROTOCOL）：失败任务数=$FAILURES。"
+if [ "$FAILURES" -ne 0 ]; then
+  exit 1
+fi
+echo "全部任务成功（$PROTOCOL）。"
