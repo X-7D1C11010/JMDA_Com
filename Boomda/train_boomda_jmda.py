@@ -96,13 +96,22 @@ class PairedMultimodalDataset(Dataset):
             return None
         return os.path.join(ir_dir, ir_files[i])
 
-    def __init__(self, list_path, ais_data, ais_labels, transform=None):
+    def __init__(self, list_path, ais_data=None, ais_labels=None, transform=None,
+                 use_ais=False, ais_dim=23040):
         self.transform = transform
+        self.use_ais = bool(use_ais)
+        self.ais_data = ais_data
+        self.ais_dim = int(ais_dim)
         self.samples = []  # (vis_path, ir_path, label, ais_index)
-        per_class = {}
-        for c in range(14):
-            idx = np.where(ais_labels == c)[0]
-            per_class[c] = idx
+        if self.use_ais:
+            if ais_data is None or ais_labels is None:
+                raise ValueError('use_ais=True requires AIS data and labels')
+            self.ais_dim = int(ais_data.shape[1])
+            per_class = {
+                c: np.where(ais_labels == c)[0] for c in range(14)
+            }
+        else:
+            per_class = {c: np.empty(0, dtype=np.int64) for c in range(14)}
         counters = {c: 0 for c in range(14)}
         with open(list_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -116,7 +125,9 @@ class PairedMultimodalDataset(Dataset):
                     continue
                 c = min(label, 13)
                 pool = per_class[c]
-                if len(pool) == 0:
+                if not self.use_ais:
+                    ais_idx = -1
+                elif len(pool) == 0:
                     ais_idx = 0
                 else:
                     ais_idx = int(pool[counters[c] % len(pool)])
@@ -133,7 +144,13 @@ class PairedMultimodalDataset(Dataset):
         if self.transform:
             vis = self.transform(vis)
             ir = self.transform(ir)
-        ais = torch.from_numpy(ais_data[ais_idx].copy())
+        if self.use_ais:
+            ais = torch.from_numpy(self.ais_data[ais_idx].copy())
+        else:
+            # Weather data currently has no trustworthy sample-level AIS
+            # pairing. Keep the AIS branch shape-compatible without injecting
+            # label-selected signals; --use-ais re-enables the real input.
+            ais = torch.zeros(self.ais_dim, dtype=torch.float32)
         return {'vision': vis, 'ir': ir, 'ais': ais, 'label': label}
 
 
@@ -231,9 +248,10 @@ class BoomdaJMDA(nn.Module):
     def __init__(self, opt):
         super().__init__()
         self.opt = opt
-        self.modality = self.MODALITIES
+        self.use_ais = bool(opt.use_ais)
+        self.modality = self.MODALITIES if self.use_ais else 'VL'
         all_len = len(self.modality) + 1
-        scalet = [1.0, 1.0, 1.0, 1.0]
+        scalet = [1.0 if self.use_ais else 0.0, 1.0, 1.0, 1.0]
         self.scale = np.array(scalet) / all_len
         self.d_f = 32
         self.pl_num = 0
@@ -257,20 +275,26 @@ class BoomdaJMDA(nn.Module):
         self.netA_encoder = AISEncoder(out_dim=embd_a)
         self.netV_encoder = IRVisEncoder(out_dim=embd_v)
         self.netL_encoder = IRVisEncoder(out_dim=embd_l)
+        if not self.use_ais:
+            self.netA_encoder.requires_grad_(False)
+            self.netCA.requires_grad_(False)
 
         if opt.isTrain:
             self.criterion_ce = nn.CrossEntropyLoss()
             self.criterion_domdisc = nn.CrossEntropyLoss()
             parameters = [
                 {'params': self.netC.parameters(), 'lr': opt.lr},
-                {'params': self.netCA.parameters(), 'lr': opt.lr},
                 {'params': self.netCV.parameters(), 'lr': opt.lr},
                 {'params': self.netCL.parameters(), 'lr': opt.lr},
                 {'params': self.netdiscCom.parameters(), 'lr': opt.lr},
-                {'params': self.netA_encoder.parameters(), 'lr': opt.enc_lr},
                 {'params': self.netV_encoder.parameters(), 'lr': opt.enc_lr},
                 {'params': self.netL_encoder.parameters(), 'lr': opt.enc_lr},
             ]
+            if self.use_ais:
+                parameters.extend([
+                    {'params': self.netCA.parameters(), 'lr': opt.lr},
+                    {'params': self.netA_encoder.parameters(), 'lr': opt.enc_lr},
+                ])
             self.optimizer = torch.optim.Adam(parameters, betas=(opt.beta1, 0.999))
         self.scaler = GradScaler()
         self.is_amp = 1
@@ -290,8 +314,12 @@ class BoomdaJMDA(nn.Module):
         self.bs_s, self.bs_t = self.label.shape[0], self.label_t.shape[0]
 
     def forward(self):
-        self.feat_A = self.netA_encoder(self.ais)
-        self.feat_A_t = self.netA_encoder(self.ais_t)
+        if self.use_ais:
+            self.feat_A = self.netA_encoder(self.ais)
+            self.feat_A_t = self.netA_encoder(self.ais_t)
+        else:
+            self.feat_A = self.visual.new_zeros((self.bs_s, self.opt.embd_size_a))
+            self.feat_A_t = self.visual_t.new_zeros((self.bs_t, self.opt.embd_size_a))
         self.feat_V = self.netV_encoder(self.visual)
         self.feat_V_t = self.netV_encoder(self.visual_t)
         self.feat_L = self.netL_encoder(self.ir)
@@ -321,13 +349,14 @@ class BoomdaJMDA(nn.Module):
         dim_av = dim_a + self.opt.embd_size_v
         dim_avl = dim_av + self.opt.embd_size_l
 
-        self.feat_A_r = self.feat_all[0:bs_s, 0:dim_a]
-        self.feat_A_t_r = self.feat_all[bs_s:bs_a, 0:dim_a]
-        self.logits_A, self.fa = self.netCA(self.feat_A_r)
-        self.pred_A = F.softmax(self.logits_A, dim=-1)
-        self.logits_A_t, self.fa_t = self.netCA(self.feat_A_t_r)
-        self.pred_A_t = F.softmax(self.logits_A_t, dim=-1)
-        self.pred_tf += p2oh(self.pred_A_t.detach())
+        if self.use_ais:
+            self.feat_A_r = self.feat_all[0:bs_s, 0:dim_a]
+            self.feat_A_t_r = self.feat_all[bs_s:bs_a, 0:dim_a]
+            self.logits_A, self.fa = self.netCA(self.feat_A_r)
+            self.pred_A = F.softmax(self.logits_A, dim=-1)
+            self.logits_A_t, self.fa_t = self.netCA(self.feat_A_t_r)
+            self.pred_A_t = F.softmax(self.logits_A_t, dim=-1)
+            self.pred_tf += p2oh(self.pred_A_t.detach())
 
         self.feat_V_r = self.feat_all[0:bs_s, dim_a:dim_av]
         self.feat_V_t_r = self.feat_all[bs_s:bs_a, dim_a:dim_av]
@@ -346,7 +375,10 @@ class BoomdaJMDA(nn.Module):
         self.pred_tf += p2oh(self.pred_L_t.detach())
 
         self.domainCom = self.netdiscCom(self.feat_all, self.alpha)
-        self.index_pl = index_rely(self.pred_tf)
+        # Preserve the original 3/4.5 consensus ratio when AIS is inactive:
+        # active max vote becomes 3.5, so the nearest attainable threshold is 2.5.
+        vote_threshold = 3.0 if self.use_ais else 2.5
+        self.index_pl = index_rely(self.pred_tf, threshold=vote_threshold)
         self.pred_tf = self.pred_tf.argmax(dim=1)
         self.pl = self.pred_tf[self.index_pl]
         if self.index_pl.shape[0] >= 1:
@@ -362,9 +394,10 @@ class BoomdaJMDA(nn.Module):
         self.loss_coral_all = 0
         mul = 1
         with autocast():
-            self.loss_coral_a = mul * coral(self.fa, self.fa_t)
-            loss_data['A'] = self.loss_coral_a.item()
-            self.loss_coral_all = self.loss_coral_all + self.loss_coral_a
+            if self.use_ais:
+                self.loss_coral_a = mul * coral(self.fa, self.fa_t)
+                loss_data['A'] = self.loss_coral_a.item()
+                self.loss_coral_all = self.loss_coral_all + self.loss_coral_a
 
             self.loss_coral_v = mul * coral(self.fv, self.fv_t)
             loss_data['V'] = self.loss_coral_v.item()
@@ -386,13 +419,17 @@ class BoomdaJMDA(nn.Module):
 
         grads_all = torch.sum(grads_all[0], dim=0)
         grads_com = torch.sum(grads_com[0], dim=0)
-        dims = {'A': self.opt.embd_size_a, 'V': self.opt.embd_size_v, 'L': self.opt.embd_size_l}
-        offset = 0
+        dim_a = self.opt.embd_size_a
+        dim_av = dim_a + self.opt.embd_size_v
+        ranges = {
+            'A': (0, dim_a),
+            'V': (dim_a, dim_av),
+            'L': (dim_av, dim_av + self.opt.embd_size_l),
+        }
         for t in self.modality:
-            d = dims[t]
-            grads[t] = grads_all[offset:offset + d]
-            grads_m[t] = grads_com[offset:offset + d]
-            offset += d
+            start, end = ranges[t]
+            grads[t] = grads_all[start:end]
+            grads_m[t] = grads_com[start:end]
 
         gn = gradient_normalizers(grads, loss_data, 'loss')
         for t in self.modality:
@@ -417,8 +454,8 @@ class BoomdaJMDA(nn.Module):
         Q_t_inv = 1 / Q_t
         sol = Q_t_inv / (sum(Q_t_inv))
 
-        scale = {}
-        for i, t in enumerate('AVLJ'):
+        scale = {'A': 0.0, 'V': 0.0, 'L': 0.0, 'J': 0.0}
+        for i, t in enumerate(self.modality + 'J'):
             scale[t] = float(sol[i])
         return scale
 
@@ -444,13 +481,13 @@ class BoomdaJMDA(nn.Module):
         mul = 1e3
         mul2 = 1e-3
         self.loss_ee = mul2 * entropy_re(self.fall)
-        self.loss_ee_A = mul2 * entropy_re(self.fa)
+        self.loss_ee_A = mul2 * entropy_re(self.fa) if self.use_ais else self.fall.new_zeros(())
         self.loss_ee_V = mul2 * entropy_re(self.fv)
         self.loss_ee_L = mul2 * entropy_re(self.fl)
 
         self.loss_domdisc_com = self.criterion_domdisc(self.domainCom, self.domain_combined_label)
         self.loss_coral = mul * coral(self.fall, self.fall_t)
-        self.loss_coral_a = mul * coral(self.fa, self.fa_t)
+        self.loss_coral_a = mul * coral(self.fa, self.fa_t) if self.use_ais else self.fall.new_zeros(())
         self.loss_coral_v = mul * coral(self.fv, self.fv_t)
         self.loss_coral_l = mul * coral(self.fl, self.fl_t)
 
@@ -464,9 +501,11 @@ class BoomdaJMDA(nn.Module):
 
     def loss_CE_A_placeholder(self):
         # author: 0.1*20*0.05*(loss_CE_A + loss_CE_V + loss_CE_L)
-        return self.criterion_ce(self.logits_A, self.label) + \
-               self.criterion_ce(self.logits_V, self.label) + \
+        loss = self.criterion_ce(self.logits_V, self.label) + \
                self.criterion_ce(self.logits_L, self.label)
+        if self.use_ais:
+            loss = loss + self.criterion_ce(self.logits_A, self.label)
+        return loss
 
     def optimize_parameters(self, epoch):
         self.optimizer.zero_grad()
@@ -483,7 +522,11 @@ class BoomdaJMDA(nn.Module):
         self.forward_eval()
 
     def forward_eval(self):
-        self.feat_A = self.netA_encoder(self.ais_eval)
+        if self.use_ais:
+            self.feat_A = self.netA_encoder(self.ais_eval)
+        else:
+            self.feat_A = self.visual_eval.new_zeros(
+                (self.visual_eval.shape[0], self.opt.embd_size_a))
         self.feat_V = self.netV_encoder(self.visual_eval)
         self.feat_L = self.netL_encoder(self.ir_eval)
         self.feat = torch.cat([self.feat_A, self.feat_V, self.feat_L], dim=-1)
@@ -524,6 +567,8 @@ def main():
     parser.add_argument('--output-dim', type=int, default=14)
     parser.add_argument('--ais-mat', type=str,
                         default=data_path('AIS', 'balanced_AIS-dataset_16classes_100persample.mat'))
+    parser.add_argument('--use-ais', action='store_true',
+                        help='Enable AIS .mat input. Default: disabled for the weather dataset.')
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists'))
@@ -537,14 +582,18 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     print(args)
 
-    global ais_data
-    ais_data, ais_labels = load_ais(args.ais_mat)
-    print(f'AIS data: {ais_data.shape}, labels: {ais_labels.shape}')
+    if args.use_ais:
+        ais_data, ais_labels = load_ais(args.ais_mat)
+        print(f'AIS enabled: data={ais_data.shape}, labels={ais_labels.shape}')
+    else:
+        ais_data = ais_labels = None
+        print('AIS disabled for weather data; using a zero placeholder. '
+              'Pass --use-ais to enable the preserved AIS input.')
 
     train_tf, val_tf = get_transforms()
-    src_ds = PairedMultimodalDataset(os.path.join(args.data_dir, 'sunny_train.txt'), ais_data, ais_labels, train_tf)
-    tgt_ds = PairedMultimodalDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'), ais_data, ais_labels, train_tf)
-    tgt_val_ds = PairedMultimodalDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'), ais_data, ais_labels, val_tf)
+    src_ds = PairedMultimodalDataset(os.path.join(args.data_dir, 'sunny_train.txt'), ais_data, ais_labels, train_tf, args.use_ais)
+    tgt_ds = PairedMultimodalDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'), ais_data, ais_labels, train_tf, args.use_ais)
+    tgt_val_ds = PairedMultimodalDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'), ais_data, ais_labels, val_tf, args.use_ais)
     print(f'Source paired: {len(src_ds)}, target paired: {len(tgt_ds)}, target val paired: {len(tgt_val_ds)}')
 
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
@@ -563,8 +612,9 @@ def main():
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
+        modalities = 'VIS+IR+AIS' if args.use_ais else 'VIS+IR (AIS disabled)'
         eff = EfficiencyLogger(args.efficiency_output_dir, 'Boomda',
-                                seed=args.seed, device=str(device), modalities='VIS+IR+AIS')
+                                seed=args.seed, device=str(device), modalities=modalities)
         print(f'Efficiency logging -> {eff.run_dir}')
 
     for epoch in range(1, num_epoch + 1):

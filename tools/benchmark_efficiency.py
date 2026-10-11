@@ -188,12 +188,11 @@ def adapter_boomda():
                 # Remove ambiguous modules to force re-import
                 if key == 'models':
                     del sys.modules[key]
-    from train_boomda_jmda import BoomdaJMDA, load_ais
-    AIS_MAT = r'D:\Code\JMDA-Net\Data\AIS\balanced_AIS-dataset_16classes_100persample.mat'
-    ais_data, ais_labels = load_ais(AIS_MAT)
+    from train_boomda_jmda import BoomdaJMDA
     class Opt:
         embd_size_a=256; embd_size_v=512; embd_size_l=512
         output_dim=14; lr=1e-4; enc_lr=1e-5; beta1=0.5; isTrain=True
+        use_ais=False
         save_dir=os.path.join(PROJ,'Boomda','output')
     opt = Opt()
     def build():
@@ -215,26 +214,21 @@ def adapter_boomda():
         loss = model.criterion_ce(model.logits, model.label)
         return loss
     def forward_infer(model, inp):
-        # Boomda forward uses set_input + forward() with no args.
-        # forward() calls register_hook which requires grad; use enable_grad.
-        with torch.enable_grad():
-            data = {k: v.clone().requires_grad_(True) if torch.is_tensor(v) else v
-                    for k, v in inp.items()}
-            data['label'] = torch.zeros(inp['vision'].size(0), dtype=torch.long,
-                                         device=inp['vision'].device)
-            model.set_input(data, data, alpha=0.0)
-            model.forward()
+        # Match the validation/deployment path: one sample stream, encoders and
+        # the joint classifier only (no target copy or adaptation losses).
+        model.ais_eval = inp['ais']
+        model.visual_eval = inp['vision']
+        model.ir_eval = inp['ir']
+        model.forward_eval()
         return model.logits
-    return {'name':'Boomda','group':'trimodal','modalities':'VIS+IR+AIS',
+    return {'name':'Boomda','group':'trimodal','modalities':'VIS+IR (AIS disabled)',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'forward_infer':forward_infer,
             'vis_shape':'(1,3,224,224)','ir_shape':'(1,3,224,224)','ais_shape':'(1,23040)'}
 
 # ── MODfinity ────────────────────────────────────────────────────────────────
 def adapter_modfinity():
-    from Modfinity.train_modfinity import MODfinity, load_ais
-    AIS_MAT = r'D:\Code\JMDA-Net\Data\AIS\balanced_AIS-dataset_16classes_100persample.mat'
-    ais_data, ais_labels = load_ais(AIS_MAT)
+    from Modfinity.train_modfinity import MODfinity
     def build():
         return MODfinity(num_classes=14, feat_dim=512, tau=0.07)
     def make_input(bs, device):
@@ -253,7 +247,7 @@ def adapter_modfinity():
         return loss
     def forward_infer(model, inp):
         return model(inp)
-    return {'name':'MODfinity*','group':'trimodal','modalities':'VIS+IR+AIS',
+    return {'name':'MODfinity*','group':'trimodal','modalities':'VIS+IR (AIS disabled)',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'forward_infer':forward_infer,
             'vis_shape':'(1,3,224,224)','ir_shape':'(1,3,224,224)','ais_shape':'(1,23040)'}
@@ -409,7 +403,7 @@ def adapter_transadapter():
             'vis_shape':'(1,3,224,224)'}
 
 # ── JMDA-Net (various ablation modes) ──────────────────────────────────────────
-JMDA_NET_DIR = r'D:\Code\JMDA-Net'
+JMDA_NET_DIR = os.environ.get('JMDA_NET_DIR', os.path.join(PROJ, 'JMDA-Net'))
 def adapter_jmda(mode='full'):
     """mode: 'baseline' (no tensor, no OT), 'tensor_only' (no OT), 'ot_only' (no tensor), 'full'"""
     sys.path.insert(0, JMDA_NET_DIR)
@@ -471,15 +465,13 @@ def adapter_jmda(mode='full'):
         f_vis = model.net_vis(inp['vis'])
         f_ir = model.net_ir(inp['ir'])
         if model.use_tensor:
-            (p_vis, p_ir), _, _ = model.tal([f_vis, f_ir], [f_vis, f_ir])
-            if isinstance(p_vis, list): p_vis = p_vis[0]
-            if isinstance(p_ir, list): p_ir = p_ir[0]
+            # Formal JMDA inference uses the fixed target-side projections and
+            # classifier only. Sinkhorn/TransNet is a training-time module.
+            p_vis = f_vis.matmul(model.tal.V_matrices[0])
+            p_ir = f_ir.matmul(model.tal.V_matrices[1])
             feat = torch.cat([p_vis, p_ir], dim=1)
         else:
             feat = torch.cat([f_vis, f_ir], dim=1)
-        if model.use_ot:
-            feat_mid, _ = model.generator(feat, feat.clone(), return_details=True)
-            return model.classifier(feat_mid)
         return model.classifier(feat)
 
     name_map = {'baseline':'JMDA-Net-Baseline','tensor_only':'JMDA-Net-TensorOnly',
@@ -501,10 +493,10 @@ BACKBONE_INFO = {
     'cdan':           ('ResNet-18', 'ImageNet'),
     'mdd':            ('ResNet-18', 'ImageNet'),
     'mcc':            ('ResNet-18', 'ImageNet'),
-    'boomda':         ('ResNet-18 x2 + 1D-CNN (VIS/IR/AIS)', 'ImageNet'),
-    'modfinity':      ('ResNet-18 x2 + 1D-CNN (VIS/IR/AIS)', 'ImageNet'),
-    'adclip':         ('CLIP ViT-B/16', 'CLIP'),
-    'coop':           ('CLIP ViT-B/16', 'CLIP'),
+    'boomda':         ('ResNet-18 x2 (optional AIS 1D-CNN)', 'ImageNet'),
+    'modfinity':      ('ResNet-18 x2 (optional AIS 1D-CNN)', 'ImageNet'),
+    'adclip':         ('CLIP RN50', 'CLIP'),
+    'coop':           ('CLIP RN50', 'CLIP'),
     'transadapter':   ('Swin-T', 'ImageNet'),
     'jmda_baseline':  ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
     'jmda_tensor_only': ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
@@ -639,8 +631,8 @@ def run_benchmark(adapter, args, device, output_dir):
         'target_label_count': '',
         'target_labels_per_class': (args.target_labels_per_class
                                     if args.target_labels_per_class is not None else ''),
-        'backbone': BACKBONE_INFO.get(name, ('', ''))[0],
-        'pretraining': BACKBONE_INFO.get(name, ('', ''))[1],
+        'backbone': BACKBONE_INFO.get(adapter.get('_key', ''), ('', ''))[0],
+        'pretraining': BACKBONE_INFO.get(adapter.get('_key', ''), ('', ''))[1],
         'total_params': total_params,
         'trainable_params': trainable_params,
         'buffer_mb': round(buffer_mb, 4),
@@ -761,17 +753,22 @@ def _measure_jmda_modules(adapter, model, device, args):
                 times.append((t1-t0)*1000)
         timings['tensor_forward_ms'] = round(float(np.mean(times)), 4)
 
-        # SVD update (per-epoch, amortized)
-        # SVD is called in update_epoch_projections; we measure tal() which
-        # internally does the SVD if projection_update is triggered
-        # For timing: measure one SVD call
+        # SVD update (per epoch). Tensor.forward intentionally never changes
+        # projection matrices, so time the real update_projections() API.
         svd_times = []
-        for _ in range(5):
+        sample_count = max(model.tal.output_dims) + 1
+        source_bank = [
+            torch.randn(sample_count, dim, device=device)
+            for dim in model.tal.input_dims
+        ]
+        target_bank = [
+            torch.randn(sample_count, dim, device=device)
+            for dim in model.tal.input_dims
+        ]
+        for _ in range(3):
             _cuda_sync()
             t0 = _time.perf_counter()
-            # tal internal SVD happens during forward in training mode
-            model.train()
-            model.tal([f_vis, f_ir], [f_vis, f_ir])
+            model.tal.update_projections(source_bank, target_bank)
             _cuda_sync()
             t1 = _time.perf_counter()
             svd_times.append((t1-t0)*1000)
@@ -830,8 +827,8 @@ def main():
                         default=os.path.join(PROJ, 'efficiency_results'))
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--protocol', type=str, default='UDA',
-                        choices=['UDA', 'SDA'],
+    parser.add_argument('--protocol', type=str, default='benchmark',
+                        choices=['UDA', 'SDA', 'VLM', 'benchmark'],
                         help='Supervision protocol recorded in the output rows; '
                              'SDA/UDA results are kept in separate tables.')
     parser.add_argument('--target-labels-per-class', dest='target_labels_per_class',
@@ -873,6 +870,7 @@ def main():
             torch.manual_seed(args.seed + rep)
             try:
                 adapter = ADAPTERS[method_key]()
+                adapter['_key'] = method_key
                 row = run_benchmark(adapter, args, device, args.efficiency_output_dir)
                 all_rows.append(row)
             except Exception as e:
@@ -898,12 +896,13 @@ def main():
         ('CDAN', 'CDAN/train_cdan.py', 'ResNetFc+AdversarialNet', 'ImageListDataset (VIS)'),
         ('MDD', 'MDD/train_mdd.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
         ('MCC', 'MCC/train_mcc.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
-        ('Boomda', 'Boomda/train_boomda_jmda.py', 'BoomdaJMDA', 'PairedMultimodalDataset (VIS+IR+AIS)'),
-        ('MODfinity*', 'Modfinity/train_modfinity.py', 'MODfinity', 'PairedMultimodalDataset (VIS+IR+AIS)'),
+        ('Boomda', 'Boomda/train_boomda_jmda.py', 'BoomdaJMDA', 'PairedMultimodalDataset (AIS disabled by default)'),
+        ('MODfinity*', 'Modfinity/train_modfinity.py', 'MODfinity', 'PairedMultimodalDataset (AIS disabled by default)'),
         ('AD-CLIP', 'AD-CLIP/train_adclip.py', 'CustomCLIP(RN50)', 'ImageListDataset (VIS)'),
         ('CoOp', 'CoOp/train_coop.py', 'CustomCLIP(RN50)', 'ImageListDataset (VIS)'),
         ('TransAdapter', 'TransAdapter/train_transadapter.py', 'TransAdapter(Swin-T)', 'ImageListDataset (VIS)'),
-        ('JMDA-Net', 'D:\\Code\\JMDA-Net\\main.py', 'VisFeat+IRFeat+TAL+OTGen', 'MultiModalDomainDataset (VIS+IR)'),
+        ('JMDA-Net', os.path.join(JMDA_NET_DIR, 'Ablation', 'module_ablation.py'),
+         'VisFeat+IRFeat+TAL+OTGen', 'MultiModalDomainDataset (VIS+IR)'),
     ]
     for m, s, c, d in mappings:
         print(f"  {m:18s} | {s:42s} | {c:28s} | {d}")

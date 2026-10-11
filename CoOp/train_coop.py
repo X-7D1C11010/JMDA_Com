@@ -11,6 +11,8 @@ Usage:
 import os
 import sys
 import argparse
+import random
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
@@ -90,12 +92,19 @@ def main():
     parser.add_argument('--epochs', type=int, default=3)
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=2e-3)
+    parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists'))
     parser.add_argument('--save-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     args = parser.parse_args()
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     os.makedirs(args.save_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

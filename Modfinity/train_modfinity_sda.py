@@ -67,10 +67,20 @@ class PairedMultimodalDataset(Dataset):
             return None
         return os.path.join(ir_dir, ir_files[i])
 
-    def __init__(self, list_path, ais_data, ais_labels, transform=None):
+    def __init__(self, list_path, ais_data=None, ais_labels=None, transform=None,
+                 use_ais=False, ais_dim=23040):
         self.transform = transform
+        self.use_ais = bool(use_ais)
+        self.ais_data = ais_data
+        self.ais_dim = int(ais_dim)
         self.samples = []  # (vis_path, ir_path, label, ais_index)
-        per_class = {c: np.where(ais_labels == c)[0] for c in range(14)}
+        if self.use_ais:
+            if ais_data is None or ais_labels is None:
+                raise ValueError('use_ais=True requires AIS data and labels')
+            self.ais_dim = int(ais_data.shape[1])
+            per_class = {c: np.where(ais_labels == c)[0] for c in range(14)}
+        else:
+            per_class = {c: np.empty(0, dtype=np.int64) for c in range(14)}
         counters = {c: 0 for c in range(14)}
         with open(list_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -84,7 +94,9 @@ class PairedMultimodalDataset(Dataset):
                     continue
                 c = min(label, 13)
                 pool = per_class[c]
-                if len(pool) == 0:
+                if not self.use_ais:
+                    ais_idx = -1
+                elif len(pool) == 0:
                     ais_idx = 0
                 else:
                     ais_idx = int(pool[counters[c] % len(pool)])
@@ -101,7 +113,10 @@ class PairedMultimodalDataset(Dataset):
         if self.transform:
             vis = self.transform(vis)
             ir = self.transform(ir)
-        ais = torch.from_numpy(ais_data[ais_idx].copy())
+        if self.use_ais:
+            ais = torch.from_numpy(self.ais_data[ais_idx].copy())
+        else:
+            ais = torch.zeros(self.ais_dim, dtype=torch.float32)
         return {'vision': vis, 'ir': ir, 'ais': ais, 'label': label}
 
 
@@ -213,17 +228,20 @@ def mod_loss(student_F, LM_idx, LM_plabel, teacher_F, tau):
 
 
 class MODfinity(nn.Module):
-    MODALITIES = ('ir', 'vision', 'ais')  # M = 3
+    ALL_MODALITIES = ('ir', 'vision', 'ais')
 
-    def __init__(self, num_classes=14, feat_dim=512, tau=0.07):
+    def __init__(self, num_classes=14, feat_dim=512, tau=0.07, use_ais=False):
         super().__init__()
         self.num_classes = num_classes
         self.tau = tau
-        self.encoders = nn.ModuleDict({
+        self.use_ais = bool(use_ais)
+        self.MODALITIES = self.ALL_MODALITIES if self.use_ais else ('ir', 'vision')
+        all_encoders = {
             'ir': ImageModalityEncoder(feat_dim),
             'vision': ImageModalityEncoder(feat_dim),
             'ais': AISEncoder(out_dim=feat_dim),
-        })
+        }
+        self.encoders = nn.ModuleDict({m: all_encoders[m] for m in self.MODALITIES})
         self.classifiers = nn.ModuleDict({
             m: ModalityClassifier(feat_dim, num_classes) for m in self.MODALITIES
         })
@@ -289,6 +307,8 @@ def main():
                         help='Weight of L_cls_target (the ONLY added loss)')
     parser.add_argument('--ais-mat', type=str,
                         default=data_path('AIS', 'balanced_AIS-dataset_16classes_100persample.mat'))
+    parser.add_argument('--use-ais', action='store_true',
+                        help='Enable AIS .mat input. Default: disabled for the weather dataset.')
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists'))
@@ -301,13 +321,17 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     print('[our reimplementation, SDA protocol]', args)
 
-    global ais_data
-    ais_data, ais_labels = load_ais(args.ais_mat)
-    print(f'AIS data: {ais_data.shape}, labels: {ais_labels.shape}')
+    if args.use_ais:
+        ais_data, ais_labels = load_ais(args.ais_mat)
+        print(f'AIS enabled: data={ais_data.shape}, labels={ais_labels.shape}')
+    else:
+        ais_data = ais_labels = None
+        print('AIS disabled for weather data; using a zero placeholder. '
+              'Pass --use-ais to enable the preserved AIS input.')
 
     train_tf, val_tf = get_transforms()
     src_ds = PairedMultimodalDataset(os.path.join(args.data_dir, 'sunny_train.txt'),
-                                     ais_data, ais_labels, train_tf)
+                                     ais_data, ais_labels, train_tf, args.use_ais)
     tgt_list = os.path.join(
         args.data_dir,
         f'{args.target}_sda_{args.target_labels_per_class}shot_seed{args.sda_seed}.txt')
@@ -315,9 +339,9 @@ def main():
         f'SDA subset list missing: {tgt_list}. '
         f'Run: python tools/make_sda_lists.py --n-per-class {args.target_labels_per_class} '
         f'--seed {args.sda_seed}')
-    tgt_ds = PairedMultimodalDataset(tgt_list, ais_data, ais_labels, train_tf)
+    tgt_ds = PairedMultimodalDataset(tgt_list, ais_data, ais_labels, train_tf, args.use_ais)
     tgt_val_ds = PairedMultimodalDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'),
-                                         ais_data, ais_labels, val_tf)
+                                         ais_data, ais_labels, val_tf, args.use_ais)
     print(f'Source paired: {len(src_ds)}, target LABELED subset (SDA) paired: {len(tgt_ds)}, '
           f'target val paired: {len(tgt_val_ds)}')
 
@@ -329,7 +353,8 @@ def main():
                                 shuffle=False, num_workers=0)
     args.iters_per_epoch = max(len(src_loader), len(tgt_loader))
 
-    model = MODfinity(args.output_dim, args.feat_dim, args.tau).to(device)
+    model = MODfinity(args.output_dim, args.feat_dim, args.tau,
+                      use_ais=args.use_ais).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     best_acc = 0.0
@@ -337,8 +362,9 @@ def main():
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
+        modalities = 'VIS+IR+AIS' if args.use_ais else 'VIS+IR (AIS disabled)'
         eff = EfficiencyLogger(args.efficiency_output_dir, 'MODfinity-SDA',
-                                seed=args.seed, device=str(device), modalities='VIS+IR+AIS',
+                                seed=args.seed, device=str(device), modalities=modalities,
                                 protocol='SDA',
                                 target_label_count=len(tgt_ds),
                                 target_labels_per_class=args.target_labels_per_class,
