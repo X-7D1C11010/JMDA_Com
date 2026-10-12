@@ -12,6 +12,7 @@
 #   JMDA_DATA_ROOT  数据根目录（默认 /mnt/data/lixiang/data/Data）
 #   JMDA_NET_DIR    JMDA-Net 源码目录（默认使用本仓库 JMDA-Net/ 镜像）
 #   PYTHON          Python 解释器（默认 python）
+#   JMDA_SEED       当前运行的随机种子（默认 42；正式多种子实验由外层循环传入）
 #
 # 本仓库 JMDA-Net/ 子目录为本文方法（JMDA-Net）的源码镜像，与对比方法目录区分。
 # 每次运行的日志 -> server_logs/<protocol>/，效率结果 -> efficiency_results/<protocol>/
@@ -29,7 +30,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 PYTHON="${PYTHON:-python}"
 JMDA_NET_DIR="${JMDA_NET_DIR:-$HERE/JMDA-Net}"
-SEED=42
+SEED="${JMDA_SEED:-42}"
 
 LOG_ROOT="$HERE/server_logs/$PROTOCOL"
 EFF_DIR="$HERE/efficiency_results/$PROTOCOL"
@@ -156,10 +157,10 @@ elif [ "$PROTOCOL" = "uda" ]; then
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" "${COMMON[@]}"
     run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" "${COMMON[@]}"
     run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" "${COMMON[@]}"
-    run "modfinity_$t"    "$PYTHON" "$HERE/Modfinity/train_modfinity.py"   --target "$t" "${COMMON[@]}"
-    run "boomda_$t"       "$PYTHON" "$HERE/Boomda/train_boomda_jmda.py"    --target "$t" "${COMMON[@]}"
     run "transadapter_$t" "$PYTHON" "$HERE/TransAdapter/train_transadapter.py" --target "$t" "${COMMON[@]}"
     run "adclip_$t"       "$PYTHON" "$HERE/AD-CLIP/train_adclip.py"         --target "$t" --epochs "$EPOCHS" --seed "$SEED"
+    run "modfinity_$t"    "$PYTHON" "$HERE/Modfinity/train_modfinity.py"   --target "$t" "${COMMON[@]}"
+    run "boomda_$t"       "$PYTHON" "$HERE/Boomda/train_boomda_jmda.py"    --target "$t" "${COMMON[@]}"
   done
 
 else
