@@ -25,6 +25,70 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from data_paths import remap_data_path
 
 
+SWIN_MODEL_NAME = 'swin_tiny_patch4_window7_224'
+
+
+def build_swin_backbone(pretrained=True, weights_path=None):
+    """Build Swin-T without making Hugging Face the only weight source.
+
+    Newer timm releases prefer Hugging Face even though this model also has an
+    official Swin release URL.  The training server cannot reach Hugging Face,
+    so use a caller-provided checkpoint first, then timm's normal cache/source,
+    and finally retry against the official Swin GitHub release.  Formal runs
+    must not silently fall back to random initialization.
+    """
+    common = dict(num_classes=0)
+    if not pretrained:
+        return timm.create_model(SWIN_MODEL_NAME, pretrained=False, **common)
+
+    weights_path = (
+        weights_path
+        or os.environ.get('TRANSADAPTER_BACKBONE_WEIGHTS', '')
+    ).strip()
+    if weights_path:
+        weights_path = os.path.abspath(os.path.expanduser(weights_path))
+        if not os.path.isfile(weights_path):
+            raise FileNotFoundError(
+                f'TransAdapter backbone checkpoint not found: {weights_path}')
+        print(f'Loading TransAdapter Swin-T weights: {weights_path}')
+        model = timm.create_model(
+            SWIN_MODEL_NAME, pretrained=False, **common)
+        # Official Swin checkpoints include the 1000-class classification
+        # head, while this feature extractor is built with num_classes=0.
+        # Non-strict loading correctly ignores that unused head.
+        timm.models.load_checkpoint(model, weights_path, strict=False)
+        return model
+
+    errors = []
+    try:
+        return timm.create_model(SWIN_MODEL_NAME, pretrained=True, **common)
+    except Exception as exc:
+        errors.append(f'timm/HuggingFace: {type(exc).__name__}: {exc}')
+        print('[WARN] timm/Hugging Face pretrained loading failed; '
+              'retrying the official Swin GitHub release.')
+
+    try:
+        # Removing hf_hub_id makes timm use the official URL already stored in
+        # this model's pretrained configuration.
+        return timm.create_model(
+            SWIN_MODEL_NAME,
+            pretrained=True,
+            pretrained_cfg_overlay={'hf_hub_id': None},
+            **common,
+        )
+    except Exception as exc:
+        errors.append(f'official Swin URL: {type(exc).__name__}: {exc}')
+
+    details = '\n  - '.join(errors)
+    raise RuntimeError(
+        'Unable to load ImageNet-pretrained Swin-T weights for TransAdapter. '
+        'Download swin_tiny_patch4_window7_224.pth on a connected machine, '
+        'upload it to the server, and set TRANSADAPTER_BACKBONE_WEIGHTS to '
+        'that file. Random initialization is intentionally not used because '
+        f'it would make the formal comparison unfair.\n  - {details}'
+    )
+
+
 class ReverseLayerF(Function):
     @staticmethod
     def forward(ctx, x, alpha):
@@ -63,11 +127,10 @@ class ImageListDataset(Dataset):
 class TransAdapter(nn.Module):
     """TransAdapter: Swin Transformer + adversarial domain adaptation."""
 
-    def __init__(self, num_classes=14, pretrained=True):
+    def __init__(self, num_classes=14, pretrained=True, weights_path=None):
         super(TransAdapter, self).__init__()
-        # Swin Transformer backbone (from timm)
-        self.backbone = timm.create_model(
-            'swin_tiny_patch4_window7_224', pretrained=pretrained, num_classes=0)
+        self.backbone = build_swin_backbone(
+            pretrained=pretrained, weights_path=weights_path)
         feat_dim = self.backbone.num_features  # 768
 
         # Classification head
@@ -138,6 +201,12 @@ def main():
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
                         help='Directory for efficiency logging output')
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument(
+        '--backbone-weights', type=str,
+        default=os.environ.get('TRANSADAPTER_BACKBONE_WEIGHTS'),
+        help='Optional local Swin-T ImageNet checkpoint. Also configurable '
+             'through TRANSADAPTER_BACKBONE_WEIGHTS.',
+    )
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -165,7 +234,10 @@ def main():
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, num_workers=2)
 
-    model = TransAdapter(num_classes=14, pretrained=True).to(device)
+    model = TransAdapter(
+        num_classes=14, pretrained=True,
+        weights_path=args.backbone_weights,
+    ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
 

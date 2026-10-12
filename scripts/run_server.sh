@@ -117,9 +117,6 @@ COMMON=(--epochs "$EPOCHS" --seed "$SEED" --efficiency_output_dir "$EFF_DIR")
 if [ "$PROTOCOL" = "sda" ]; then
   # ---- SDA：所有方法使用同一源标签 + 同一目标标注子集（共享 list）----
   for t in "${TARGETS[@]}"; do
-    run "source_only_$t"  "$PYTHON" "$HERE/SDA_Baselines/train_source_only_sda.py" --target "$t" "${COMMON[@]}"
-    run "joint_$t"        "$PYTHON" "$HERE/SDA_Baselines/train_joint_training.py"  --target "$t" "${COMMON[@]}"
-    run "target_only_$t"  "$PYTHON" "$HERE/SDA_Baselines/train_target_only.py"    --target "$t" "${COMMON[@]}"
     run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann_sda.py"             --target "$t" "${COMMON[@]}"
     run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral_sda.py"   --target "$t" "${COMMON[@]}"
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan_sda.py"             --target "$t" "${COMMON[@]}"

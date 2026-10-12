@@ -522,7 +522,10 @@ ADAPTERS = {
     'jmda_full': lambda: adapter_jmda('full'),
 }
 
-ALL_METHODS = list(ADAPTERS.keys())
+# Source-only remains available for an explicit historical benchmark, but it
+# is temporarily excluded from the default formal run together with the
+# Joint/Target-only training baselines.
+ALL_METHODS = [key for key in ADAPTERS if key != 'source_only']
 
 
 # ═══════════════════════════════════════════════════════════════════════════
