@@ -286,12 +286,7 @@ class entropy_loss(nn.Module):
         super(entropy_loss, self).__init__()
 
     def forward(self, target_prob):
-        full_enp = torch.zeros(target_prob.shape[0])
-        target_prob = nn.functional.normalize(target_prob, dim=0)
-        for i in range(len(target_prob)):
-            total_en = 0
-            for j in range(target_prob.shape[1]):
-                total_en = total_en - target_prob[i][j] * torch.log(target_prob[i][j] + 1e-8)
-            full_enp[i] = total_en
-        avg_full_enp = torch.mean(full_enp)
-        return avg_full_enp
+        normalized = nn.functional.normalize(target_prob, dim=0)
+        return -(
+            normalized * torch.log(normalized.clamp_min(1e-8))
+        ).sum(dim=1).mean()

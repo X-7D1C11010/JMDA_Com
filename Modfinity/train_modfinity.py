@@ -59,7 +59,8 @@ import h5py
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
-from data_paths import remap_data_path, data_path
+from data_paths import remap_data_path, data_path, exact_ir_partner
+from classification_metrics import classification_metrics, format_classification_metrics
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -68,34 +69,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Data: paired (VIS, IR) images from the data lists + AIS row per class
 # --------------------------------------------------------------------------
 class PairedMultimodalDataset(Dataset):
-    """Reads VIS paths (+labels) from a list file and pairs each VIS image with
-    an IR image following the canonical JMDA-Net pairing rule (DataLoad.py):
-    within the same class folder, sorted(VIS files) and sorted(IR files) are
-    paired by index (truncated to the shorter list). Assigns an AIS sample from
-    the class pool (deterministic cycling; class-index mapping assumption
-    i -> class i). Samples without an IR partner are skipped.
+    """Read the shared VIS cohort and recover its exact IR observation.
+
+    The raw split may place the two modalities of one observation in different
+    train/val folders. Search their union by filename stem, matching JMDA-Net's
+    paired cohort rule. AIS assignment remains deterministic by class.
     """
 
     IMG_EXT = ('.jpg', '.jpeg', '.png')
 
     @staticmethod
     def _find_ir_partner(vis_path):
-        vis_dir = os.path.dirname(vis_path)          # ...\class\可见光
-        ir_dir = vis_dir.replace('可见光', '红外')
-        if not os.path.isdir(ir_dir):
-            return None
-        ext = PairedMultimodalDataset.IMG_EXT
-        vis_files = sorted(f for f in os.listdir(vis_dir)
-                           if f.lower().endswith(ext))
-        ir_files = sorted(f for f in os.listdir(ir_dir)
-                          if f.lower().endswith(ext))
-        name = os.path.basename(vis_path)
-        if name not in vis_files:
-            return None
-        i = vis_files.index(name)
-        if i >= len(ir_files):
-            return None
-        return os.path.join(ir_dir, ir_files[i])
+        return exact_ir_partner(vis_path)
 
     def __init__(self, list_path, ais_data=None, ais_labels=None, transform=None,
                  use_ais=False, ais_dim=23040):
@@ -326,21 +311,29 @@ def evaluate(model, loader):
     correct = {m: 0 for m in model.MODALITIES}
     correct_fusion = 0
     total = 0
-    for data in loader:
-        data = {k: v.to(device) if torch.is_tensor(v) else v for k, v in data.items()}
-        labels = data['label']
-        probs = []
-        feats = model.features(data)
-        for m in model.MODALITIES:
-            logits = model.classifiers[m](feats[m])
-            probs.append(F.softmax(logits, dim=1))
-            correct[m] += (logits.argmax(1) == labels).sum().item()
-        fusion = torch.stack(probs, dim=0).mean(dim=0)
-        correct_fusion += (fusion.argmax(1) == labels).sum().item()
-        total += labels.size(0)
+    all_labels, all_predictions = [], []
+    with torch.no_grad():
+        for data in loader:
+            data = {k: v.to(device) if torch.is_tensor(v) else v for k, v in data.items()}
+            labels = data['label']
+            probs = []
+            feats = model.features(data)
+            for m in model.MODALITIES:
+                logits = model.classifiers[m](feats[m])
+                probs.append(F.softmax(logits, dim=1))
+                correct[m] += (logits.argmax(1) == labels).sum().item()
+            fusion = torch.stack(probs, dim=0).mean(dim=0)
+            predictions = fusion.argmax(1)
+            correct_fusion += (predictions == labels).sum().item()
+            total += labels.size(0)
+            all_labels.extend(labels.cpu().tolist())
+            all_predictions.extend(predictions.cpu().tolist())
     model.train()
     per_mod = {m: correct[m] / total for m in model.MODALITIES}
-    return correct_fusion / total, per_mod
+    metrics = classification_metrics(all_labels, all_predictions)
+    if abs(metrics['accuracy'] - correct_fusion / total) > 1e-12:
+        raise RuntimeError('Fusion accuracy accounting mismatch.')
+    return metrics, per_mod
 
 
 def main():
@@ -409,7 +402,8 @@ def main():
                       use_ais=args.use_ais).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    best_acc = 0.0
+    best_acc = -float('inf')
+    final_acc = None
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
@@ -423,17 +417,30 @@ def main():
     for epoch in range(1, args.epochs + 1):
         if eff:
             eff.epoch_start(epoch)
+        src_iter = iter(src_loader)
         tgt_iter = iter(tgt_loader)
-        for i, data in enumerate(src_loader):
+        for i in range(args.iters_per_epoch):
             if eff:
                 eff.step_start()
+            try:
+                data = next(src_iter)
+            except StopIteration:
+                src_iter = iter(src_loader)
+                data = next(src_iter)
             try:
                 data_t = next(tgt_iter)
             except StopIteration:
                 tgt_iter = iter(tgt_loader)
                 data_t = next(tgt_iter)
             data = {k: v.to(device) if torch.is_tensor(v) else v for k, v in data.items()}
-            data_t = {k: v.to(device) if torch.is_tensor(v) else v for k, v in data_t.items()}
+            # Strict UDA: target labels exist in the list-file dataset only so
+            # the shared validation loader can report metrics. Do not move or
+            # expose them to the training path.
+            data_t = {
+                k: (v.to(device) if torch.is_tensor(v) else v)
+                for k, v in data_t.items()
+                if k != 'label'
+            }
             if eff:
                 eff.dataloader_done()
             labels_s = data['label']
@@ -503,19 +510,24 @@ def main():
                       f'moml={float(loss_moml_src) + float(loss_moml_tgt):.4f} '
                       f'mod={float(loss_mod):.4f} |LM|={k_sel}')
 
-        acc, per_mod = evaluate(model, tgt_val_loader)
+        val_metrics, per_mod = evaluate(model, tgt_val_loader)
+        acc = val_metrics['accuracy']
+        final_acc = acc
         best_acc = max(best_acc, acc)
-        torch.save(model.state_dict(),
-                   os.path.join(args.save_dir, f'modfinity_{args.target}_best.pth'))
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f} '
               f'(fusion) | ' + ' '.join(f'{m}={per_mod[m]:.4f}' for m in per_mod))
+        print(format_classification_metrics(val_metrics))
         if eff:
             eff.epoch_end(epoch)
 
+    torch.save(model.state_dict(),
+               os.path.join(args.save_dir, f'modfinity_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'best_acc': best_acc, 'target': args.target})
-    print(f'\nMODfinity (our reimplementation) smoke test finished. '
-          f'Best target val accuracy ({args.target}): {best_acc:.4f}')
+        eff.finalize(extra_metrics={'final_acc': final_acc,
+                                    'diagnostic_peak_acc': best_acc,
+                                    'target': args.target})
+    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
 
 
 if __name__ == '__main__':

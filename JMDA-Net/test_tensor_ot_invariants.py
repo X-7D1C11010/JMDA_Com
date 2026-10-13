@@ -10,6 +10,8 @@ from Ablation.Models import Classifier
 from Ablation.PairedClassSampler import PairedClassSampler
 from Ablation.module_ablation import (
     BinaryDomainDiscriminator,
+    UnpairedDomainSampler,
+    class_prior_to_sample_marginal,
     compute_joint_ot_scale,
     select_report_metrics,
     transport_projected_feature_basis,
@@ -33,6 +35,30 @@ class _LabelOnlyDataset:
 
 
 class EpochPairingTests(unittest.TestCase):
+    def test_unpaired_sampler_covers_larger_domain_and_cycles_smaller(self):
+        source = _LabelOnlyDataset([0, 1, 2, 3, 4])
+        target = _LabelOnlyDataset([8, 9])
+        sampler = UnpairedDomainSampler(source, target, batch_size=3)
+
+        source_seen = []
+        target_seen = []
+        for source_batch, target_batch in sampler:
+            source_seen.extend(source_batch['index'].tolist())
+            target_seen.extend(target_batch['sample_index'].tolist())
+
+        self.assertEqual(len(sampler), 2)
+        self.assertEqual(set(source_seen), set(range(len(source))))
+        self.assertEqual(set(target_seen), set(range(len(target))))
+
+    def test_class_prior_is_not_multiplied_by_source_class_frequency(self):
+        labels = torch.tensor([0, 0, 0, 1])
+        desired = torch.tensor([0.25, 0.75])
+
+        marginal = class_prior_to_sample_marginal(labels, desired)
+
+        self.assertAlmostEqual(float(marginal[labels == 0].sum()), 0.25, places=6)
+        self.assertAlmostEqual(float(marginal[labels == 1].sum()), 0.75, places=6)
+
     def test_supervised_pairs_cover_target_once_and_match_classes(self):
         source = _LabelOnlyDataset([1, 1, 2, 2, 2])
         target = _LabelOnlyDataset([1, 2, 2, 1])
@@ -124,6 +150,46 @@ class ResultReportingTests(unittest.TestCase):
 
 
 class TensorEpochUpdateTests(unittest.TestCase):
+    def test_unpaired_transport_supports_different_domain_sizes(self):
+        torch.manual_seed(19)
+        module = TensorBasedAlignmentStable(
+            input_dims=[6, 5],
+            output_dims=[3, 3],
+            num_modalities=2,
+            max_svd_sweeps=2,
+            unpaired_sinkhorn_iterations=100,
+        )
+        source = [torch.randn(9, 6), torch.randn(9, 5)]
+        target = [torch.randn(7, 6), torch.randn(7, 5)]
+        source_weights = torch.tensor(
+            [0.05, 0.05, 0.10, 0.10, 0.10, 0.15, 0.15, 0.15, 0.15]
+        )
+
+        projected_source = [
+            features.matmul(projection)
+            for features, projection in zip(source, module.U_matrices)
+        ]
+        projected_target = [
+            features.matmul(projection)
+            for features, projection in zip(target, module.V_matrices)
+        ]
+        plan, details = module.build_unlabeled_transport_plan(
+            projected_source, projected_target, source_weights=source_weights
+        )
+
+        self.assertEqual(tuple(plan.shape), (9, 7))
+        self.assertTrue(
+            torch.allclose(plan.sum(1), details['source_marginal'], atol=2e-4)
+        )
+        self.assertTrue(
+            torch.allclose(plan.sum(0), details['target_marginal'], atol=2e-4)
+        )
+        info = module.update_unpaired_projections(
+            source, target, source_weights=source_weights
+        )
+        self.assertEqual(info['sample_count'], (9, 7))
+        self.assertEqual(info['update_count'], 1)
+
     def test_downstream_basis_transport_preserves_pure_rotation(self):
         torch.manual_seed(3)
         modal_rank = 3
@@ -282,6 +348,36 @@ class TensorEpochUpdateTests(unittest.TestCase):
 
 
 class SinkhornTransportTests(unittest.TestCase):
+    def test_sinkhorn_accepts_unlabeled_nonuniform_source_marginal(self):
+        torch.manual_seed(23)
+        generator = NeuralOptimalTransportGenerator(
+            feature_dim=8,
+            hidden_dim=10,
+            transport_mode='sinkhorn',
+            sinkhorn_iterations=100,
+        )
+        source = torch.randn(4, 8)
+        target = torch.randn(3, 8)
+        source_marginal = torch.tensor([0.1, 0.2, 0.3, 0.4])
+
+        _, details = generator(
+            source,
+            target,
+            return_details=True,
+            source_marginal=source_marginal,
+        )
+
+        self.assertTrue(
+            torch.allclose(
+                details['mass_plan'].sum(1), source_marginal, atol=2e-4
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                details['mass_plan'].sum(0), torch.full((3,), 1 / 3), atol=2e-4
+            )
+        )
+
     def test_legacy_mode_keeps_original_transnet_row_softmax(self):
         torch.manual_seed(9)
         generator = NeuralOptimalTransportGenerator(

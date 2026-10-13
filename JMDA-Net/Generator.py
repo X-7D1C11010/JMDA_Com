@@ -134,6 +134,8 @@ class NeuralOptimalTransportGenerator(nn.Module):
         target_features: torch.Tensor,
         source_labels: Optional[torch.Tensor] = None,
         target_labels: Optional[torch.Tensor] = None,
+        source_marginal: Optional[torch.Tensor] = None,
+        target_marginal: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Return a row-conditional map and differentiable diagnostics."""
         if source_features.ndim != 2 or target_features.ndim != 2:
@@ -156,11 +158,25 @@ class NeuralOptimalTransportGenerator(nn.Module):
             self.numerical_eps
         )
         normalized_geometric_cost = geometric_cost / geometric_cost_scale
-        source_marginal = geometric_cost.new_full(
-            (source_count,), 1.0 / source_count
+        def normalized_marginal(values, count, name):
+            if values is None:
+                return geometric_cost.new_full((count,), 1.0 / count)
+            values = values.to(
+                device=geometric_cost.device,
+                dtype=geometric_cost.dtype,
+            ).reshape(-1)
+            if values.numel() != count:
+                raise ValueError(f"{name} must contain {count} values.")
+            if not torch.isfinite(values).all() or bool((values < 0).any()):
+                raise ValueError(f"{name} must contain finite non-negative values.")
+            values = values.clamp_min(self.numerical_eps)
+            return values / values.sum()
+
+        source_marginal = normalized_marginal(
+            source_marginal, source_count, "source_marginal"
         )
-        target_marginal = geometric_cost.new_full(
-            (target_count,), 1.0 / target_count
+        target_marginal = normalized_marginal(
+            target_marginal, target_count, "target_marginal"
         )
 
         class_support = None
@@ -281,12 +297,16 @@ class NeuralOptimalTransportGenerator(nn.Module):
         return_details: bool = False,
         source_labels: Optional[torch.Tensor] = None,
         target_labels: Optional[torch.Tensor] = None,
+        source_marginal: Optional[torch.Tensor] = None,
+        target_marginal: Optional[torch.Tensor] = None,
     ):
         conditional_plan, details = self.compute_transport(
             source_features,
             target_features,
             source_labels=source_labels,
             target_labels=target_labels,
+            source_marginal=source_marginal,
+            target_marginal=target_marginal,
         )
 
         # Barycentric target representation. conditional_plan has row sum 1

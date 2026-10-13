@@ -58,7 +58,8 @@ entropy_re = _en_re_mod.entropy_re
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
-from data_paths import remap_data_path, data_path
+from data_paths import remap_data_path, data_path, exact_ir_partner
+from classification_metrics import classification_metrics, format_classification_metrics
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -67,34 +68,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Data: paired (VIS, IR) images from the data lists + AIS row assigned per class
 # --------------------------------------------------------------------------
 class PairedMultimodalDataset(Dataset):
-    """Reads VIS paths (+labels) from a list file and pairs each VIS image with
-    an IR image following the canonical JMDA-Net pairing rule (DataLoad.py):
-    within the same class folder, sorted(VIS files) and sorted(IR files) are
-    paired by index (truncated to the shorter list). Assigns an AIS sample from
-    the class pool (deterministic cycling; class-index mapping assumption
-    i -> class i). Samples without an IR partner are skipped.
+    """Read the shared VIS cohort and recover its exact IR observation.
+
+    The raw split may place the two modalities of one observation in different
+    train/val folders. Search their union by filename stem, matching JMDA-Net's
+    paired cohort rule. AIS assignment remains deterministic by class.
     """
 
     IMG_EXT = ('.jpg', '.jpeg', '.png')
 
     @staticmethod
     def _find_ir_partner(vis_path):
-        vis_dir = os.path.dirname(vis_path)          # ...\class\可见光
-        ir_dir = vis_dir.replace('可见光', '红外')
-        if not os.path.isdir(ir_dir):
-            return None
-        ext = PairedMultimodalDataset.IMG_EXT
-        vis_files = sorted(f for f in os.listdir(vis_dir)
-                           if f.lower().endswith(ext))
-        ir_files = sorted(f for f in os.listdir(ir_dir)
-                          if f.lower().endswith(ext))
-        name = os.path.basename(vis_path)
-        if name not in vis_files:
-            return None
-        i = vis_files.index(name)
-        if i >= len(ir_files):
-            return None
-        return os.path.join(ir_dir, ir_files[i])
+        return exact_ir_partner(vis_path)
 
     def __init__(self, list_path, ais_data=None, ais_labels=None, transform=None,
                  use_ais=False, ais_dim=23040):
@@ -306,12 +291,11 @@ class BoomdaJMDA(nn.Module):
         self.visual, self.visual_t = data['vision'].to(device), data_t['vision'].to(device)
         self.ir, self.ir_t = data['ir'].to(device), data_t['ir'].to(device)
         self.label = data['label'].to(device)
-        self.label_t = data_t['label'].to(device)  # only used for logging (never in the loss)
         self.alpha = alpha
         domain_source = torch.zeros(self.label.shape[0]).type(torch.LongTensor)
-        domain_target = torch.ones(self.label_t.shape[0]).type(torch.LongTensor)
+        domain_target = torch.ones(self.visual_t.shape[0]).type(torch.LongTensor)
         self.domain_combined_label = torch.cat((domain_source, domain_target), 0).to(device)
-        self.bs_s, self.bs_t = self.label.shape[0], self.label_t.shape[0]
+        self.bs_s, self.bs_t = self.label.shape[0], self.visual_t.shape[0]
 
     def forward(self):
         if self.use_ais:
@@ -472,7 +456,6 @@ class BoomdaJMDA(nn.Module):
             self.scale[0], self.scale[1], self.scale[2], self.scale[3]
 
         self.loss_CE = self.criterion_ce(self.logits, self.label)
-        self.loss_CE_t = self.criterion_ce(self.logits_t, self.label_t)  # logging only
         if self.index_pl.shape[0] >= 1:
             self.loss_CE_tpl = self.criterion_ce(self.logits_t[self.index_pl], self.pl)
         else:
@@ -549,7 +532,7 @@ def evaluate(model, loader):
     model.train()
     total_pred = np.concatenate(total_pred)
     total_label = np.concatenate(total_label)
-    return float((total_pred == total_label).mean())
+    return classification_metrics(total_label.tolist(), total_pred.tolist())
 
 
 def main():
@@ -602,7 +585,8 @@ def main():
 
     model = BoomdaJMDA(args).to(device)
 
-    best_acc = 0.0
+    best_acc = -float('inf')
+    final_acc = None
     num_epoch = args.epochs
     batch_step = max(len(src_loader), len(tgt_loader))
     total_steps = num_epoch * batch_step
@@ -620,15 +604,24 @@ def main():
     for epoch in range(1, num_epoch + 1):
         if eff:
             eff.epoch_start(epoch)
+        src_iter = iter(src_loader)
         tgt_iter = iter(tgt_loader)
-        for i, data in enumerate(src_loader):
+        for i in range(batch_step):
             if eff:
                 eff.step_start()
+            try:
+                data = next(src_iter)
+            except StopIteration:
+                src_iter = iter(src_loader)
+                data = next(src_iter)
             try:
                 data_t = next(tgt_iter)
             except StopIteration:
                 tgt_iter = iter(tgt_loader)
                 data_t = next(tgt_iter)
+            # The dataset carries labels for validation compatibility, but
+            # strict UDA training must not expose target truth to the model.
+            data_t = {key: value for key, value in data_t.items() if key != 'label'}
             p = float(it) / max(total_steps, 1)
             alpha = p ** 2
             it += 1
@@ -639,19 +632,25 @@ def main():
             if eff:
                 eff.step_end()
             if (i + 1) % 10 == 0:
-                print(f'  Epoch [{epoch}/{num_epoch}] batch [{i + 1}/{len(src_loader)}] '
+                print(f'  Epoch [{epoch}/{num_epoch}] batch [{i + 1}/{batch_step}] '
                       f'loss_CE={float(model.loss_CE):.4f} pl_num={model.pl_num} '
                       f'scale={np.round(model.scale, 3).tolist()}')
-        acc = evaluate(model, tgt_val_loader)
+        val_metrics = evaluate(model, tgt_val_loader)
+        acc = val_metrics['accuracy']
+        final_acc = acc
         best_acc = max(best_acc, acc)
-        torch.save(model.state_dict(), os.path.join(args.save_dir, f'boomda_{args.target}_best.pth'))
         print(f'Epoch [{epoch}/{num_epoch}] target val accuracy: {acc:.4f}')
+        print(format_classification_metrics(val_metrics))
         if eff:
             eff.epoch_end(epoch)
 
+    torch.save(model.state_dict(), os.path.join(args.save_dir, f'boomda_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'best_acc': best_acc, 'target': args.target})
-    print(f'\nBoomda smoke test finished. Best target val accuracy ({args.target}): {best_acc:.4f}')
+        eff.finalize(extra_metrics={'final_acc': final_acc,
+                                    'diagnostic_peak_acc': best_acc,
+                                    'target': args.target})
+    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
 
 
 if __name__ == '__main__':

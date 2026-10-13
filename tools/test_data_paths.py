@@ -1,8 +1,10 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from data_paths import _relative_data_parts, remap_data_path
+from data_paths import _relative_data_parts, exact_ir_partner, remap_data_path
 
 
 class CrossPlatformDataPathTests(unittest.TestCase):
@@ -44,6 +46,22 @@ class CrossPlatformDataPathTests(unittest.TestCase):
                 os.path.join(runtime_root, '雾天', 'train', '3', '可见光', 'x.jpg')
             ),
         )
+
+    def test_exact_ir_partner_searches_the_other_raw_split(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            vis_dir = root / 'train' / '1' / '可见光'
+            ir_dir = root / 'val' / '1' / '红外'
+            vis_dir.mkdir(parents=True)
+            ir_dir.mkdir(parents=True)
+            vis_path = vis_dir / 'observation.jpg'
+            ir_path = ir_dir / 'observation.png'
+            vis_path.write_bytes(b'vis')
+            ir_path.write_bytes(b'ir')
+            self.assertEqual(
+                os.path.normpath(exact_ir_partner(str(vis_path))),
+                os.path.normpath(str(ir_path)),
+            )
 
 
 if __name__ == '__main__':

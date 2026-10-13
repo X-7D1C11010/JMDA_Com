@@ -94,8 +94,15 @@ def update_epoch_projections(
     seed: int,
     class_paired: bool = True,
     balance_classes: bool = False,
+    source_class_weights: torch.Tensor = None,
 ):
-    """Extract a complete feature bank and perform one projection update."""
+    """Extract complete feature banks and perform one projection update.
+
+    Supervised adaptation retains the original same-class paired statistics.
+    Unsupervised adaptation collects each domain independently and lets the
+    Tensor module infer an all-pairs soft transport correspondence; it never
+    constructs an arbitrary positional source-target pairing.
+    """
     if len(encoders) != len(modality_keys):
         raise ValueError("encoders and modality_keys must have the same length.")
     if len(encoders) != tal_module.num_modalities:
@@ -105,42 +112,87 @@ def update_epoch_projections(
     if batch_size < 1:
         raise ValueError("batch_size must be positive.")
 
-    pairs = build_epoch_pairs(
-        source_dataset,
-        target_dataset,
-        seed=seed,
-        class_paired=class_paired,
-        balance_classes=balance_classes,
-    )
     previous_training_states = [encoder.training for encoder in encoders]
     for encoder in encoders:
         encoder.eval()
 
     source_features: List[List[torch.Tensor]] = [[] for _ in encoders]
     target_features: List[List[torch.Tensor]] = [[] for _ in encoders]
+    source_labels: List[torch.Tensor] = []
 
     try:
-        for start in range(0, len(pairs), batch_size):
-            batch_pairs = pairs[start:start + batch_size]
-            source_batch = default_collate(
-                [source_dataset[source_index] for source_index, _ in batch_pairs]
+        if class_paired:
+            pairs = build_epoch_pairs(
+                source_dataset,
+                target_dataset,
+                seed=seed,
+                class_paired=True,
+                balance_classes=balance_classes,
             )
-            target_batch = default_collate(
-                [target_dataset[target_index] for _, target_index in batch_pairs]
-            )
-
-            for mode, (encoder, key) in enumerate(zip(encoders, modality_keys)):
-                source_input = source_batch[key].to(device, non_blocking=True)
-                target_input = target_batch[key].to(device, non_blocking=True)
-                source_features[mode].append(encoder(source_input).float())
-                target_features[mode].append(encoder(target_input).float())
+            for start in range(0, len(pairs), batch_size):
+                batch_pairs = pairs[start:start + batch_size]
+                source_batch = default_collate(
+                    [source_dataset[source_index] for source_index, _ in batch_pairs]
+                )
+                target_batch = default_collate(
+                    [target_dataset[target_index] for _, target_index in batch_pairs]
+                )
+                for mode, (encoder, key) in enumerate(
+                    zip(encoders, modality_keys)
+                ):
+                    source_input = source_batch[key].to(device, non_blocking=True)
+                    target_input = target_batch[key].to(device, non_blocking=True)
+                    source_features[mode].append(encoder(source_input).float())
+                    target_features[mode].append(encoder(target_input).float())
+        else:
+            if len(source_dataset) == 0 or len(target_dataset) == 0:
+                raise ValueError("Source and target datasets must both be non-empty.")
+            for dataset, feature_chunks, keep_labels in (
+                (source_dataset, source_features, True),
+                (target_dataset, target_features, False),
+            ):
+                for start in range(0, len(dataset), batch_size):
+                    batch = default_collate(
+                        [
+                            dataset[index]
+                            for index in range(start, min(start + batch_size, len(dataset)))
+                        ]
+                    )
+                    for mode, (encoder, key) in enumerate(
+                        zip(encoders, modality_keys)
+                    ):
+                        inputs = batch[key].to(device, non_blocking=True)
+                        feature_chunks[mode].append(encoder(inputs).float())
+                    if keep_labels:
+                        source_labels.append(batch["label"].to(device))
     finally:
         for encoder, was_training in zip(encoders, previous_training_states):
             encoder.train(was_training)
 
     source_bank = [torch.cat(chunks, dim=0) for chunks in source_features]
     target_bank = [torch.cat(chunks, dim=0) for chunks in target_features]
-    update_info = tal_module.update_projections(source_bank, target_bank)
+    if class_paired:
+        update_info = tal_module.update_projections(source_bank, target_bank)
+    else:
+        source_weights = None
+        if source_class_weights is not None:
+            class_weights = source_class_weights.to(device=device)
+            labels = torch.cat(source_labels, dim=0).long()
+            if labels.min().item() < 0 or labels.max().item() >= class_weights.numel():
+                raise ValueError("Source labels exceed source_class_weights.")
+            # Convert a desired class marginal into per-observation mass.  A
+            # direct lookup would multiply every class by its source sample
+            # count once more and would therefore not realize the requested
+            # partial-set prior.
+            class_counts = torch.bincount(
+                labels, minlength=class_weights.numel()
+            ).to(dtype=class_weights.dtype).clamp_min(1.0)
+            source_weights = class_weights[labels] / class_counts[labels]
+        update_info = tal_module.update_unpaired_projections(
+            source_bank,
+            target_bank,
+            source_weights=source_weights,
+        )
     update_info["class_paired"] = bool(class_paired)
     update_info["class_balanced"] = bool(class_paired and balance_classes)
     return update_info
@@ -158,6 +210,14 @@ def format_svd_update(update_info: Dict[str, object]) -> str:
             f"{update_info['target_subspace_overlap']:.3f}, "
             f"basis_nonorth={update_info['basis_map_non_orthogonality']:.3e}"
         )
+    plan_text = ""
+    if "unlabeled_plan_marginal_residual" in update_info:
+        plan_text = (
+            f", unlabeled_plan_residual="
+            f"{update_info['unlabeled_plan_marginal_residual']:.2e}, "
+            f"unlabeled_plan_entropy="
+            f"{update_info['unlabeled_plan_entropy']:.4f}"
+        )
     return (
         f"SVD update #{update_info['update_count']}: "
         f"pairs={update_info['sample_count']}, sweeps={update_info['sweeps']}, "
@@ -165,7 +225,7 @@ def format_svd_update(update_info: Dict[str, object]) -> str:
         f"effective_ranks={update_info['effective_ranks']}, "
         f"class_paired={update_info['class_paired']}, "
         f"class_balanced={update_info.get('class_balanced', False)}"
-        f"{basis_text}"
+        f"{basis_text}{plan_text}"
     )
 
 

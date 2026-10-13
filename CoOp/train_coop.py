@@ -27,6 +27,8 @@ from coop_model import CustomCLIP
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from class_names import load_class_names
+from classification_metrics import classification_metrics, format_classification_metrics
 from data_paths import remap_data_path
 
 
@@ -73,16 +75,15 @@ class ImageListDataset(Dataset):
 
 def evaluate(model, loader, device):
     model.eval()
-    correct = 0
-    total = 0
+    all_labels, all_predictions = [], []
     with torch.no_grad():
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
             logits = model(imgs)
             pred = logits.argmax(1)
-            correct += (pred == labels).sum().item()
-            total += labels.size(0)
-    return correct / total if total > 0 else 0.0
+            all_labels.extend(labels.cpu().tolist())
+            all_predictions.extend(pred.cpu().tolist())
+    return classification_metrics(all_labels, all_predictions)
 
 
 def main():
@@ -98,6 +99,11 @@ def main():
                                              'data_lists'))
     parser.add_argument('--save-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
+    parser.add_argument(
+        '--class-names-file', type=str,
+        default=os.environ.get('JMDA_CLASS_NAMES_FILE'),
+        help='14 real English class names in zero-based label order',
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -115,8 +121,8 @@ def main():
     clip_model, preprocess = clip_pkg.load('RN50', device='cpu')
     clip_model.float()
 
-    # Class names (14 classes)
-    classnames = [f'class_{i}' for i in range(1, 15)]
+    classnames = load_class_names(args.class_names_file, expected_count=14)
+    print(f'Class names: {classnames}')
 
     # Build CoOp model
     cfg = SimpleCfg()
@@ -147,7 +153,8 @@ def main():
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, num_workers=0)
 
-    best_acc = 0.0
+    best_acc = -float('inf')
+    final_acc = None
     for epoch in range(args.epochs):
         model.train()
         for i, (imgs, labels) in enumerate(src_loader):
@@ -164,14 +171,27 @@ def main():
                 print(f'  Epoch [{epoch+1}/{args.epochs}] batch [{i+1}/{len(src_loader)}] '
                       f'loss={loss.item():.4f} acc={acc:.4f}')
 
-        acc = evaluate(model, tgt_val_loader, device)
+        val_metrics = evaluate(model, tgt_val_loader, device)
+        acc = val_metrics['accuracy']
+        final_acc = acc
         print(f'Epoch [{epoch+1}/{args.epochs}] target val accuracy: {acc:.4f}')
-        if acc > best_acc:
-            best_acc = acc
-            torch.save(model.prompt_learner.state_dict(),
-                       os.path.join(args.save_dir, f'coop_{args.target}_best.pth'))
+        print(format_classification_metrics(val_metrics))
+        best_acc = max(best_acc, acc)
 
-    print(f'\nCoOp smoke test finished. Best target val accuracy ({args.target}): {best_acc:.4f}')
+    torch.save(
+        {
+            'prompt_learner': model.prompt_learner.state_dict(),
+            'class_names': classnames,
+            'target': args.target,
+            'seed': args.seed,
+            'epoch': args.epochs,
+            'final_acc': final_acc,
+            'final_metrics': val_metrics,
+        },
+        os.path.join(args.save_dir, f'coop_{args.target}_last.pth'),
+    )
+    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
 
 
 if __name__ == '__main__':

@@ -38,6 +38,7 @@ from tllib.vision.models import resnet18
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from data_paths import remap_data_path
+from classification_metrics import classification_metrics, format_classification_metrics
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -96,16 +97,16 @@ def get_val_transform():
 
 def validate(val_loader, classifier):
     classifier.eval()
-    correct, total = 0, 0
+    all_labels, all_predictions = [], []
     with torch.no_grad():
         for images, target in val_loader:
             images, target = images.to(device), target.to(device)
             output = classifier(images)
             pred = output.argmax(dim=1)
-            correct += (pred == target).sum().item()
-            total += target.size(0)
+            all_labels.extend(target.cpu().tolist())
+            all_predictions.extend(pred.cpu().tolist())
     classifier.train()
-    return correct / total if total else 0.0
+    return classification_metrics(all_labels, all_predictions)
 
 
 def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
@@ -197,7 +198,8 @@ def main():
                     weight_decay=args.wd, nesterov=True)
     lr_scheduler = LambdaLR(optimizer, lambda x: args.lr * (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
 
-    best_acc = 0.
+    best_acc = -float('inf')
+    final_acc = None
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
@@ -212,16 +214,22 @@ def main():
             eff.epoch_start(epoch)
         train_epoch(train_source_iter, train_target_iter, classifier, mdd,
                     optimizer, lr_scheduler, epoch, args, eff=eff)
-        acc = validate(tgt_val_loader, classifier)
+        val_metrics = validate(tgt_val_loader, classifier)
+        acc = val_metrics['accuracy']
+        final_acc = acc
         best_acc = max(best_acc, acc)
-        torch.save(classifier.state_dict(), os.path.join(args.save_dir, f'mdd_{args.target}_best.pth'))
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}')
+        print(format_classification_metrics(val_metrics))
         if eff:
             eff.epoch_end(epoch)
 
+    torch.save(classifier.state_dict(), os.path.join(args.save_dir, f'mdd_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'best_acc': best_acc, 'target': args.target})
-    print(f'\nMDD smoke test finished. Best target val accuracy ({args.target}): {best_acc:.4f}')
+        eff.finalize(extra_metrics={'final_acc': final_acc,
+                                    'diagnostic_peak_acc': best_acc,
+                                    'target': args.target})
+    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
 
 
 if __name__ == '__main__':

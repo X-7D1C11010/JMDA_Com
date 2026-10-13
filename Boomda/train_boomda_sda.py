@@ -54,7 +54,7 @@ entropy_re = _en_re_mod.entropy_re
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
-from data_paths import remap_data_path, data_path
+from data_paths import remap_data_path, data_path, exact_ir_partner
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -63,28 +63,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Data: paired (VIS, IR) images from the data lists + AIS row assigned per class
 # --------------------------------------------------------------------------
 class PairedMultimodalDataset(Dataset):
-    """Same pairing rule as the UDA script (canonical JMDA-Net pairing)."""
+    """Use the same exact-stem, train+val-union pairs as JMDA-Net."""
 
     IMG_EXT = ('.jpg', '.jpeg', '.png')
 
     @staticmethod
     def _find_ir_partner(vis_path):
-        vis_dir = os.path.dirname(vis_path)          # ...\class\可见光
-        ir_dir = vis_dir.replace('可见光', '红外')
-        if not os.path.isdir(ir_dir):
-            return None
-        ext = PairedMultimodalDataset.IMG_EXT
-        vis_files = sorted(f for f in os.listdir(vis_dir)
-                           if f.lower().endswith(ext))
-        ir_files = sorted(f for f in os.listdir(ir_dir)
-                          if f.lower().endswith(ext))
-        name = os.path.basename(vis_path)
-        if name not in vis_files:
-            return None
-        i = vis_files.index(name)
-        if i >= len(ir_files):
-            return None
-        return os.path.join(ir_dir, ir_files[i])
+        return exact_ir_partner(vis_path)
 
     def __init__(self, list_path, ais_data=None, ais_labels=None, transform=None,
                  use_ais=False, ais_dim=23040):

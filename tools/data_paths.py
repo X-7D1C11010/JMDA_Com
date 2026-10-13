@@ -78,3 +78,36 @@ def data_path(*parts):
     """
     root = get_data_root() or _LIST_DATA_ROOTS[0]
     return os.path.join(root, *parts)
+
+
+def exact_ir_partner(vis_path):
+    """Find the exact-stem IR mate across the raw train/val union.
+
+    The dataset's original split may put VIS and IR observations in different
+    phase folders.  This mirrors JMDA-Net's paired-dataset reconstruction and
+    is shared by multimodal comparison methods and preflight validation.
+    """
+    stem = os.path.splitext(os.path.basename(vis_path))[0]
+    same_split_ir = os.path.dirname(vis_path).replace('可见光', '红外')
+    candidate_dirs = [same_split_ir]
+    parts = same_split_ir.split(os.sep)
+    for index, part in enumerate(parts):
+        if part not in ('train', 'val'):
+            continue
+        alternate = list(parts)
+        alternate[index] = 'val' if part == 'train' else 'train'
+        candidate_dirs.append(os.sep.join(alternate))
+        break
+    extensions = ('.jpg', '.jpeg', '.png')
+    for ir_dir in candidate_dirs:
+        if not os.path.isdir(ir_dir):
+            continue
+        matches = sorted(
+            filename for filename in os.listdir(ir_dir)
+            if filename.lower().endswith(extensions)
+            and os.path.splitext(filename)[0] == stem
+        )
+        if matches:
+            # _image_map in JMDA-Net keeps the last lexicographic duplicate.
+            return os.path.join(ir_dir, matches[-1])
+    return None

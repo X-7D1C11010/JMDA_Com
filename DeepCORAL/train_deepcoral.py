@@ -23,6 +23,7 @@ from models import CORAL
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from data_paths import remap_data_path
+from classification_metrics import classification_metrics, format_classification_metrics
 
 
 class ImageListDataset(Dataset):
@@ -86,16 +87,15 @@ def get_transforms():
 
 def evaluate(model, loader, device):
     model.eval()
-    correct = 0
-    total = 0
+    all_labels, all_predictions = [], []
     with torch.no_grad():
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
             out = model(imgs)
             pred = out.argmax(1)
-            correct += (pred == labels).sum().item()
-            total += labels.size(0)
-    return correct / total if total > 0 else 0.0
+            all_labels.extend(labels.cpu().tolist())
+            all_predictions.extend(pred.cpu().tolist())
+    return classification_metrics(all_labels, all_predictions)
 
 
 def main():
@@ -145,7 +145,8 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
 
-    best_acc = 0.0
+    best_acc = -float('inf')
+    final_acc = None
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
@@ -161,7 +162,7 @@ def main():
         model.train()
         src_iter = iter(src_loader)
         tgt_iter = iter(tgt_loader)
-        n_batches = min(len(src_loader), len(tgt_loader))
+        n_batches = max(len(src_loader), len(tgt_loader))
 
         for i in range(n_batches):
             if eff:
@@ -199,17 +200,22 @@ def main():
                 print(f'  Epoch [{epoch+1}/{args.epochs}] batch [{i+1}/{n_batches}] '
                       f'loss_cls={loss_cls.item():.4f} loss_coral={loss_coral.item():.4f}')
 
-        acc = evaluate(model, tgt_val_loader, device)
+        val_metrics = evaluate(model, tgt_val_loader, device)
+        acc = val_metrics['accuracy']
+        final_acc = acc
         print(f'Epoch [{epoch+1}/{args.epochs}] target val accuracy: {acc:.4f}')
-        if acc > best_acc:
-            best_acc = acc
-            torch.save(model.state_dict(), os.path.join(args.save_dir, f'deepcoral_{args.target}_best.pth'))
+        print(format_classification_metrics(val_metrics))
+        best_acc = max(best_acc, acc)
         if eff:
             eff.epoch_end(epoch)
 
+    torch.save(model.state_dict(), os.path.join(args.save_dir, f'deepcoral_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'best_acc': best_acc, 'target': args.target})
-    print(f'\nDeep CORAL smoke test finished. Best target val accuracy ({args.target}): {best_acc:.4f}')
+        eff.finalize(extra_metrics={'final_acc': final_acc,
+                                    'diagnostic_peak_acc': best_acc,
+                                    'target': args.target})
+    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
 
 
 if __name__ == '__main__':

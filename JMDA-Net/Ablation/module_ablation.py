@@ -1,4 +1,6 @@
 import os
+import json
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -371,19 +373,75 @@ def select_report_metrics(metric_history, strategy='best', window=10):
     return report
 
 
+def adaptation_protocol(args):
+    """Return the training protocol implied by target-label access."""
+    if args.use_target_labels:
+        return 'SDA'
+    if args.target_label_ratio > 0.0 and args.target_cls_weight > 0.0:
+        return 'SSDA'
+    return 'UDA'
+
+
+def class_prior_to_sample_marginal(labels, class_prior):
+    """Allocate a desired class prior uniformly within each observed class."""
+    labels = labels.long().reshape(-1)
+    if labels.numel() == 0:
+        raise ValueError("Cannot build a source marginal from an empty batch.")
+    if labels.min().item() < 0 or labels.max().item() >= class_prior.numel():
+        raise ValueError("Source labels exceed the class-prior dimension.")
+    counts = torch.bincount(
+        labels, minlength=class_prior.numel()
+    ).to(device=class_prior.device, dtype=class_prior.dtype).clamp_min(1.0)
+    sample_mass = class_prior[labels] / counts[labels]
+    return sample_mass / sample_mass.sum().clamp_min(1e-8)
+
+
 class UnpairedDomainSampler:
-    """Randomly pair source and target batches without using target labels."""
+    """Cover the larger domain and cycle the smaller one without labels.
+
+    The previous implementation used ``min(len(source), len(target))`` and
+    sampled both domains with replacement.  On backlight that yielded only
+    three optimizer steps per epoch and did not cover either dataset.  This
+    sampler defines an epoch by the larger domain, shuffles each domain
+    independently, and cycles only when one side is exhausted.
+    """
 
     def __init__(self, src_ds, tgt_ds, batch_size):
         self.src_ds = src_ds
         self.tgt_ds = tgt_ds
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive.")
         self.batch_size = batch_size
-        self.n_batches = min(len(src_ds), len(tgt_ds)) // batch_size
+        if len(src_ds) == 0 or len(tgt_ds) == 0:
+            raise ValueError("Source and target datasets must both be non-empty.")
+        self.n_batches = math.ceil(max(len(src_ds), len(tgt_ds)) / batch_size)
+
+    @staticmethod
+    def _take(indices, position, count):
+        selected = []
+        while len(selected) < count:
+            if position >= len(indices):
+                random.shuffle(indices)
+                position = 0
+            take = min(count - len(selected), len(indices) - position)
+            selected.extend(indices[position:position + take])
+            position += take
+        return selected, position
 
     def __iter__(self):
+        source_order = list(range(len(self.src_ds)))
+        target_order = list(range(len(self.tgt_ds)))
+        random.shuffle(source_order)
+        random.shuffle(target_order)
+        source_position = 0
+        target_position = 0
         for _ in range(self.n_batches):
-            src_indices = random.choices(range(len(self.src_ds)), k=self.batch_size)
-            tgt_indices = random.choices(range(len(self.tgt_ds)), k=self.batch_size)
+            src_indices, source_position = self._take(
+                source_order, source_position, self.batch_size
+            )
+            tgt_indices, target_position = self._take(
+                target_order, target_position, self.batch_size
+            )
             src_batch = torch.utils.data.default_collate([self.src_ds[i] for i in src_indices])
             tgt_batch = torch.utils.data.default_collate([self.tgt_ds[i] for i in tgt_indices])
             tgt_batch['sample_index'] = torch.tensor(tgt_indices, dtype=torch.long)
@@ -489,6 +547,7 @@ def run_single_iteration(args, seed, logger):
     SOURCE_ROOT = args.source_root
     TARGET_ROOT = args.target_root
     target_weather = os.path.basename(TARGET_ROOT)
+    protocol = adaptation_protocol(args)
 
     src_train_ds = MultiModalDomainDataset(SOURCE_ROOT, domain_type='source', phase='train')
     global_map = src_train_ds.get_label_map()
@@ -524,10 +583,15 @@ def run_single_iteration(args, seed, logger):
         f"source_train={len(src_train_ds)}, target_train={len(tgt_train_ds)}, "
         f"target_val={len(tgt_val_ds)}"
     )
+    target_train_counts = (
+        dict(sorted(Counter(tgt_train_ds.labels).items()))
+        if protocol != 'UDA'
+        else '<not inspected in strict UDA>'
+    )
     logger.info(
         "Class counts (original labels): "
         f"source={dict(sorted(Counter(src_train_ds.labels).items()))}; "
-        f"target_train={dict(sorted(Counter(tgt_train_ds.labels).items()))}; "
+        f"target_train={target_train_counts}; "
         f"target_val={dict(sorted(Counter(tgt_val_ds.labels).items()))}"
     )
     logger.info(
@@ -545,15 +609,22 @@ def run_single_iteration(args, seed, logger):
     if not args.use_target_labels and target_label_ratio > 0.0 and target_cls_weight > 0.0:
         target_labeled_indices = build_target_labeled_indices(tgt_train_ds, target_label_ratio, seed)
 
-    if args.use_target_labels:
+    if protocol == 'SDA':
         paired_loader = PairedClassSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
         logger.info("Training mode: full target-label supervision (class-paired batches).")
     else:
         paired_loader = UnpairedDomainSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
-        logger.info(
-            "Training mode: unpaired target adaptation with controlled target-label loss "
-            f"(ratio={target_label_ratio:.2f}, weight={target_cls_weight:.2f})."
-        )
+        if protocol == 'UDA':
+            logger.info(
+                "Training mode: strict UDA; target training labels are not read "
+                "by the optimization path."
+            )
+        else:
+            logger.info(
+                "Training mode: SSDA with an unpaired target stream and a fixed "
+                f"labeled subset (ratio={target_label_ratio:.2f}, "
+                f"weight={target_cls_weight:.2f})."
+            )
         if target_labeled_indices is not None:
             logger.info(
                 f"Fixed labeled target subset: {len(target_labeled_indices)}/{len(tgt_train_ds)} samples."
@@ -601,6 +672,8 @@ def run_single_iteration(args, seed, logger):
             num_modalities=2,
             max_svd_sweeps=args.svd_max_sweeps,
             svd_tolerance=args.svd_tolerance,
+            unpaired_ot_epsilon=args.ot_epsilon,
+            unpaired_sinkhorn_iterations=args.ot_sinkhorn_iterations,
         ).to(DEVICE)
     else:
         tal_module = ChannelConcatenation(expected_dims=[VIS_DIM, IR_DIM]).to(DEVICE)
@@ -640,14 +713,39 @@ def run_single_iteration(args, seed, logger):
                 f"{args.ot_ramp_epochs} epochs."
             )
     if args.use_tensor_module:
+        statistics_description = (
+            "complete class-paired target-training bank"
+            if protocol == 'SDA'
+            else "complete independent source/target training banks"
+        )
         logger.info(
-            f"Tensor projection update: once per epoch from the complete "
-            f"target-training pairing bank; projection_dim={PROJ_DIM}, "
+            f"Tensor projection update: once per epoch from the "
+            f"{statistics_description}; projection_dim={PROJ_DIM}, "
             f"max_sweeps={args.svd_max_sweeps}, relative singular-value "
             f"tolerance={args.svd_tolerance:g}"
         )
 
     classifier = Classifier(input_dim=fused_dim, num_classes=len(global_map)).to(DEVICE)
+    target_class_prior = torch.full(
+        (len(global_map),),
+        1.0 / max(len(global_map), 1),
+        device=DEVICE,
+    )
+    target_prior_updates = 0
+
+    def stabilized_target_prior():
+        if args.use_target_labels or not args.uda_source_reweighting:
+            return torch.full_like(
+                target_class_prior, 1.0 / max(target_class_prior.numel(), 1)
+            )
+        uniform = torch.full_like(
+            target_class_prior, 1.0 / max(target_class_prior.numel(), 1)
+        )
+        mixed = (
+            (1.0 - args.uda_prior_uniform_mix) * target_class_prior
+            + args.uda_prior_uniform_mix * uniform
+        )
+        return mixed / mixed.sum().clamp_min(1e-8)
 
     vis_params = [p for p in net_vis.parameters() if p.requires_grad]
     # When enabled, TAL owns only closed-form SVD buffers. They must not enter
@@ -705,14 +803,21 @@ def run_single_iteration(args, seed, logger):
                 target_dataset=tgt_svd_ds,
                 batch_size=args.svd_stat_batch_size,
                 device=DEVICE,
-                # Cross-domain observations are class-corresponding rather
-                # than instance-corresponding. Keep the within-class pairing
-                # fixed for one repeated run so an epoch update reflects
-                # encoder/covariance change, not a newly randomized matching.
+                # SDA keeps its same-class pairing fixed; UDA/SSDA collect
+                # independent full-domain banks and infer a soft matching.
                 seed=seed * 1000,
                 class_paired=args.use_target_labels,
                 balance_classes=(
                     args.use_target_labels and args.balance_svd_classes
+                ),
+                source_class_weights=(
+                    stabilized_target_prior()
+                    if (
+                        protocol != 'SDA'
+                        and args.uda_source_reweighting
+                        and target_prior_updates > 0
+                    )
+                    else None
                 ),
             )
             # Epoch 1 has no learned downstream function to preserve. From
@@ -759,16 +864,37 @@ def run_single_iteration(args, seed, logger):
         train_correct = 0
         train_total = 0
         steps = 0
+        collect_target_prior = (
+            protocol != 'SDA'
+            and args.uda_source_reweighting
+            and epoch >= args.uda_prior_warmup_epochs
+        )
+        target_probability_sum = torch.zeros(
+            len(tgt_train_ds), len(global_map), device=DEVICE
+        )
+        target_probability_count = torch.zeros(
+            len(tgt_train_ds), device=DEVICE
+        )
 
         for src_data, tgt_data in paired_loader:
             steps += 1
+
+            if protocol == 'UDA':
+                tgt_data = {
+                    key: value for key, value in tgt_data.items()
+                    if key != 'label'
+                }
 
             s_vis = src_data['vis'].to(DEVICE)
             s_ir = src_data['ir'].to(DEVICE)
             s_label = src_data['label'].to(DEVICE)
             t_vis = tgt_data['vis'].to(DEVICE)
             t_ir = tgt_data['ir'].to(DEVICE)
-            t_label = tgt_data['label'].to(DEVICE)
+            # Target labels are deliberately not even moved to the device in
+            # strict UDA.  They are available only in SDA/SSDA training.
+            t_label = (
+                tgt_data['label'].to(DEVICE) if protocol != 'UDA' else None
+            )
 
             f_s_vis, f_s_ir = net_vis(s_vis), net_ir(s_ir)
             f_t_vis, f_t_ir = net_vis(t_vis), net_ir(t_ir)
@@ -780,6 +906,9 @@ def run_single_iteration(args, seed, logger):
                 (p_s_vis, p_s_ir), (p_t_vis, p_t_ir), loss_tal = tal_module(
                     [f_s_vis, f_s_ir],
                     [f_t_vis, f_t_ir],
+                    # Strict UDA has no semantic row-wise pairing. Its Tensor
+                    # loss is computed below from an all-pairs soft plan.
+                    compute_alignment=args.use_target_labels,
                 )
             else:
                 (p_s_vis, p_s_ir), (p_t_vis, p_t_ir), loss_tal = tal_module(
@@ -790,6 +919,28 @@ def run_single_iteration(args, seed, logger):
             feat_src = torch.cat([p_s_vis, p_s_ir], dim=1)
             feat_tgt = torch.cat([p_t_vis, p_t_ir], dim=1)
 
+            pred_src = classifier(feat_src)
+            pred_tgt = classifier(feat_tgt)
+            source_marginal = None
+            if collect_target_prior:
+                with torch.no_grad():
+                    target_indices = tgt_data['sample_index'].to(DEVICE).long()
+                    target_probability_sum.index_add_(
+                        0, target_indices, F.softmax(pred_tgt, dim=1)
+                    )
+                    target_probability_count.index_add_(
+                        0,
+                        target_indices,
+                        torch.ones_like(target_indices, dtype=torch.float32),
+                    )
+                # Use only a prior estimated from a completed earlier epoch.
+                # This prevents same-step self-reinforcement and keeps the
+                # source marginal observation-uniform throughout warm-up.
+                if target_prior_updates > 0:
+                    source_marginal = class_prior_to_sample_marginal(
+                        s_label, stabilized_target_prior()
+                    )
+
             if args.use_ot_module and joint_ot_scale > 0.0:
                 feat_mid, transport_details = generator(
                     feat_src,
@@ -797,10 +948,27 @@ def run_single_iteration(args, seed, logger):
                     return_details=True,
                     source_labels=s_label if use_class_conditional_ot else None,
                     target_labels=t_label if use_class_conditional_ot else None,
+                    source_marginal=source_marginal,
                 )
             else:
                 feat_mid = None
                 transport_details = None
+
+            if args.use_tensor_module and not args.use_target_labels:
+                if transport_details is not None:
+                    tensor_plan = transport_details['mass_plan'].detach()
+                else:
+                    tensor_plan, _ = tal_module.build_unlabeled_transport_plan(
+                        [p_s_vis, p_s_ir],
+                        [p_t_vis, p_t_ir],
+                        source_weights=source_marginal,
+                    )
+                    tensor_plan = tensor_plan.detach()
+                loss_tal = tal_module.compute_alignment_loss(
+                    [p_s_vis, p_s_ir],
+                    [p_t_vis, p_t_ir],
+                    mass_plan=tensor_plan,
+                )
 
             if (
                 steps % DISCRIMINATOR_UPDATE_INTERVAL == 0
@@ -824,19 +992,20 @@ def run_single_iteration(args, seed, logger):
 
             optimizer_g.zero_grad()
 
-            pred_src = classifier(feat_src)
-            pred_tgt = classifier(feat_tgt)
-
             loss_cls_src = criterion_cls(pred_src, s_label)
             loss_cls_total = loss_cls_src
-            loss_cls_tgt, target_labeled_count = sampled_target_classification_loss(
-                criterion_cls,
-                pred_tgt,
-                t_label,
-                target_label_ratio,
-                tgt_data.get('sample_index'),
-                target_labeled_indices,
-            )
+            if protocol == 'SSDA':
+                loss_cls_tgt, target_labeled_count = sampled_target_classification_loss(
+                    criterion_cls,
+                    pred_tgt,
+                    t_label,
+                    target_label_ratio,
+                    tgt_data.get('sample_index'),
+                    target_labeled_indices,
+                )
+            else:
+                loss_cls_tgt = pred_tgt.new_zeros(())
+                target_labeled_count = 0
             if target_labeled_count > 0 and target_cls_weight > 0.0:
                 loss_cls_total = loss_cls_total + target_cls_weight * loss_cls_tgt
             if args.use_ot_module and feat_mid is not None:
@@ -904,8 +1073,8 @@ def run_single_iteration(args, seed, logger):
                     'off_class_mass'
                 ].item()
 
-            train_logits = pred_tgt if args.use_target_labels else pred_src
-            train_labels = t_label if args.use_target_labels else s_label
+            train_logits = pred_tgt if protocol == 'SDA' else pred_src
+            train_labels = t_label if protocol == 'SDA' else s_label
             _, predicted = torch.max(train_logits.data, 1)
             train_correct += (predicted == train_labels).sum().item()
             train_total += train_labels.size(0)
@@ -917,6 +1086,28 @@ def run_single_iteration(args, seed, logger):
                     "Tensor projections changed inside the mini-batch training "
                     "loop; projections must remain fixed for the whole epoch."
                 )
+
+        if collect_target_prior:
+            observed = target_probability_count > 0
+            if not bool(observed.all()):
+                missing_count = int((~observed).sum().item())
+                raise RuntimeError(
+                    "Unlabeled target-prior pass did not cover the complete "
+                    f"target training domain ({missing_count} samples missing)."
+                )
+            with torch.no_grad():
+                per_sample_probability = target_probability_sum / (
+                    target_probability_count.unsqueeze(1).clamp_min(1.0)
+                )
+                complete_target_prior = per_sample_probability.mean(dim=0)
+                target_class_prior.mul_(args.uda_prior_momentum).add_(
+                    complete_target_prior,
+                    alpha=1.0 - args.uda_prior_momentum,
+                )
+                target_class_prior.div_(
+                    target_class_prior.sum().clamp_min(1e-8)
+                )
+                target_prior_updates += 1
 
         val_metrics = evaluate(net_vis, net_ir, tal_module, classifier, 
                               val_loader, DEVICE, global_map, args.use_tensor_module)
@@ -963,6 +1154,13 @@ def run_single_iteration(args, seed, logger):
                    f"{val_metrics['recall_macro']:.4f}/"
                    f"{val_metrics['f1_macro']:.4f} | "
                    f"LR feature/other: {current_feature_lr:.6g}/{current_other_lr:.6g}")
+        if protocol != 'SDA':
+            prior = stabilized_target_prior().detach()
+            prior_entropy = -(prior * prior.clamp_min(1e-8).log()).sum().item()
+            log_msg += (
+                f" | unlabeled source-prior min/max/entropy: {prior.min().item():.3e}/"
+                f"{prior.max().item():.3e}/{prior_entropy:.4f}"
+            )
 
         logger.info(log_msg)
 
@@ -988,12 +1186,42 @@ def run_single_iteration(args, seed, logger):
         f"reported_acc={report_metrics['accuracy']:.4f}, best_acc={best_val_acc:.4f}"
         f"{selected_epoch_text}"
     )
+    if args.checkpoint_dir:
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(
+            args.checkpoint_dir,
+            f"jmda_{protocol.lower()}_last_seed{seed}.pth",
+        )
+        torch.save(
+            {
+                'seed': seed,
+                'epoch': EPOCHS,
+                'report_strategy': args.report_strategy,
+                'net_vis': net_vis.state_dict(),
+                'net_ir': net_ir.state_dict(),
+                'tal_module': tal_module.state_dict(),
+                'generator': generator.state_dict() if generator is not None else None,
+                'classifier': classifier.state_dict(),
+                'discriminator': discriminator.state_dict(),
+                'target_class_prior': target_class_prior.detach().cpu(),
+                'target_prior_updates': target_prior_updates,
+                'final_metrics': dict(report_metrics),
+            },
+            checkpoint_path,
+        )
+        logger.info(f"Saved final checkpoint: {checkpoint_path}")
     return report_metrics
 
 
 def run_ablation_experiment(args):
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     NUM_ITERATIONS = args.num_iterations
+    protocol = adaptation_protocol(args)
+    if protocol == 'UDA' and args.report_strategy not in ('last', 'last_window'):
+        raise ValueError(
+            "Strict UDA cannot select a checkpoint using target validation "
+            "labels; use --report_strategy last or last_window."
+        )
 
     SOURCE_ROOT = args.source_root
     TARGET_ROOT = args.target_root
@@ -1026,11 +1254,15 @@ def run_ablation_experiment(args):
     logger.info(f"目标域天气: {target_weather}")
     logger.info(f"训练开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"设备: {DEVICE}")
+    logger.info(f"协议: {protocol}")
     logger.info(f"源域: {SOURCE_ROOT}")
     logger.info(f"目标域: {TARGET_ROOT}")
     logger.info(f"批次大小: {args.batch_size}")
     logger.info(f"总轮数: {args.epochs}")
-    logger.info(f"迭代次数: {NUM_ITERATIONS}")
+    logger.info(
+        f"迭代次数: {NUM_ITERATIONS}; seeds="
+        f"{list(range(args.base_seed, args.base_seed + NUM_ITERATIONS))}"
+    )
     logger.info(f"使用Tensor模块: {'是' if args.use_tensor_module else '否'}")
     logger.info(f"使用OT模块: {'是' if args.use_ot_module else '否'}")
     logger.info(f"特征融合方式: {'Tensor对齐' if args.use_tensor_module else '通道拼接'}")
@@ -1049,12 +1281,27 @@ def run_ablation_experiment(args):
         )
     logger.info(f"学习率: feature={args.lr_feature}, other={args.lr_other}, weight_decay={args.weight_decay}")
     logger.info(f"报告策略: {args.report_strategy}, 窗口: {args.report_window}")
+    if protocol == 'UDA':
+        logger.info(
+            "UDA无标签对应: all-pairs Sinkhorn Tensor/SVD; "
+            f"source-prior reweighting={args.uda_source_reweighting}, "
+            f"prior_warmup={args.uda_prior_warmup_epochs}, "
+            f"momentum={args.uda_prior_momentum}, "
+            f"uniform_mix={args.uda_prior_uniform_mix}"
+        )
+    elif protocol == 'SSDA':
+        logger.info(
+            "SSDA: only the fixed labeled target subset contributes target "
+            "classification loss; Tensor/SVD correspondence remains unlabeled."
+        )
     logger.info("=" * 80)
 
     all_iteration_results = []
 
+    iteration_seeds = []
     for iteration in range(NUM_ITERATIONS):
-        seed = 42 + iteration
+        seed = args.base_seed + iteration
+        iteration_seeds.append(seed)
         logger.info(f"\n{'='*80}")
         logger.info(f"迭代 {iteration + 1}/{NUM_ITERATIONS}")
         logger.info(f"随机种子: {seed}")
@@ -1106,6 +1353,28 @@ def run_ablation_experiment(args):
         logger.info(f"  均值 (Mean): {mean_val:.4f}")
         logger.info(f"  标准差 (Std): {std_val:.4f}")
 
+    machine_summary = {
+        'protocol': adaptation_protocol(args),
+        'report_strategy': args.report_strategy,
+        'num_iterations': len(all_iteration_results),
+        'seeds': iteration_seeds[:len(all_iteration_results)],
+        'metrics': {
+            metric_name: {
+                'values': [
+                    float(value)
+                    for value in summary_results[metric_name]['values']
+                ],
+                'mean': float(summary_results[metric_name]['mean']),
+                'std': float(summary_results[metric_name]['std']),
+            }
+            for metric_name in metrics_to_report
+        },
+    }
+    logger.info(
+        "JMDA_RUN_SUMMARY_JSON: "
+        + json.dumps(machine_summary, ensure_ascii=False, sort_keys=True)
+    )
+
     logger.info(f"\n训练结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 80)
 
@@ -1132,12 +1401,14 @@ def main():
     parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
     parser.add_argument('--epochs', type=int, default=100, help='训练轮数')
     parser.add_argument('--num_iterations', type=int, default=5, help='迭代次数')
+    parser.add_argument('--base_seed', type=int, default=42,
+                       help='first seed; repeated runs use base_seed + iteration')
     parser.add_argument('--use_target_labels', action='store_true',
                        help='使用目标域训练标签进行半监督训练；默认不使用目标域标签')
-    parser.add_argument('--target_label_ratio', type=float, default=0.35,
-                       help='fraction of target batch labels used for controlled semi-supervision when --use_target_labels is off')
-    parser.add_argument('--target_cls_weight', type=float, default=0.50,
-                       help='weight for the controlled target classification loss when --use_target_labels is off')
+    parser.add_argument('--target_label_ratio', type=float, default=0.0,
+                       help='SSDA only: fraction of target labels used when --use_target_labels is off; zero gives strict UDA')
+    parser.add_argument('--target_cls_weight', type=float, default=0.0,
+                       help='SSDA only: target classification weight; zero gives strict UDA')
     parser.add_argument('--lr_feature', type=float, default=5e-6, help='feature extractor learning rate')
     parser.add_argument('--lr_other', type=float, default=2e-4, help='other module learning rate')
     parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
@@ -1160,6 +1431,16 @@ def main():
                        help='Tensor-only warm-up epochs before OT is enabled in the full model')
     parser.add_argument('--ot_ramp_epochs', type=int, default=5,
                        help='epochs used to ramp joint OT losses from zero to full weight')
+    parser.add_argument('--uda_source_reweighting', action='store_true', default=True,
+                       help='estimate a source-class marginal from unlabeled target predictions')
+    parser.add_argument('--no_uda_source_reweighting', dest='uda_source_reweighting',
+                       action='store_false', help='use a uniform source marginal in UDA')
+    parser.add_argument('--uda_prior_momentum', type=float, default=0.9,
+                       help='EMA momentum for the unlabeled target class prior')
+    parser.add_argument('--uda_prior_warmup_epochs', type=int, default=10,
+                       help='source-only warm-up before estimating the unlabeled target class prior')
+    parser.add_argument('--uda_prior_uniform_mix', type=float, default=0.10,
+                       help='uniform smoothing mixed into the estimated UDA class prior')
     parser.add_argument('--class_conditional_ot', action='store_true', default=True,
                        help='in supervised DA, constrain revised OT support to same-class pairs')
     parser.add_argument('--no_class_conditional_ot', dest='class_conditional_ot',
@@ -1174,13 +1455,15 @@ def main():
                        help='class-balance supervised epoch-level SVD statistics')
     parser.add_argument('--no_balance_svd_classes', dest='balance_svd_classes',
                        action='store_false', help='use each target sample once without SVD class balancing')
-    parser.add_argument('--report_strategy', type=str, default='best',
+    parser.add_argument('--report_strategy', type=str, default='last',
                        choices=['best', 'best_window', 'last', 'last_window'],
                        help='best selects the highest-validation-accuracy epoch in each iteration')
     parser.add_argument('--report_window', type=int, default=10,
                        help='number of final epochs averaged when report_strategy=last_window')
-    parser.add_argument('--auto_ablation_hparams', action='store_true', default=True,
-                       help='automatically tune controlled-supervision and regularization per ablation setting')
+    parser.add_argument('--checkpoint_dir', type=str, default='',
+                       help='directory for per-seed final checkpoints; empty disables saving')
+    parser.add_argument('--auto_ablation_hparams', action='store_true', default=False,
+                       help='enable the historical SSDA target-label schedule explicitly')
     parser.add_argument('--no_auto_ablation_hparams', dest='auto_ablation_hparams',
                        action='store_false', help='disable automatic ablation hyperparameter schedule')
     parser.add_argument('--use_tensor_module', action='store_true', help='使用Tensor模块')
@@ -1199,6 +1482,18 @@ def main():
         parser.error('--ot_warmup_epochs cannot be negative')
     if args.ot_ramp_epochs < 1:
         parser.error('--ot_ramp_epochs must be at least 1')
+    if args.num_iterations < 1:
+        parser.error('--num_iterations must be at least 1')
+    if not 0.0 <= args.target_label_ratio <= 1.0:
+        parser.error('--target_label_ratio must be in [0, 1]')
+    if args.target_cls_weight < 0.0:
+        parser.error('--target_cls_weight cannot be negative')
+    if not 0.0 <= args.uda_prior_momentum < 1.0:
+        parser.error('--uda_prior_momentum must be in [0, 1)')
+    if args.uda_prior_warmup_epochs < 0:
+        parser.error('--uda_prior_warmup_epochs cannot be negative')
+    if not 0.0 <= args.uda_prior_uniform_mix <= 1.0:
+        parser.error('--uda_prior_uniform_mix must be in [0, 1]')
 
     if args.ablation_mode == 'all':
         # "all" means all ablation settings only. The complete model
