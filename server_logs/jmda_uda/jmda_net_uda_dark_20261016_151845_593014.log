@@ -1,0 +1,65 @@
+================================================================================
+模块消融实验 - with_tensor_with_ot
+目标域天气: 黑天
+训练开始时间: 2026-10-16 15:31:18
+设备: cuda
+协议: UDA (adaptation=UDA)
+标签空间模式: partial_set
+源域: /mnt/data/lixiang/data/Data/晴天
+目标域: /mnt/data/lixiang/data/Data/黑天
+批次大小: 32
+总轮数: 100
+迭代次数: 5; seeds=[42, 43, 44, 45, 46]
+使用Tensor模块: 是
+使用OT模块: 是
+特征融合方式: Tensor对齐
+域对齐方式: 最优传输
+目标标签比例/权重: 0.0/0.0
+Tensor/Adv损失权重: 0.12/0.08
+Tensor投影维度/更新: 64/每epoch一次; SVD统计批次=32
+学习率: feature=5e-06, other=0.0002, weight_decay=0.0005
+判别器学习率调度: 与生成侧同步余弦衰减
+报告策略: last, 窗口: 10
+UDA无标签对应: all-pairs Sinkhorn Tensor/SVD; source-prior reweighting=True, prior_warmup=10, momentum=0.9, uniform_mix=0.1
+================================================================================
+
+================================================================================
+迭代 1/5
+随机种子: 42
+================================================================================
+Dataset audit: source_train=760, target_train=465, target_val=120
+Class counts (original labels): source={1: 120, 2: 52, 3: 52, 4: 58, 5: 53, 6: 53, 7: 83, 8: 44, 9: 45, 10: 43, 11: 47, 12: 40, 13: 40, 14: 30}; target_train=<not inspected in strict UDA>; target_val={1: 26, 2: 23, 5: 41, 6: 3, 7: 11, 9: 8, 11: 3, 12: 5}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 760, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]}; target_train={'union_vis_files': 585, 'union_ir_files': 585, 'matched_pairs_all': 585, 'selected_phase_pairs': 465, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 0, 'selected_phase_pairs_before_filter': 465, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 5, 6, 7, 9, 11, 12]}; target_val={'union_vis_files': 585, 'union_ir_files': 585, 'matched_pairs_all': 585, 'selected_phase_pairs': 120, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 0, 'selected_phase_pairs_before_filter': 120, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 5, 6, 7, 9, 11, 12]}
+Training mode: strict UDA; target training labels are not read by the optimization path.
+Training batches per epoch: 24; batch_size=32
+Trainable parameters: VIS=11,281,664/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=ResNet layer2--4 + projection.
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: Neural OT generator with 3-domain discriminator
+Loss weights: tensor=0.12, adv=0.08
+Transport: mode=sinkhorn, epsilon=0.1, Sinkhorn iterations(min/max)=50/200, tolerance=0.0001, correction scale=0.1, correction regularization weight=0.001, class conditional=False
+Joint optimization schedule: Tensor/SVD warm-up for 10 epochs, then OT loss ramp over 5 epochs.
+Tensor projection update: once per epoch from the complete independent source/target training banks; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001
+Epoch [1/100] | SVD update #1: pairs=(760, 465), sweeps=10, converged=False, rel_change=3.142e-02, effective_ranks=(166, 41), class_paired=False, class_balanced=False, unlabeled_plan_residual=1.40e-09, unlabeled_plan_entropy=12.6538
+Frozen VIS BatchNorm layers kept in eval mode: 5.
+
+[Batch 1/1] Full: Tensor+OT, target=黑天
+Traceback (most recent call last):
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 2017, in <module>
+    main()
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 1997, in main
+    summary = run_ablation_experiment(exp_args)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 1634, in run_ablation_experiment
+    best_metrics = run_single_iteration(args, seed, logger)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 1285, in run_single_iteration
+    loss_total.backward()
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/site-packages/torch/_tensor.py", line 631, in backward
+    torch.autograd.backward(
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/site-packages/torch/autograd/__init__.py", line 381, in backward
+    _engine_run_backward(
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/site-packages/torch/autograd/graph.py", line 869, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: CUDA error: CUBLAS_STATUS_ALLOC_FAILED when calling `cublasCreate(handle)`
+{"timestamp": "2026-10-16T15:36:12", "suite_id": "20261016_151845_593014", "run_tag": "jmda_net_uda_dark", "method": "jmda_net_uda", "protocol": "UDA", "target": "dark", "seed": 42, "epochs": 100, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "final_checkpoint", "status": "failed", "exit_code": 1, "duration_seconds": 296.0, "final_acc": null, "best_acc": null, "final_acc_std": null, "precision_macro": null, "precision_macro_std": null, "recall_macro": null, "recall_macro_std": null, "f1_macro": null, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 0, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda/jmda_net_uda_dark_20261016_151845_593014.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/jmda_uda", "error_type": "RuntimeError", "error_summary": "CUDA error: CUBLAS_STATUS_ALLOC_FAILED when calling `cublasCreate(handle)`"}
