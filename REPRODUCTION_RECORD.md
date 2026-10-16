@@ -28,7 +28,7 @@ JMDA-Net 数据集为多模态（可见光 + 红外）跨天气域适应数据�
 | 黑天 (Target) | train | 465 | 465 |
 | 黑天 (Target) | val | 120 | 120 |
 
-**注**：晴天目录结构为 `train/可见光/class_x`，其余天气域为 `train/class_x/可见光`。本实验统一使用**可见光**模态进行实验。
+**注**：晴天目录结构为 `train/可见光/class_x`，其余天气域为 `train/class_x/可见光`。第一批传统/VLM 基线使用可见光；JMDA-Net、Boomda、MODfinity 使用 VIS+IR，必须在结果表中显式标注模态，不能把两种输入设置视为完全同条件比较。
 
 ## 3. 方法与开源仓库筛选
 
@@ -227,7 +227,7 @@ D:\Code\JMDA_Com\
 7. **关键实现细节**：各模态分类器（netCA/netCV hidden=64、netCL hidden=128、SimpleFC2）输入必须是 `feat_all` 的**列切片**（`feat_all[0:bs_s, 0:dim_a]` 等）——这是 hook 能捕获逐模态梯度的前提（与作者代码一致）
 
 **JMDA 数据适配**：
-- **IR 配对规则**（权威来源 `D:\Code\JMDA-Net\DataLoad.py`）：同一类别文件夹内 `sorted(可见光文件)` 与 `sorted(红外文件)` 按索引配对（截断到较短者）。注意 VIS/IR 文件名不同（同名配对仅能命中少量样本，已弃用）
+- **IR 配对规则（现行公平协议）**：在原始 train+val 并集内按 VIS/IR **完全相同文件 stem** 恢复观测对，再以稳定哈希同时划分两模态；JMDA-Net 与所有多模态对比方法共享这一 cohort。历史的独立排序/截断规则会混配观测，已停用。
 - **AIS 分配**：`balanced_AIS-dataset_16classes_100persample.mat`（v7.3/h5py），`balanced_rcv_I/Q` (11520,1572) 转置为 (1572,11520)，I|Q 拼接 23040 维，`new_balanced_label` 标签 0..15 取 0..13；按类别循环分配给图像样本（**假设 AIS 标签 i ↔ 图像类别 i**，见第 10 节）
 - 优化器 Adam：heads lr=1e-4、encoders enc_lr=1e-5、beta1=0.5（同作者 scripts/Boomda.sh）
 
@@ -383,7 +383,7 @@ python D:\Code\JMDA_Com\run_new_methods.py
 7. **tllib torchvision 兼容**：torchvision 0.21 已移除 `model_urls`，`tllib/vision/models/resnet.py` 已加 try/except 回退字典（ImageNet-1k V1 官方 URL）
 8. **tllib prettytable 可选**：本机 prettytable 装在用户 site-packages，其 `__pycache__` 被 sandbox 禁写会报错；已将 `tllib/utils/metric/__init__.py` 的 prettytable 改为可选导入，且第二批一律用 `python -B`（不写 pycache）运行
 9. **GitHub 不可达**：本环境 GitHub 全域（github.com/raw/codeload/api）TLS 层不可达，tllib 与 Boomda 均通过 jsdelivr CDN 逐文件下载（见 3.1 节），并用内容校验（拒绝 "Couldn't find"/"404" 错误体）+ HTTP 状态码确认
-10. **VIS/IR 配对规则**：JMDA-Net 数据集中同一类别下 VIS/IR 文件名**不同**（同名配对仅能命中少量样本，如 backlight val 仅 5/36，已弃用）；权威规则来自项目官方 `D:\Code\JMDA-Net\DataLoad.py`——同类文件夹内 `sorted(可见光文件)` 与 `sorted(红外文件)` 按索引配对、截断到较短者。Boomda/MODfinity 的 `PairedMultimodalDataset._find_ir_partner` 已按此实现（目标域 100% 配对，sunny 760/986）
+10. **VIS/IR 配对规则（已更新）**：原始 train/val 可能把同一观测的 VIS 与 IR 分到不同 split。现由 `tools/prepare_paired_protocol_lists.py` 与 `JMDA-Net/Ablation/paired_dataset.py` 在两 split 并集内按完全相同 stem 恢复配对，并用稳定哈希重建 train/val；Boomda/MODfinity 通过 `tools/data_paths.py::exact_ir_partner` 使用同一规则。独立按序截断会产生错配，禁止用于正式实验。
 11. **AIS 类别映射假设**：AIS 数据（16 类）与图像数据（14 类）无显式样本级对应，假设 **AIS 标签 i ↔ 图像类别 i**，按类别循环分配给图像样本；此为数据集层面的假设，若实际映射不同需调整
 12. **MODfinity 复现自选项**：论文未给出优化器/温度等细节，且补充材料为纯图片无文本层。自选实现（脚本头已标注）：Adam lr=1e-4、τ=0.07、φ 内 L2 归一化（防 exp 溢出）、AIS 编码器投影到 512 维使三模态共享单一 E_c、逐 batch 选 LM（论文未明确粒度）、融合=各模态 softmax 平均
 13. **MODfinity mod 损失偏小**：冒烟规模下 batch=16、|LM|=top 15%≈2，LM^(m) 常为空或仅自对，MOD 损失多为 0——属冒烟规模现象，正式实验增大 batch/训练时长后生效
@@ -470,4 +470,38 @@ JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data \
   JMDA_SDA_LIST_DIR=../data_lists \
   python main_sda.py --target backlight --epochs 100
 ```
+
+### 11.7 2026-10-14 无监督协议与复现错误复核
+
+本次复核以当前代码和服务器日志为准，修正了以下会实质影响结果或公平性的实现问题：
+
+- **JMDA-Net 协议损失隔离**：SDA 使用 `L_cls_src + L_cls_tgt + L_cls_mid`；SSDA 只在固定目标标注子集上增加 `L_cls_tgt`；严格 UDA 只使用 `L_cls_src`。UDA/SSDA 的 all-pairs OT 中间特征不再错误套用源样本硬标签。
+- **SDA 回归修复**：`module_ablation.py --use_target_labels` 恢复完整目标域分类损失；此前仅 SSDA 分支计算该项。
+- **VIS 微调修复**：`VisualFeatureExtractor` 的 ResNet 位于匿名 `Sequential`，真实层名为 `features.5/6/7`。原 `layer2/3/4` 字符串匹配没有解冻骨干；现显式解冻 layer2--4 与 projection，并保持冻结 BatchNorm 为 eval。
+- **Sinkhorn 数值约束**：非均匀源边缘下，固定迭代可能只满足目标列边缘。现保留同一熵正则 OT，在配置的最少迭代后按双边残差进行有上限的继续缩放，并在日志记录实际迭代数。
+- **严格 UDA 模型选择**：服务器入口固定 `--report_strategy last`，保存/汇报 final checkpoint；epoch peak 只能作为诊断，不用于选择或主表结果。
+- **共同类别实验的边界**：新增 `jmda_oracle_shared_uda`，读取目标训练集类别支持后只保留源/目标共同类别。该操作使用了目标标签支持，协议名与日志均标记 `ORACLE_SHARED_UDA`，不得并入严格 UDA 主表；若做方法间比较，所有方法必须使用同一过滤清单。
+- **对比方法随机种子**：所有由 `run_server.sh` 启动的 SDA/UDA 对比入口现在实际控制 Python、NumPy、PyTorch CPU/CUDA RNG；此前多数脚本虽解析 `--seed`，但没有应用。
+- **AD-CLIP**：projector 子层改为 `ModuleList`，确保进入优化器与 checkpoint；token id 改为随模型迁移的 buffer；评估改用官方目标的 target-only style-mapping 路径，不再把同一目标图同时伪装成源/目标输入。
+- **CDAN**：将官方参数组中的 `lr_mult/decay_mult` 显式转换成 PyTorch 的组级 `lr/weight_decay`；此前这些自定义字段被 SGD 静默忽略。
+- **Boomda/MODfinity**：VIS/IR 随机空间增强改为同步；严格 UDA 禁止 `--use-ais`，因为当前 AIS 分配按目标真实类别选样，会造成标签泄漏。正式服务器配置仍为可核验的 VIS+IR。
+
+当前服务器命令分为：
+
+```bash
+bash scripts/run_server.sh sda 100                     # SDA
+bash scripts/run_server.sh jmda_uda 100                # JMDA-Net 严格 UDA
+bash scripts/run_server.sh jmda_oracle_shared_uda 100  # 共同类 oracle 诊断
+bash scripts/run_server.sh uda 100                     # 其他严格 UDA 方法
+bash scripts/run_server.sh vlm 100                     # 独立 VLM 表
+```
+
+本轮修复后的静态与数值门禁（2026-10-14）如下：
+
+- `JMDA-Net/test_tensor_ot_invariants.py`：27/27 通过，覆盖 SDA/SSDA/UDA 分类损失边界、无标签采样、SVD 投影更新、VIS 解冻/冻结 BN、双边 Sinkhorn 边缘与梯度。
+- `tools/test_jmda_protocol_wiring.py`、`test_comparison_reproducibility.py`、`test_data_paths.py`、`test_result_protocol.py`：20/20 通过。
+- 29 个改动 Python 文件完成语法编译检查；十个正式训练入口均通过 `--help` 导入/参数解析；`scripts/run_server.sh` 通过 Bash 语法检查，`git diff --check` 通过。
+- 本地严格 UDA 与 `ORACLE_SHARED_UDA` 预检均通过；严格模式明确显示目标标签权重为 0、final checkpoint 报告，oracle 模式明确警告读取了目标训练类别支持。
+- `server_logs/jmda_uda/jmda_net_uda_backlight_20261013_211726_2491650.log` 是修复前启动且随后被终止的旧运行，只到 epoch 96/100，没有 final checkpoint，也没有新版本的 `src/tgt/mid` 损失拆分，因此不得用于判断修复后精度。修复后的数值结果必须重新完成服务器训练后再报告，不能由上述门禁测试推断或保证。
+- 修复后已在本机完整数据上完成两次逆光 1-epoch/1-seed 端到端烟测。正式 warm-up 配置验证了 `src/tgt/mid=2.3914/0/0`、目标标注观察数为 0、`report_strategy=last` 及 final checkpoint 保存；另一次仅为覆盖运行路径而临时设 `ot_warmup_epochs=0, ot_ramp_epochs=1`，实际执行 Neural OT 与三域判别器，得到有限损失、Sinkhorn 双边最大残差 `1.72e-06`、平均 50 次迭代，并保存带 `protocol=UDA`、`label_space_mode=partial_set`、空 `oracle_shared_labels` 的 final checkpoint。两次 1-epoch 指标只证明运行链路，不作为论文性能结果或超参数依据。
 

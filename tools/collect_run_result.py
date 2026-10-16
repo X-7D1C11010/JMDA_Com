@@ -227,7 +227,9 @@ def main():
         'label_space_relation': args.label_space_relation,
         'model_selection': (
             args.model_selection
-            or ('final_checkpoint' if args.protocol.lower() in ('uda', 'vlm')
+            or ('final_checkpoint' if args.protocol.lower() in (
+                    'uda', 'oracle_shared_uda', 'vlm'
+                )
                 else 'method_declared')
         ),
         'status': args.status,

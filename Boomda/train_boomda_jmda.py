@@ -60,6 +60,7 @@ entropy_re = _en_re_mod.entropy_re
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from data_paths import remap_data_path, data_path, exact_ir_partner
 from classification_metrics import classification_metrics, format_classification_metrics
+from reproducibility import seed_everything
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -108,7 +109,11 @@ class PairedMultimodalDataset(Dataset):
                 ir_path = self._find_ir_partner(vis_path)
                 if ir_path is None:
                     continue
-                c = min(label, 13)
+                if not 0 <= label < 14:
+                    raise ValueError(
+                        f'Label {label} is outside the declared 14-class space.'
+                    )
+                c = label
                 pool = per_class[c]
                 if not self.use_ais:
                     ais_idx = -1
@@ -127,7 +132,11 @@ class PairedMultimodalDataset(Dataset):
         vis = Image.open(vis_path).convert('RGB')
         ir = Image.open(ir_path).convert('RGB')
         if self.transform:
+            # Replay one RNG state so paired modalities receive the same
+            # random spatial augmentation.
+            transform_rng_state = torch.get_rng_state()
             vis = self.transform(vis)
+            torch.set_rng_state(transform_rng_state)
             ir = self.transform(ir)
         if self.use_ais:
             ais = torch.from_numpy(self.ais_data[ais_idx].copy())
@@ -561,6 +570,14 @@ def main():
                         help='Directory for efficiency logging output')
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
+    args.seed = seed_everything(args.seed)
+    print(f'Controlled random seed: {args.seed}')
+    if args.use_ais:
+        parser.error(
+            '--use-ais is not valid in strict UDA: the current AIS assignment '
+            'selects samples by target ground-truth class. Use only genuinely '
+            'sample-aligned, label-free AIS data in a separate implementation.'
+        )
     args.isTrain = True
     os.makedirs(args.save_dir, exist_ok=True)
     print(args)

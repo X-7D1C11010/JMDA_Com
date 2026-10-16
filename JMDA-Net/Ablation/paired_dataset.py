@@ -11,6 +11,16 @@ from torchvision.transforms import functional as TF
 from DataLoad import MultiModalDomainDataset
 
 
+def filter_samples_by_original_labels(samples, allowed_original_labels=None):
+    """Filter paired samples by original class id without changing label ids."""
+    if allowed_original_labels is None:
+        return list(samples)
+    allowed = {int(label) for label in allowed_original_labels}
+    if not allowed:
+        raise ValueError("allowed_original_labels cannot be empty.")
+    return [sample for sample in samples if int(sample["label"]) in allowed]
+
+
 class PairedModalTransform:
     """Sample crop/flip once and apply it to both registered modalities."""
 
@@ -51,26 +61,50 @@ class PairedModalTransform:
 class PairedMultiModalDomainDataset(MultiModalDomainDataset):
     """Match modalities by filename stem and apply paired transformations."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, allowed_original_labels=None, **kwargs):
         root_dir = args[0] if args else kwargs["root_dir"]
         domain_type = kwargs.get(
             "domain_type",
             args[1] if len(args) > 1 else "source",
         )
         phase = kwargs.get("phase", args[2] if len(args) > 2 else "train")
+        global_label_map = kwargs.get("global_label_map")
         super().__init__(*args, **kwargs)
         self.samples, self.pairing_stats = self._build_consistent_pairs(
             root_dir=root_dir,
             domain_type=domain_type,
             phase=phase,
         )
+        selected_before_filter = len(self.samples)
+        self.samples = filter_samples_by_original_labels(
+            self.samples,
+            allowed_original_labels,
+        )
         if not self.samples:
             raise ValueError(
-                f"No exact VIS/IR filename pairs found under {root_dir!r}/{phase}."
+                f"No allowed exact VIS/IR filename pairs found under "
+                f"{root_dir!r}/{phase}."
             )
         self.labels = [sample["label"] for sample in self.samples]
         self.unique_labels = sorted(np.unique(self.labels))
+        if global_label_map is None:
+            self.label_map = {
+                original_label: index
+                for index, original_label in enumerate(self.unique_labels)
+            }
+        else:
+            self.label_map = dict(global_label_map)
+        unknown_labels = sorted(set(map(int, self.unique_labels)) - set(self.label_map))
+        if unknown_labels:
+            raise ValueError(
+                "Dataset contains labels absent from global_label_map: "
+                f"{unknown_labels}"
+            )
         self.num_classes = len(self.label_map)
+        self.pairing_stats["selected_phase_pairs_before_filter"] = selected_before_filter
+        self.pairing_stats["filtered_out_pairs"] = selected_before_filter - len(self.samples)
+        self.pairing_stats["selected_phase_pairs"] = len(self.samples)
+        self.pairing_stats["retained_original_labels"] = list(map(int, self.unique_labels))
         transform_phase = "val" if self.deterministic_transform else self.phase
         transform_val_augment = (
             False if self.deterministic_transform else self.val_augment
@@ -195,7 +229,13 @@ class PairedMultiModalDomainDataset(MultiModalDomainDataset):
             return self.__getitem__((idx + 1) % len(self))
 
         vis_tensor, ir_tensor = self.paired_transform(vis_img, ir_img)
-        label_id = self.label_map.get(sample["label"], 0)
+        try:
+            label_id = self.label_map[sample["label"]]
+        except KeyError as error:
+            raise KeyError(
+                "Sample label is absent from label_map; refusing to silently "
+                f"remap original label {sample['label']} to class 0."
+            ) from error
         return {
             "vis": vis_tensor,
             "ir": ir_tensor,
@@ -204,4 +244,8 @@ class PairedMultiModalDomainDataset(MultiModalDomainDataset):
         }
 
 
-__all__ = ["PairedModalTransform", "PairedMultiModalDomainDataset"]
+__all__ = [
+    "PairedModalTransform",
+    "PairedMultiModalDomainDataset",
+    "filter_samples_by_original_labels",
+]

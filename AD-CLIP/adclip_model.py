@@ -20,7 +20,6 @@ if clip is None:
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 _tokenizer = _Tokenizer()
-device_cuda = "cuda"
 
 
 class AdaIN(nn.Module):
@@ -42,17 +41,19 @@ class AdaIN(nn.Module):
 class domain_projector(nn.Module):
     def __init__(self):
         super().__init__()
-        self.linear1 = []
-        self.linear1.append(nn.Linear(256, 256).to(device_cuda))
-        self.linear1.append(nn.Linear(512, 256).to(device_cuda))
-        self.linear1.append(nn.Linear(1024, 256).to(device_cuda))
-        self.linear1.append(nn.Linear(2048, 256).to(device_cuda))
+        self.linear1 = nn.ModuleList([
+            nn.Linear(256, 256),
+            nn.Linear(512, 256),
+            nn.Linear(1024, 256),
+            nn.Linear(2048, 256),
+        ])
         self.adain = AdaIN()
-        self.gap = []
-        self.gap.append(nn.AdaptiveAvgPool2d((1, 256)))
-        self.gap.append(nn.AdaptiveAvgPool2d((1, 512)))
-        self.gap.append(nn.AdaptiveAvgPool2d((1, 1024)))
-        self.gap.append(nn.AdaptiveAvgPool2d((1, 2048)))
+        self.gap = nn.ModuleList([
+            nn.AdaptiveAvgPool2d((1, 256)),
+            nn.AdaptiveAvgPool2d((1, 512)),
+            nn.AdaptiveAvgPool2d((1, 1024)),
+            nn.AdaptiveAvgPool2d((1, 2048)),
+        ])
         self.linear2 = nn.ModuleList(nn.Linear(256, 512) for _ in range(4))
 
     def forward(self, data):
@@ -72,11 +73,12 @@ class domain_projector(nn.Module):
 class image_projector(nn.Module):
     def __init__(self):
         super().__init__()
-        self.linear = []
-        self.linear.append(nn.Linear(256, 512).to(device_cuda))
-        self.linear.append(nn.Linear(512, 512).to(device_cuda))
-        self.linear.append(nn.Linear(1024, 512).to(device_cuda))
-        self.linear.append(nn.Linear(2048, 512).to(device_cuda))
+        self.linear = nn.ModuleList([
+            nn.Linear(256, 512),
+            nn.Linear(512, 512),
+            nn.Linear(1024, 512),
+            nn.Linear(2048, 512),
+        ])
         self.adain = AdaIN()
         self.lin = nn.Linear(4, 1)
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
@@ -100,18 +102,20 @@ class image_projector(nn.Module):
 class style_mapping_projector(nn.Module):
     def __init__(self):
         super().__init__()
-        self.linear1 = []
-        self.linear1.append(nn.Linear(256, 384).to(device_cuda))
-        self.linear1.append(nn.Linear(512, 384).to(device_cuda))
-        self.linear1.append(nn.Linear(1024, 384).to(device_cuda))
-        self.linear1.append(nn.Linear(2048, 384).to(device_cuda))
+        self.linear1 = nn.ModuleList([
+            nn.Linear(256, 384),
+            nn.Linear(512, 384),
+            nn.Linear(1024, 384),
+            nn.Linear(2048, 384),
+        ])
         self.adain = AdaIN()
         self.relu = nn.ReLU()
-        self.gap = []
-        self.gap.append(nn.AdaptiveAvgPool1d((256)))
-        self.gap.append(nn.AdaptiveAvgPool1d((512)))
-        self.gap.append(nn.AdaptiveAvgPool1d((1024)))
-        self.gap.append(nn.AdaptiveAvgPool1d((2048)))
+        self.gap = nn.ModuleList([
+            nn.AdaptiveAvgPool1d(256),
+            nn.AdaptiveAvgPool1d(512),
+            nn.AdaptiveAvgPool1d(1024),
+            nn.AdaptiveAvgPool1d(2048),
+        ])
         self.linear2 = nn.ModuleList(nn.Linear(384, 512) for _ in range(4))
 
     def forward(self, data):
@@ -145,7 +149,7 @@ class TextEncoder(nn.Module):
         x = self.transformer(x)
         x = x[0].permute(1, 0, 2)
         x = self.ln_final(x).type(self.dtype)
-        x = x[torch.arange(x.shape[0]),
+        x = x[torch.arange(x.shape[0], device=x.device),
               tokenized_prompts.argmax(dim=-1)] @ self.text_projection
         return x
 
@@ -183,7 +187,7 @@ class PromptLearner(nn.Module):
         self.n_cls = n_cls
         self.n_ctx = n_ctx
         self.n_imgctx = n_imgctx
-        self.tokenized_prompts = tokenized_prompts
+        self.register_buffer("tokenized_prompts", tokenized_prompts)
         self.name_lens = name_lens
 
     def construct_prompts(self, ctx, prefix, suffix, label=None):
@@ -225,12 +229,45 @@ class PromptLearner(nn.Module):
 
         return source_prompts, target_prompts, source_domaintokens, source_style_mappingtokens
 
+    @autocast()
+    def forward_target(self, target_data):
+        """Construct target-only prompts through the learned style mapping.
+
+        AD-CLIP explicitly targets evaluation without source-domain images.
+        During training, ``style_mapping_tokens`` learns to reproduce source
+        domain tokens.  At test time its output on the target image therefore
+        occupies the source-domain-token slots instead of feeding the same
+        target image through both the source and target branches.
+        """
+        target_style_mappingtokens = self.style_mapping_tokens(target_data)
+        target_domaintokens = self.domain_tokens(target_data)
+        target_imagetokens = self.image_tokens(target_data, self.n_imgctx)
+        target_tokens = torch.cat(
+            (
+                target_style_mappingtokens,
+                target_domaintokens,
+                target_imagetokens,
+            ),
+            dim=1,
+        )
+
+        target_prompts = []
+        for tokens_i in target_tokens:
+            ctx_i = tokens_i.unsqueeze(0).expand(self.n_cls, -1, -1)
+            target_prompts.append(
+                self.construct_prompts(
+                    ctx_i,
+                    self.token_prefix,
+                    self.token_suffix,
+                )
+            )
+        return torch.stack(target_prompts)
+
 
 class CustomCLIP(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
         self.prompt_learner = PromptLearner(cfg, classnames, clip_model)
-        self.tokenized_prompts = self.prompt_learner.tokenized_prompts
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
@@ -243,7 +280,7 @@ class CustomCLIP(nn.Module):
 
         source_prompts, target_prompts, source_domaintokens, source_style_mappingtokens = \
             self.prompt_learner(source_data, target_data)
-        tokenized_prompts = self.tokenized_prompts
+        tokenized_prompts = self.prompt_learner.tokenized_prompts
 
         source_image_features = source_image_features / source_image_features.norm(dim=-1, keepdim=True)
         target_image_features = target_image_features / target_image_features.norm(dim=-1, keepdim=True)
@@ -279,6 +316,37 @@ class CustomCLIP(nn.Module):
 
         return source_logits, target_probs, source_domaintokens, source_style_mappingtokens, \
             source_text_features, target_text_features
+
+    @autocast()
+    def forward_target(self, t_image):
+        """Predict a target image without requiring a source reference image."""
+        target_image_features, target_data = self.image_encoder(
+            t_image.type(self.dtype)
+        )
+        target_prompts = self.prompt_learner.forward_target(target_data)
+        tokenized_prompts = self.prompt_learner.tokenized_prompts
+
+        target_image_features = target_image_features / target_image_features.norm(
+            dim=-1, keepdim=True
+        )
+        target_text_features = []
+        for prompts_i in target_prompts:
+            text_features_i = self.text_encoder(prompts_i, tokenized_prompts)
+            target_text_features.append(text_features_i)
+        target_text_features = torch.stack(target_text_features)
+        target_text_features = target_text_features / target_text_features.norm(
+            dim=-1, keepdim=True
+        )
+
+        logit_scale = self.logit_scale.exp()
+        target_logits = []
+        for text_features_i, image_features_i in zip(
+            target_text_features, target_image_features
+        ):
+            target_logits.append(
+                logit_scale * image_features_i @ text_features_i.t()
+            )
+        return torch.stack(target_logits)
 
 
 class entropy_loss(nn.Module):

@@ -159,7 +159,9 @@ def validate_list(path, data_root, check_all):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--protocol', choices=('sda', 'jmda_uda', 'uda', 'vlm'),
+    parser.add_argument(
+        '--protocol',
+        choices=('sda', 'jmda_uda', 'jmda_oracle_shared_uda', 'uda', 'vlm'),
                         required=True)
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--jmda-net-dir', required=True)
@@ -206,7 +208,7 @@ def main():
             lists.append(
                 list_dir / f'{target}_sda_10shot_seed42.txt'
             )
-        elif args.protocol in ('jmda_uda', 'uda', 'vlm'):
+        elif args.protocol in ('jmda_uda', 'jmda_oracle_shared_uda', 'uda', 'vlm'):
             lists.append(list_dir / f'{target}_train.txt')
     validated = {}
     for path in lists:
@@ -266,7 +268,13 @@ def main():
             fail(f'TransAdapter backbone checkpoint is missing: {weights}')
         print(f'[OK] TransAdapter pretrained checkpoint: {weights}')
 
-    if args.protocol in ('sda', 'jmda_uda'):
+    if args.protocol == 'jmda_oracle_shared_uda':
+        print(
+            '[ORACLE] target-training label support will be read to filter '
+            'source-only classes; this diagnostic is not strict UDA.'
+        )
+
+    if args.protocol in ('sda', 'jmda_uda', 'jmda_oracle_shared_uda'):
         jmda = Path(args.jmda_net_dir).expanduser().resolve()
         required = (
             jmda / 'main_sda.py' if args.protocol == 'sda'
@@ -275,6 +283,18 @@ def main():
         if not required.is_file():
             fail(f'JMDA-Net entry point is missing: {required}')
         print(f'[OK] JMDA-Net entry: {required}')
+        protocol_explanation = {
+            'sda': 'SDA; shared labeled target subset is used',
+            'jmda_uda': (
+                'strict UDA; target_label_ratio=0, target_cls_weight=0, '
+                'final checkpoint reporting'
+            ),
+            'jmda_oracle_shared_uda': (
+                'ORACLE_SHARED_UDA; target labels are excluded from losses, '
+                'but target class support is read for filtering'
+            ),
+        }[args.protocol]
+        print(f'[OK] JMDA protocol semantics: {protocol_explanation}')
 
     print('[OK] server preflight passed')
 

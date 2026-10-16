@@ -34,6 +34,7 @@ from tllib.vision.models import resnet18
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from data_paths import remap_data_path
+from reproducibility import seed_everything
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -170,6 +171,8 @@ def main():
                         help='Directory for efficiency logging output')
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
+    args.seed = seed_everything(args.seed)
+    print(f'Controlled random seed: {args.seed}')
     os.makedirs(args.save_dir, exist_ok=True)
     print(args)
 

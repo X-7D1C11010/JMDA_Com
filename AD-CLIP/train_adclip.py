@@ -10,8 +10,6 @@ Usage:
 import os
 import sys
 import argparse
-import random
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -63,6 +61,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from class_names import load_class_names
 from classification_metrics import classification_metrics, format_classification_metrics
 from data_paths import remap_data_path
+from reproducibility import seed_everything
 
 
 class ImageListDataset(Dataset):
@@ -107,19 +106,14 @@ class SimpleCfg:
 
 
 def evaluate(model, loader, device, classnames):
-    """Evaluate on target domain (zero-shot style with learned prompts)."""
+    """Evaluate with AD-CLIP's target-only style-mapping inference path."""
     model.eval()
     all_labels, all_predictions = [], []
-    # Build text features using classnames
     with torch.no_grad():
-        # Use source prompts for evaluation (style mapping from source)
-        # For simplicity, evaluate using the model's forward with target images
-        # We need a "source" image to generate prompts; use the first batch
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
-            # Use the same images as both source and target for eval prompt generation
-            _, target_probs, _, _, _, _ = model(imgs, imgs)
-            pred = target_probs.argmax(1)
+            target_logits = model.forward_target(imgs)
+            pred = target_logits.argmax(1)
             all_labels.extend(labels.cpu().tolist())
             all_predictions.extend(pred.cpu().tolist())
     return classification_metrics(all_labels, all_predictions)
@@ -144,12 +138,8 @@ def main():
         help='14 real English class names in zero-based label order',
     )
     args = parser.parse_args()
-
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+    args.seed = seed_everything(args.seed)
+    print(f'Controlled random seed: {args.seed}')
 
     os.makedirs(args.save_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

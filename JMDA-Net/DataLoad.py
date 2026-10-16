@@ -139,7 +139,13 @@ class MultiModalDomainDataset(Dataset):
             # 简单的容错，如果图片坏了，随机返回一张（生产环境不建议，但为了不中断训练）
             return self.__getitem__((idx + 1) % len(self))
 
-        label_id = self.label_map.get(sample['label'], 0)
+        try:
+            label_id = self.label_map[sample['label']]
+        except KeyError as error:
+            raise KeyError(
+                "Sample label is absent from label_map; refusing to silently "
+                f"remap original label {sample['label']} to class 0."
+            ) from error
 
         return {
             'vis': self.transform['vis'](vis_img),

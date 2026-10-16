@@ -59,6 +59,50 @@ def set_requires_grad(model, requires_grad=False):
         param.requires_grad = requires_grad
 
 
+def configure_visual_finetuning(net_vis):
+    """Fine-tune the intended ResNet layer2--4 blocks and projection head.
+
+    ``VisualFeatureExtractor`` stores the ResNet children in an anonymous
+    ``nn.Sequential``.  Its parameter names are therefore ``features.5``--
+    ``features.7`` rather than ``layer2``--``layer4``.  The historical string
+    match silently left the complete backbone frozen.  Keep the checkpoint
+    layout unchanged and select the actual stage modules explicitly.
+    """
+    if not hasattr(net_vis, 'features') or not isinstance(net_vis.features, nn.Sequential):
+        raise TypeError("VisualFeatureExtractor must expose a sequential 'features' module.")
+    if len(net_vis.features) < 8 or not hasattr(net_vis, 'proj'):
+        raise ValueError("Unexpected ResNet feature layout; cannot select layer2--4 safely.")
+
+    set_requires_grad(net_vis, False)
+    for stage_index in (5, 6, 7):
+        set_requires_grad(net_vis.features[stage_index], True)
+    set_requires_grad(net_vis.proj, True)
+
+
+def set_frozen_batchnorm_eval(module):
+    """Keep BatchNorm statistics fixed only for frozen submodules.
+
+    Calling ``module.train()`` also switches BatchNorm layers in a frozen
+    backbone to training mode, even though their affine parameters do not
+    receive gradients.  That mutates running statistics and makes the
+    mini-batch feature space inconsistent with the eval-mode SVD feature bank.
+    Trainable layer2--4 BatchNorm layers remain in training mode.
+    """
+    frozen_count = 0
+    for child in module.modules():
+        if not isinstance(child, nn.modules.batchnorm._BatchNorm):
+            continue
+        affine_parameters = list(child.parameters(recurse=False))
+        if not any(parameter.requires_grad for parameter in affine_parameters):
+            child.eval()
+            frozen_count += 1
+    return frozen_count
+
+
+def count_trainable_parameters(module):
+    return sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad)
+
+
 def compute_joint_ot_scale(epoch, warmup_epochs, ramp_epochs, enabled):
     """Return the OT contribution for the Tensor+OT optimization schedule."""
     if warmup_epochs < 0 or ramp_epochs < 1:
@@ -339,6 +383,86 @@ def sampled_target_classification_loss(
     return criterion(logits[selected], labels[selected]), n_labeled
 
 
+def compute_protocol_classification_loss(
+    criterion,
+    protocol,
+    source_logits,
+    source_labels,
+    target_logits=None,
+    target_labels=None,
+    target_label_ratio=0.0,
+    target_cls_weight=0.0,
+    target_indices=None,
+    target_labeled_indices=None,
+    intermediate_logits=None,
+    intermediate_scale=1.0,
+):
+    """Compute classification terms without crossing protocol boundaries.
+
+    SDA keeps the original fully supervised objective: source CE, full target
+    CE, and source-label CE on the class-paired OT intermediate domain.  SSDA
+    uses only its fixed labeled target subset.  In UDA/SSDA, all-pairs OT does
+    not guarantee that a transported target feature has the source row's
+    class, so applying a hard source label to the intermediate feature would
+    be false semantic supervision and is deliberately disabled.
+    """
+    if protocol not in {'SDA', 'SSDA', 'UDA'}:
+        raise ValueError(f"Unsupported adaptation protocol: {protocol!r}")
+
+    loss_source = criterion(source_logits, source_labels)
+    loss_target = loss_source.new_zeros(())
+    loss_intermediate = loss_source.new_zeros(())
+    target_labeled_count = 0
+
+    if protocol in {'SDA', 'SSDA'}:
+        if target_logits is None or target_labels is None:
+            raise ValueError(f"{protocol} requires target logits and target labels.")
+        if protocol == 'SDA':
+            loss_target = criterion(target_logits, target_labels)
+            target_labeled_count = int(target_labels.numel())
+        else:
+            loss_target, target_labeled_count = sampled_target_classification_loss(
+                criterion,
+                target_logits,
+                target_labels,
+                target_label_ratio,
+                target_indices,
+                target_labeled_indices,
+            )
+
+    loss_total = loss_source
+    if target_labeled_count > 0 and target_cls_weight > 0.0:
+        loss_total = loss_total + target_cls_weight * loss_target
+
+    if protocol == 'SDA' and intermediate_logits is not None:
+        if intermediate_logits.size(0) != source_labels.numel():
+            raise ValueError(
+                "SDA intermediate logits and source labels must have matching batches."
+            )
+        loss_intermediate = criterion(intermediate_logits, source_labels)
+        loss_total = loss_total + float(intermediate_scale) * loss_intermediate
+
+    return loss_total, {
+        'source': loss_source,
+        'target': loss_target,
+        'intermediate': loss_intermediate,
+        'target_labeled_count': target_labeled_count,
+    }
+
+
+def derive_oracle_shared_labels(source_labels, target_labels):
+    """Return class support shared by both training domains.
+
+    Reading ``target_labels`` makes this an oracle label-space diagnostic, not
+    strict UDA.  The explicit name is intentional so this helper cannot be
+    mistaken for an unlabeled training operation.
+    """
+    shared_labels = sorted(set(map(int, source_labels)) & set(map(int, target_labels)))
+    if not shared_labels:
+        raise ValueError("Source and target training domains have no shared classes.")
+    return shared_labels
+
+
 def select_report_metrics(metric_history, strategy='best', window=10):
     """Select one coherent metric record for a repeated training run.
 
@@ -380,6 +504,22 @@ def adaptation_protocol(args):
     if args.target_label_ratio > 0.0 and args.target_cls_weight > 0.0:
         return 'SSDA'
     return 'UDA'
+
+
+def reported_protocol(args):
+    """Return a result label that keeps oracle diagnostics out of UDA tables."""
+    protocol = adaptation_protocol(args)
+    label_space_mode = getattr(args, 'label_space_mode', 'partial_set')
+    if label_space_mode == 'oracle_shared':
+        if protocol != 'UDA':
+            raise ValueError(
+                "oracle_shared label-space filtering is only defined for pure UDA "
+                "(no target classification labels)."
+            )
+        return 'ORACLE_SHARED_UDA'
+    if label_space_mode != 'partial_set':
+        raise ValueError(f"Unsupported label-space mode: {label_space_mode!r}")
+    return protocol
 
 
 def class_prior_to_sample_marginal(labels, class_prior):
@@ -548,12 +688,55 @@ def run_single_iteration(args, seed, logger):
     TARGET_ROOT = args.target_root
     target_weather = os.path.basename(TARGET_ROOT)
     protocol = adaptation_protocol(args)
+    experiment_protocol = reported_protocol(args)
+    oracle_shared_labels = None
 
     src_train_ds = MultiModalDomainDataset(SOURCE_ROOT, domain_type='source', phase='train')
     global_map = src_train_ds.get_label_map()
+    source_count_before_filter = len(src_train_ds)
 
-    tgt_train_ds = MultiModalDomainDataset(TARGET_ROOT, domain_type='target', phase='train',
-                                           global_label_map=global_map)
+    if args.label_space_mode == 'oracle_shared':
+        # Probe only target *training* support.  This deliberately reads target
+        # labels and is therefore isolated as ORACLE_SHARED_UDA rather than
+        # being presented as strict UDA.
+        target_probe = MultiModalDomainDataset(
+            TARGET_ROOT,
+            domain_type='target',
+            phase='train',
+        )
+        target_count_before_filter = len(target_probe)
+        oracle_shared_labels = derive_oracle_shared_labels(
+            src_train_ds.labels,
+            target_probe.labels,
+        )
+        src_train_ds = MultiModalDomainDataset(
+            SOURCE_ROOT,
+            domain_type='source',
+            phase='train',
+            global_label_map=global_map,
+            allowed_original_labels=oracle_shared_labels,
+        )
+        tgt_train_ds = MultiModalDomainDataset(
+            TARGET_ROOT,
+            domain_type='target',
+            phase='train',
+            global_label_map=global_map,
+            allowed_original_labels=oracle_shared_labels,
+        )
+        logger.warning(
+            "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. "
+            f"reported_protocol={experiment_protocol}; shared original labels="
+            f"{oracle_shared_labels}; source samples {source_count_before_filter}->"
+            f"{len(src_train_ds)}, target samples {target_count_before_filter}->"
+            f"{len(tgt_train_ds)}."
+        )
+    else:
+        tgt_train_ds = MultiModalDomainDataset(
+            TARGET_ROOT,
+            domain_type='target',
+            phase='train',
+            global_label_map=global_map,
+        )
 
     src_svd_ds = None
     tgt_svd_ds = None
@@ -566,6 +749,7 @@ def run_single_iteration(args, seed, logger):
             phase='train',
             global_label_map=global_map,
             deterministic_transform=True,
+            allowed_original_labels=oracle_shared_labels,
         )
         tgt_svd_ds = MultiModalDomainDataset(
             TARGET_ROOT,
@@ -573,10 +757,12 @@ def run_single_iteration(args, seed, logger):
             phase='train',
             global_label_map=global_map,
             deterministic_transform=True,
+            allowed_original_labels=oracle_shared_labels,
         )
 
     tgt_val_ds = MultiModalDomainDataset(TARGET_ROOT, domain_type='target', phase='val',
-                                         global_label_map=global_map, val_augment=False)
+                                         global_label_map=global_map, val_augment=False,
+                                         allowed_original_labels=oracle_shared_labels)
 
     logger.info(
         "Dataset audit: "
@@ -585,7 +771,7 @@ def run_single_iteration(args, seed, logger):
     )
     target_train_counts = (
         dict(sorted(Counter(tgt_train_ds.labels).items()))
-        if protocol != 'UDA'
+        if protocol != 'UDA' or args.label_space_mode == 'oracle_shared'
         else '<not inspected in strict UDA>'
     )
     logger.info(
@@ -615,10 +801,17 @@ def run_single_iteration(args, seed, logger):
     else:
         paired_loader = UnpairedDomainSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
         if protocol == 'UDA':
-            logger.info(
-                "Training mode: strict UDA; target training labels are not read "
-                "by the optimization path."
-            )
+            if args.label_space_mode == 'oracle_shared':
+                logger.info(
+                    "Training mode: ORACLE_SHARED_UDA; target labels are excluded "
+                    "from losses and pair construction, but target-training class "
+                    "support was read once for sample filtering."
+                )
+            else:
+                logger.info(
+                    "Training mode: strict UDA; target training labels are not read "
+                    "by the optimization path."
+                )
         else:
             logger.info(
                 "Training mode: SSDA with an unpaired target stream and a fixed "
@@ -660,10 +853,15 @@ def run_single_iteration(args, seed, logger):
     net_ir = IRFeatureExtractor(output_dim=IR_DIM).to(DEVICE)
 
     set_requires_grad(net_ir, True)
-    set_requires_grad(net_vis, False)
-    for name, param in net_vis.named_parameters():
-        if "layer2" in name or "layer3" in name or "layer4" in name or "proj" in name:
-            param.requires_grad = True
+    configure_visual_finetuning(net_vis)
+    logger.info(
+        "Trainable parameters: "
+        f"VIS={count_trainable_parameters(net_vis):,}/"
+        f"{sum(parameter.numel() for parameter in net_vis.parameters()):,}, "
+        f"IR={count_trainable_parameters(net_ir):,}/"
+        f"{sum(parameter.numel() for parameter in net_ir.parameters()):,}. "
+        "VIS fine-tuning stages=ResNet layer2--4 + projection."
+    )
 
     if args.use_tensor_module:
         tal_module = TensorBasedAlignmentStable(
@@ -701,7 +899,9 @@ def run_single_iteration(args, seed, logger):
     if args.use_ot_module:
         logger.info(
             f"Transport: mode={args.transport_mode}, epsilon={args.ot_epsilon:g}, "
-            f"Sinkhorn iterations={args.ot_sinkhorn_iterations}, "
+            f"Sinkhorn iterations(min/max)={generator.sinkhorn_iterations}/"
+            f"{generator.sinkhorn_max_iterations}, "
+            f"tolerance={generator.sinkhorn_tolerance:g}, "
             f"correction scale={args.ot_correction_scale:g}, "
             f"correction regularization weight={args.ot_correction_reg_weight:g}, "
             f"class conditional={use_class_conditional_ot}"
@@ -770,7 +970,7 @@ def run_single_iteration(args, seed, logger):
         progress = min(max(epoch_index / max(EPOCHS, 1), 0.0), 1.0)
         return 0.1 + 0.9 * 0.5 * (1.0 + np.cos(np.pi * progress))
 
-    scheduler = LambdaLR(optimizer_g, lr_lambda=cosine_lr_multiplier)
+    scheduler_g = LambdaLR(optimizer_g, lr_lambda=cosine_lr_multiplier)
     criterion_cls = LabelSmoothingCrossEntropy(eps=0.1)
 
     best_val_acc = -float('inf')
@@ -844,23 +1044,41 @@ def run_single_iteration(args, seed, logger):
             epoch_projection_update_count = None
 
         net_vis.train()
+        frozen_vis_bn_count = set_frozen_batchnorm_eval(net_vis)
         net_ir.train()
         tal_module.train()
         if generator is not None:
             generator.train()
         classifier.train()
         discriminator.train()
+        if epoch == 0:
+            logger.info(
+                f"Frozen VIS BatchNorm layers kept in eval mode: {frozen_vis_bn_count}."
+            )
 
         loss_accum = 0.0
         loss_cls_accum = 0.0
+        loss_cls_source_accum = 0.0
+        loss_cls_target_accum = 0.0
+        loss_cls_intermediate_accum = 0.0
         loss_tal_accum = 0.0
         loss_adv_accum = 0.0
         loss_ot_reg_accum = 0.0
+        loss_d_accum = 0.0
+        discriminator_steps = 0
+        target_labeled_count_accum = 0
+        target_confidence_sum = 0.0
+        target_entropy_sum = 0.0
+        target_prediction_count = 0
+        target_predicted_class_histogram = torch.zeros(
+            len(global_map), dtype=torch.long
+        )
         marginal_residual_accum = 0.0
         row_marginal_residual_accum = 0.0
         column_marginal_residual_accum = 0.0
         ot_objective_accum = 0.0
         off_class_mass_accum = 0.0
+        sinkhorn_iterations_accum = 0.0
         train_correct = 0
         train_total = 0
         steps = 0
@@ -921,6 +1139,21 @@ def run_single_iteration(args, seed, logger):
 
             pred_src = classifier(feat_src)
             pred_tgt = classifier(feat_tgt)
+            if protocol != 'SDA':
+                with torch.no_grad():
+                    target_probabilities = F.softmax(pred_tgt, dim=1)
+                    target_confidence_sum += target_probabilities.max(dim=1).values.sum().item()
+                    target_entropy_sum += (
+                        -(target_probabilities * target_probabilities.clamp_min(1e-8).log())
+                        .sum(dim=1)
+                        .sum()
+                        .item()
+                    )
+                    target_prediction_count += pred_tgt.size(0)
+                    target_predicted_class_histogram += torch.bincount(
+                        target_probabilities.argmax(dim=1).detach().cpu(),
+                        minlength=len(global_map),
+                    )
             source_marginal = None
             if collect_target_prior:
                 with torch.no_grad():
@@ -989,29 +1222,33 @@ def run_single_iteration(args, seed, logger):
                 loss_d.backward()
                 torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
                 optimizer_d.step()
+                loss_d_accum += loss_d.item()
+                discriminator_steps += 1
 
             optimizer_g.zero_grad()
 
-            loss_cls_src = criterion_cls(pred_src, s_label)
-            loss_cls_total = loss_cls_src
-            if protocol == 'SSDA':
-                loss_cls_tgt, target_labeled_count = sampled_target_classification_loss(
-                    criterion_cls,
-                    pred_tgt,
-                    t_label,
-                    target_label_ratio,
-                    tgt_data.get('sample_index'),
-                    target_labeled_indices,
-                )
-            else:
-                loss_cls_tgt = pred_tgt.new_zeros(())
-                target_labeled_count = 0
-            if target_labeled_count > 0 and target_cls_weight > 0.0:
-                loss_cls_total = loss_cls_total + target_cls_weight * loss_cls_tgt
-            if args.use_ot_module and feat_mid is not None:
-                pred_mid = classifier(feat_mid)
-                loss_cls_mid = criterion_cls(pred_mid, s_label)
-                loss_cls_total = loss_cls_total + joint_ot_scale * loss_cls_mid
+            # A hard source label is valid for the OT intermediate feature
+            # only in SDA, where source/target batches and transport support
+            # are class-paired.  UDA/SSDA use all-pairs unlabeled transport.
+            pred_mid = (
+                classifier(feat_mid)
+                if use_class_conditional_ot and feat_mid is not None
+                else None
+            )
+            loss_cls_total, classification_terms = compute_protocol_classification_loss(
+                criterion=criterion_cls,
+                protocol=protocol,
+                source_logits=pred_src,
+                source_labels=s_label,
+                target_logits=pred_tgt,
+                target_labels=t_label,
+                target_label_ratio=target_label_ratio,
+                target_cls_weight=target_cls_weight,
+                target_indices=tgt_data.get('sample_index'),
+                target_labeled_indices=target_labeled_indices,
+                intermediate_logits=pred_mid,
+                intermediate_scale=joint_ot_scale,
+            )
 
             alpha = min(2.0 / (1.0 + np.exp(-10 * epoch / EPOCHS)) - 1.0, 1.0)
 
@@ -1055,6 +1292,10 @@ def run_single_iteration(args, seed, logger):
             optimizer_g.step()
             loss_accum += loss_total.item()
             loss_cls_accum += loss_cls_total.item()
+            loss_cls_source_accum += classification_terms['source'].item()
+            loss_cls_target_accum += classification_terms['target'].item()
+            loss_cls_intermediate_accum += classification_terms['intermediate'].item()
+            target_labeled_count_accum += classification_terms['target_labeled_count']
             loss_tal_accum += loss_tal.item()
             loss_adv_accum += loss_adv.item()
             loss_ot_reg_accum += loss_ot_reg.item()
@@ -1071,6 +1312,9 @@ def run_single_iteration(args, seed, logger):
                 ].item()
                 off_class_mass_accum += transport_details[
                     'off_class_mass'
+                ].item()
+                sinkhorn_iterations_accum += transport_details[
+                    'sinkhorn_iterations_used'
                 ].item()
 
             train_logits = pred_tgt if protocol == 'SDA' else pred_src
@@ -1114,20 +1358,39 @@ def run_single_iteration(args, seed, logger):
         train_acc = train_correct / train_total if train_total > 0 else 0
         val_acc = val_metrics['accuracy']
 
-        scheduler.step()
+        scheduler_g.step()
         current_feature_lr = optimizer_g.param_groups[0]['lr']
         current_other_lr = optimizer_g.param_groups[1]['lr']
+        if args.sync_discriminator_lr:
+            # Mirror the generator-side "other" LR directly.  During OT
+            # warm-up the discriminator has no optimizer step, so a separate
+            # PyTorch scheduler would otherwise be stepped before its
+            # optimizer and shift the schedule.
+            for parameter_group in optimizer_d.param_groups:
+                parameter_group['lr'] = current_other_lr
+        current_discriminator_lr = optimizer_d.param_groups[0]['lr']
 
         avg_loss = loss_accum / steps if steps > 0 else 0.0
         avg_loss_cls = loss_cls_accum / steps if steps > 0 else 0.0
+        avg_loss_cls_source = loss_cls_source_accum / steps if steps > 0 else 0.0
+        avg_loss_cls_target = loss_cls_target_accum / steps if steps > 0 else 0.0
+        avg_loss_cls_intermediate = (
+            loss_cls_intermediate_accum / steps if steps > 0 else 0.0
+        )
         avg_loss_tal = loss_tal_accum / steps if steps > 0 else 0.0
         avg_loss_adv = loss_adv_accum / steps if steps > 0 else 0.0
         avg_loss_ot_reg = loss_ot_reg_accum / steps if steps > 0 else 0.0
+        avg_loss_d = (
+            loss_d_accum / discriminator_steps if discriminator_steps > 0 else 0.0
+        )
         avg_marginal_residual = marginal_residual_accum / steps if steps > 0 else 0.0
         avg_row_residual = row_marginal_residual_accum / steps if steps > 0 else 0.0
         avg_column_residual = column_marginal_residual_accum / steps if steps > 0 else 0.0
         avg_ot_objective = ot_objective_accum / steps if steps > 0 else 0.0
         avg_off_class_mass = off_class_mass_accum / steps if steps > 0 else 0.0
+        avg_sinkhorn_iterations = (
+            sinkhorn_iterations_accum / steps if steps > 0 else 0.0
+        )
 
         ot_diagnostic = ""
         if args.use_ot_module:
@@ -1141,25 +1404,50 @@ def run_single_iteration(args, seed, logger):
                 f"{objective_name}: {avg_ot_objective:.4f} | "
                 f"Marginal residual row/col/max: {avg_row_residual:.2e}/"
                 f"{avg_column_residual:.2e}/{avg_marginal_residual:.2e} | "
+                f"Sinkhorn iters(avg): {avg_sinkhorn_iterations:.1f} | "
                 f"Off-class mass: {avg_off_class_mass:.2e} | "
             )
 
+        train_accuracy_name = (
+            "Target Train Acc" if protocol == 'SDA' else "Source Train Acc"
+        )
         log_msg = (f"Epoch [{epoch + 1}/{EPOCHS}] | "
-                   f"Loss: {avg_loss:.4f} (Cls: {avg_loss_cls:.4f}, TAL: {avg_loss_tal:.4f}, "
-                   f"Adv: {avg_loss_adv:.4f}, OT-Reg: {avg_loss_ot_reg:.6f}) | "
+                   f"Loss: {avg_loss:.4f} (Cls: {avg_loss_cls:.4f} "
+                   f"[src/tgt/mid={avg_loss_cls_source:.4f}/"
+                   f"{avg_loss_cls_target:.4f}/{avg_loss_cls_intermediate:.4f}; "
+                   f"labeled-target-observations={target_labeled_count_accum}], "
+                   f"TAL: {avg_loss_tal:.4f}, Adv: {avg_loss_adv:.4f}, "
+                   f"D: {avg_loss_d:.4f}, OT-Reg: {avg_loss_ot_reg:.6f}) | "
                    f"{ot_diagnostic}"
-                   f"Train Acc: {train_acc:.4f} | "
+                   f"{train_accuracy_name}: {train_acc:.4f} | "
                    f"Val Acc: {val_acc:.4f} | "
                    f"Val P/R/F1 (Macro): {val_metrics['precision_macro']:.4f}/"
                    f"{val_metrics['recall_macro']:.4f}/"
                    f"{val_metrics['f1_macro']:.4f} | "
-                   f"LR feature/other: {current_feature_lr:.6g}/{current_other_lr:.6g}")
+                   f"LR feature/other/discriminator: {current_feature_lr:.6g}/"
+                   f"{current_other_lr:.6g}/{current_discriminator_lr:.6g}")
         if protocol != 'SDA':
             prior = stabilized_target_prior().detach()
             prior_entropy = -(prior * prior.clamp_min(1e-8).log()).sum().item()
+            mean_target_confidence = (
+                target_confidence_sum / target_prediction_count
+                if target_prediction_count > 0
+                else 0.0
+            )
+            mean_target_entropy = (
+                target_entropy_sum / target_prediction_count
+                if target_prediction_count > 0
+                else 0.0
+            )
+            predicted_class_count = int(
+                (target_predicted_class_histogram > 0).sum().item()
+            )
             log_msg += (
                 f" | unlabeled source-prior min/max/entropy: {prior.min().item():.3e}/"
                 f"{prior.max().item():.3e}/{prior_entropy:.4f}"
+                f" | unlabeled target confidence/entropy/classes: "
+                f"{mean_target_confidence:.4f}/{mean_target_entropy:.4f}/"
+                f"{predicted_class_count}/{len(global_map)}"
             )
 
         logger.info(log_msg)
@@ -1169,7 +1457,13 @@ def run_single_iteration(args, seed, logger):
             best_val_acc = val_acc
             best_metrics = val_metrics
             best_epoch = epoch + 1
-            logger.info(f"  >>> New Best Val Acc: {best_val_acc:.4f}")
+            if protocol == 'UDA':
+                logger.info(
+                    "  >>> Diagnostic target-val peak updated (not used for "
+                    f"model selection): {best_val_acc:.4f}"
+                )
+            else:
+                logger.info(f"  >>> New Best Val Acc: {best_val_acc:.4f}")
 
     report_metrics = select_report_metrics(
         metric_history,
@@ -1181,21 +1475,38 @@ def run_single_iteration(args, seed, logger):
         if args.report_strategy == 'best'
         else ""
     )
-    logger.info(
-        f"Report strategy: {args.report_strategy}, window={args.report_window}, "
-        f"reported_acc={report_metrics['accuracy']:.4f}, best_acc={best_val_acc:.4f}"
-        f"{selected_epoch_text}"
+    if protocol == 'UDA':
+        logger.info(
+            f"Report strategy: {args.report_strategy}, window={args.report_window}, "
+            f"reported_acc={report_metrics['accuracy']:.4f}; target-label best "
+            "checkpoint is not selected or reported in UDA."
+        )
+    else:
+        logger.info(
+            f"Report strategy: {args.report_strategy}, window={args.report_window}, "
+            f"reported_acc={report_metrics['accuracy']:.4f}, best_acc={best_val_acc:.4f}"
+            f"{selected_epoch_text}"
+        )
+    report_metrics = dict(report_metrics)
+    report_metrics['protocol'] = experiment_protocol
+    report_metrics['label_space_mode'] = args.label_space_mode
+    report_metrics['oracle_shared_labels'] = (
+        list(oracle_shared_labels) if oracle_shared_labels is not None else []
     )
     if args.checkpoint_dir:
         os.makedirs(args.checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(
             args.checkpoint_dir,
-            f"jmda_{protocol.lower()}_last_seed{seed}.pth",
+            f"jmda_{experiment_protocol.lower()}_last_seed{seed}.pth",
         )
         torch.save(
             {
                 'seed': seed,
                 'epoch': EPOCHS,
+                'protocol': experiment_protocol,
+                'adaptation_protocol': protocol,
+                'label_space_mode': args.label_space_mode,
+                'oracle_shared_labels': report_metrics['oracle_shared_labels'],
                 'report_strategy': args.report_strategy,
                 'net_vis': net_vis.state_dict(),
                 'net_ir': net_ir.state_dict(),
@@ -1217,6 +1528,7 @@ def run_ablation_experiment(args):
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     NUM_ITERATIONS = args.num_iterations
     protocol = adaptation_protocol(args)
+    experiment_protocol = reported_protocol(args)
     if protocol == 'UDA' and args.report_strategy not in ('last', 'last_window'):
         raise ValueError(
             "Strict UDA cannot select a checkpoint using target validation "
@@ -1230,6 +1542,8 @@ def run_ablation_experiment(args):
     tensor_flag = "with_tensor" if args.use_tensor_module else "without_tensor"
     ot_flag = "with_ot" if args.use_ot_module else "without_ot"
     ablation_name = f"{tensor_flag}_{ot_flag}"
+    if experiment_protocol == 'ORACLE_SHARED_UDA':
+        ablation_name += "_oracle_shared"
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(os.path.dirname(__file__), "logs_module")
@@ -1254,7 +1568,13 @@ def run_ablation_experiment(args):
     logger.info(f"目标域天气: {target_weather}")
     logger.info(f"训练开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"设备: {DEVICE}")
-    logger.info(f"协议: {protocol}")
+    logger.info(f"协议: {experiment_protocol} (adaptation={protocol})")
+    logger.info(f"标签空间模式: {args.label_space_mode}")
+    if experiment_protocol == 'ORACLE_SHARED_UDA':
+        logger.warning(
+            "ORACLE_SHARED_UDA reads target-training label support for filtering; "
+            "it is a separate diagnostic and must not enter the strict UDA table."
+        )
     logger.info(f"源域: {SOURCE_ROOT}")
     logger.info(f"目标域: {TARGET_ROOT}")
     logger.info(f"批次大小: {args.batch_size}")
@@ -1280,6 +1600,10 @@ def run_ablation_experiment(args):
             f"SVD统计批次={args.svd_stat_batch_size}"
         )
     logger.info(f"学习率: feature={args.lr_feature}, other={args.lr_other}, weight_decay={args.weight_decay}")
+    logger.info(
+        "判别器学习率调度: "
+        + ("与生成侧同步余弦衰减" if args.sync_discriminator_lr else "固定学习率")
+    )
     logger.info(f"报告策略: {args.report_strategy}, 窗口: {args.report_window}")
     if protocol == 'UDA':
         logger.info(
@@ -1353,8 +1677,19 @@ def run_ablation_experiment(args):
         logger.info(f"  均值 (Mean): {mean_val:.4f}")
         logger.info(f"  标准差 (Std): {std_val:.4f}")
 
+    oracle_shared_labels = (
+        all_iteration_results[0].get('oracle_shared_labels', [])
+        if all_iteration_results
+        else []
+    )
     machine_summary = {
-        'protocol': adaptation_protocol(args),
+        'protocol': experiment_protocol,
+        'adaptation_protocol': protocol,
+        'label_space_mode': args.label_space_mode,
+        'oracle_target_label_support_used': (
+            args.label_space_mode == 'oracle_shared'
+        ),
+        'oracle_shared_labels': oracle_shared_labels,
         'report_strategy': args.report_strategy,
         'num_iterations': len(all_iteration_results),
         'seeds': iteration_seeds[:len(all_iteration_results)],
@@ -1404,13 +1739,26 @@ def main():
     parser.add_argument('--base_seed', type=int, default=42,
                        help='first seed; repeated runs use base_seed + iteration')
     parser.add_argument('--use_target_labels', action='store_true',
-                       help='使用目标域训练标签进行半监督训练；默认不使用目标域标签')
+                       help='使用全部目标域训练标签（SDA）；默认不使用目标域标签')
     parser.add_argument('--target_label_ratio', type=float, default=0.0,
                        help='SSDA only: fraction of target labels used when --use_target_labels is off; zero gives strict UDA')
     parser.add_argument('--target_cls_weight', type=float, default=0.0,
                        help='SSDA only: target classification weight; zero gives strict UDA')
+    parser.add_argument(
+        '--label_space_mode',
+        choices=['partial_set', 'oracle_shared'],
+        default='partial_set',
+        help=(
+            'partial_set keeps the strict UDA source label space; oracle_shared '
+            'reads target-training class support and is a separately reported diagnostic'
+        ),
+    )
     parser.add_argument('--lr_feature', type=float, default=5e-6, help='feature extractor learning rate')
     parser.add_argument('--lr_other', type=float, default=2e-4, help='other module learning rate')
+    parser.add_argument('--sync_discriminator_lr', action='store_true', default=True,
+                       help='apply the same cosine multiplier to generator and discriminator optimizers')
+    parser.add_argument('--no_sync_discriminator_lr', dest='sync_discriminator_lr',
+                       action='store_false', help='keep the discriminator learning rate fixed')
     parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
     parser.add_argument('--adv_loss_weight', type=float, default=0.08, help='domain adversarial loss weight')
     parser.add_argument('--tensor_loss_weight', type=float, default=0.12, help='Tensor alignment loss weight')
@@ -1494,6 +1842,17 @@ def main():
         parser.error('--uda_prior_warmup_epochs cannot be negative')
     if not 0.0 <= args.uda_prior_uniform_mix <= 1.0:
         parser.error('--uda_prior_uniform_mix must be in [0, 1]')
+    if args.label_space_mode == 'oracle_shared':
+        if adaptation_protocol(args) != 'UDA':
+            parser.error(
+                '--label_space_mode oracle_shared is only valid for pure UDA; '
+                'do not combine it with SDA/SSDA target classification labels'
+            )
+        if args.auto_ablation_hparams:
+            parser.error(
+                '--label_space_mode oracle_shared requires '
+                '--no_auto_ablation_hparams so it cannot silently become SSDA'
+            )
 
     if args.ablation_mode == 'all':
         # "all" means all ablation settings only. The complete model

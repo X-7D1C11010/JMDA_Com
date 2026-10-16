@@ -246,6 +246,32 @@ def set_requires_grad(model, requires_grad=False):
         param.requires_grad = requires_grad
 
 
+def configure_visual_finetuning(net_vis):
+    """Unfreeze the actual ResNet layer2--4 blocks stored at indices 5--7."""
+    if not hasattr(net_vis, 'features') or not isinstance(net_vis.features, nn.Sequential):
+        raise TypeError("VisualFeatureExtractor must expose sequential ResNet features.")
+    if len(net_vis.features) < 8 or not hasattr(net_vis, 'proj'):
+        raise ValueError("Unexpected ResNet layout; cannot select layer2--4 safely.")
+    set_requires_grad(net_vis, False)
+    for stage_index in (5, 6, 7):
+        set_requires_grad(net_vis.features[stage_index], True)
+    set_requires_grad(net_vis.proj, True)
+
+
+def set_frozen_batchnorm_eval(module):
+    frozen_count = 0
+    for child in module.modules():
+        if not isinstance(child, nn.modules.batchnorm._BatchNorm):
+            continue
+        if not any(
+            parameter.requires_grad
+            for parameter in child.parameters(recurse=False)
+        ):
+            child.eval()
+            frozen_count += 1
+    return frozen_count
+
+
 def main():
     # ================= 配置参数 =================
     args = parse_args()
@@ -416,10 +442,12 @@ def main():
         net_ir = IRFeatureExtractor(output_dim=IR_DIM).to(DEVICE)
 
         set_requires_grad(net_ir, True)
-        set_requires_grad(net_vis, False)
-        for name, param in net_vis.named_parameters():
-            if "layer2" in name or "layer3" in name or "layer4" in name or "proj" in name:
-                param.requires_grad = True
+        configure_visual_finetuning(net_vis)
+        logger.info(
+            "VIS fine-tuning stages=ResNet layer2--4 + projection; "
+            f"trainable={sum(p.numel() for p in net_vis.parameters() if p.requires_grad):,}/"
+            f"{sum(p.numel() for p in net_vis.parameters()):,}."
+        )
 
         tal_module = TensorBasedAlignmentStable(
             input_dims=[VIS_DIM, IR_DIM],
@@ -511,11 +539,17 @@ def main():
             )
 
             net_vis.train()
+            frozen_vis_bn_count = set_frozen_batchnorm_eval(net_vis)
             net_ir.train()
             tal_module.train()
             generator.train()
             classifier.train()
             discriminator.train()
+            if epoch == 0:
+                logger.info(
+                    "Frozen VIS BatchNorm layers kept in eval mode: "
+                    f"{frozen_vis_bn_count}."
+                )
 
             loss_accum = 0.0
             loss_cls_accum = 0.0

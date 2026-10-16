@@ -5,6 +5,7 @@
 # 用法:
 #   bash scripts/run_server.sh sda [epochs]   # 监督域适应（论文主结果）
 #   bash scripts/run_server.sh jmda_uda [epochs] # JMDA-Net 无监督
+#   bash scripts/run_server.sh jmda_oracle_shared_uda [epochs] # 共同类 oracle 诊断（不进 UDA 主表）
 #   bash scripts/run_server.sh uda [epochs]   # 其他无监督域适应方法
 #   bash scripts/run_server.sh vlm [epochs]   # CoOp（独立 VLM 表）
 #
@@ -28,8 +29,8 @@ if ! [[ "$EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 case "$PROTOCOL" in
-  sda|jmda_uda|uda|vlm) ;;
-  *) echo "用法: bash scripts/run_server.sh {sda|jmda_uda|uda|vlm} [epochs]"; exit 1 ;;
+  sda|jmda_uda|jmda_oracle_shared_uda|uda|vlm) ;;
+  *) echo "用法: bash scripts/run_server.sh {sda|jmda_uda|jmda_oracle_shared_uda|uda|vlm} [epochs]"; exit 1 ;;
 esac
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -99,7 +100,7 @@ run() {  # run "<log-tag>" <cmd...>
   local tag="$1"; shift
   local log_path="$LOG_ROOT/${tag}_${RUN_ID}.log"
   local started finished elapsed exit_code status record_protocol
-  local input_modalities model_selection
+  local input_modalities model_selection label_space_relation
   echo ">>> [$tag]"
   started="$(date +%s)"
   exit_code=0
@@ -118,13 +119,25 @@ run() {  # run "<log-tag>" <cmd...>
   finished="$(date +%s)"
   elapsed=$((finished - started))
   record_protocol="$PROTOCOL"
-  [ "$record_protocol" = "jmda_uda" ] && record_protocol="uda"
+  case "$record_protocol" in
+    jmda_uda)
+      record_protocol="uda"
+      label_space_relation="partial-set"
+      ;;
+    jmda_oracle_shared_uda)
+      record_protocol="oracle_shared_uda"
+      label_space_relation="oracle-shared-support"
+      ;;
+    *)
+      label_space_relation="partial-set"
+      ;;
+  esac
   case "$tag" in
     jmda_net_*|modfinity_*|boomda_*) input_modalities="VIS+IR" ;;
     *) input_modalities="VIS" ;;
   esac
   case "$record_protocol" in
-    uda|vlm) model_selection="final_checkpoint" ;;
+    uda|oracle_shared_uda|vlm) model_selection="final_checkpoint" ;;
     *) model_selection="method_declared" ;;
   esac
   "$PYTHON" "$HERE/tools/collect_run_result.py" \
@@ -140,7 +153,7 @@ run() {  # run "<log-tag>" <cmd...>
     --seed "$SEED" \
     --efficiency-dir "$EFF_DIR" \
     --input-modalities "$input_modalities" \
-    --label-space-relation "partial-set" \
+    --label-space-relation "$label_space_relation" \
     --model-selection "$model_selection" \
     >> "$log_path" 2>&1 || echo "    WARN: result collection failed for $tag"
 }
@@ -179,8 +192,31 @@ elif [ "$PROTOCOL" = "jmda_uda" ]; then
          --ablation_mode full --no_auto_ablation_hparams \
          --transport_mode sinkhorn \
          --target_label_ratio 0 --target_cls_weight 0 \
+         --label_space_mode partial_set --sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_uda_$t'"
+  done
+
+elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
+  # ---- 共同类别支持 Oracle：读取目标训练类支持，仅作 partial-set 负迁移诊断 ----
+  # 该协议使用独立日志/结果/checkpoint，严禁并入严格 UDA 主表。
+  for t in "${TARGETS[@]}"; do
+    case "$t" in
+      backlight) target_cn="逆光" ;;
+      rainy)     target_cn="雨天" ;;
+      foggy)     target_cn="雾天" ;;
+      dark)      target_cn="黑天" ;;
+    esac
+    run "jmda_net_oracle_shared_uda_$t" bash -c \
+      "cd '$JMDA_NET_DIR' && '$PYTHON' Ablation/module_ablation.py \
+         --source_root '$DATA_ROOT/晴天' --target_root '$DATA_ROOT/$target_cn' \
+         --epochs '$EPOCHS' --num_iterations '${JMDA_NUM_ITERATIONS:-5}' \
+         --ablation_mode full --no_auto_ablation_hparams \
+         --transport_mode sinkhorn \
+         --target_label_ratio 0 --target_cls_weight 0 \
+         --label_space_mode oracle_shared --sync_discriminator_lr \
+         --report_strategy last --base_seed '$SEED' \
+         --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_oracle_shared_uda_$t'"
   done
 
 elif [ "$PROTOCOL" = "uda" ]; then

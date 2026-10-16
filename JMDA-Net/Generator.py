@@ -74,6 +74,7 @@ class NeuralOptimalTransportGenerator(nn.Module):
         transport_mode: str = "sinkhorn",
         epsilon: float = 0.1,
         sinkhorn_iterations: int = 50,
+        sinkhorn_tolerance: float = 1e-4,
         correction_scale: float = 0.1,
         numerical_eps: float = 1e-8,
     ):
@@ -83,8 +84,10 @@ class NeuralOptimalTransportGenerator(nn.Module):
                 f"Unknown transport_mode={transport_mode!r}; "
                 f"expected one of {TRANSPORT_MODES}."
             )
-        if epsilon <= 0 or numerical_eps <= 0:
-            raise ValueError("epsilon and numerical_eps must be positive.")
+        if epsilon <= 0 or numerical_eps <= 0 or sinkhorn_tolerance <= 0:
+            raise ValueError(
+                "epsilon, sinkhorn_tolerance, and numerical_eps must be positive."
+            )
         if sinkhorn_iterations < 1:
             raise ValueError("sinkhorn_iterations must be at least 1.")
         if correction_scale < 0:
@@ -93,6 +96,11 @@ class NeuralOptimalTransportGenerator(nn.Module):
         self.transport_mode = transport_mode
         self.epsilon = float(epsilon)
         self.sinkhorn_iterations = int(sinkhorn_iterations)
+        self.sinkhorn_tolerance = float(sinkhorn_tolerance)
+        self.sinkhorn_max_iterations = max(
+            self.sinkhorn_iterations + 100,
+            self.sinkhorn_iterations * 4,
+        )
         self.correction_scale = float(correction_scale)
         self.numerical_eps = float(numerical_eps)
 
@@ -111,22 +119,59 @@ class NeuralOptimalTransportGenerator(nn.Module):
         log_kernel: torch.Tensor,
         source_marginal: torch.Tensor,
         target_marginal: torch.Tensor,
-    ) -> torch.Tensor:
-        """Log-domain Sinkhorn scaling with a fixed differentiable iteration count."""
+    ) -> Tuple[torch.Tensor, int]:
+        """Log-domain scaling with bounded convergence refinement.
+
+        ``sinkhorn_iterations`` is the minimum number of differentiable
+        updates.  Sharply non-uniform marginals can require more iterations
+        than a uniform plan, so continue in deterministic blocks of ten until
+        both residuals meet ``sinkhorn_tolerance``.  The bounded refinement
+        keeps the same entropic-OT problem while preventing a silently invalid
+        one-sided marginal plan.
+        """
         log_source = torch.log(source_marginal.clamp_min(self.numerical_eps))
         log_target = torch.log(target_marginal.clamp_min(self.numerical_eps))
         log_u = torch.zeros_like(log_source)
         log_v = torch.zeros_like(log_target)
 
-        for _ in range(self.sinkhorn_iterations):
+        maximum_iterations = self.sinkhorn_max_iterations
+        iterations_used = 0
+        for iteration_index in range(maximum_iterations):
             log_u = log_source - torch.logsumexp(
                 log_kernel + log_v.unsqueeze(0), dim=1
             )
             log_v = log_target - torch.logsumexp(
                 log_kernel + log_u.unsqueeze(1), dim=0
             )
+            iterations_used = iteration_index + 1
 
-        return torch.exp(log_u.unsqueeze(1) + log_kernel + log_v.unsqueeze(0))
+            should_check = (
+                iterations_used >= self.sinkhorn_iterations
+                and (
+                    iterations_used % 10 == 0
+                    or iterations_used == maximum_iterations
+                )
+            )
+            if should_check:
+                with torch.no_grad():
+                    log_plan = (
+                        log_u.unsqueeze(1)
+                        + log_kernel
+                        + log_v.unsqueeze(0)
+                    )
+                    row_marginal = torch.logsumexp(log_plan, dim=1).exp()
+                    column_marginal = torch.logsumexp(log_plan, dim=0).exp()
+                    residual = torch.maximum(
+                        (row_marginal - source_marginal).abs().max(),
+                        (column_marginal - target_marginal).abs().max(),
+                    )
+                if float(residual) <= self.sinkhorn_tolerance:
+                    break
+
+        mass_plan = torch.exp(
+            log_u.unsqueeze(1) + log_kernel + log_v.unsqueeze(0)
+        )
+        return mass_plan, iterations_used
 
     def compute_transport(
         self,
@@ -200,6 +245,7 @@ class NeuralOptimalTransportGenerator(nn.Module):
                     )
                 class_support = source_labels[:, None].eq(target_labels[None, :])
 
+        sinkhorn_iterations_used = 0
         if self.transport_mode == "legacy_row_softmax":
             # Exact historical behavior: TransNet logits are treated as the
             # transport logits and row-Softmax is the final conditional map.
@@ -222,7 +268,7 @@ class NeuralOptimalTransportGenerator(nn.Module):
             log_kernel = F.log_softmax(transport_logits, dim=1)
 
             if self.transport_mode == "sinkhorn":
-                mass_plan = self._sinkhorn_from_log_kernel(
+                mass_plan, sinkhorn_iterations_used = self._sinkhorn_from_log_kernel(
                     log_kernel,
                     source_marginal,
                     target_marginal,
@@ -275,6 +321,9 @@ class NeuralOptimalTransportGenerator(nn.Module):
             "class_conditional": mass_plan.new_tensor(
                 float(class_support is not None)
             ),
+            "sinkhorn_iterations_used": mass_plan.new_tensor(
+                float(sinkhorn_iterations_used)
+            ),
         }
         self.last_transport_info = {
             "marginal_residual": float(marginal_residual.detach()),
@@ -287,6 +336,7 @@ class NeuralOptimalTransportGenerator(nn.Module):
             "column_marginal_residual": float(column_residual.detach()),
             "correction_regularization": float(correction_regularization.detach()),
             "off_class_mass": float(off_class_mass.detach()),
+            "sinkhorn_iterations_used": float(sinkhorn_iterations_used),
         }
         return conditional_plan, details
 

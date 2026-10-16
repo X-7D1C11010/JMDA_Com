@@ -1,7 +1,9 @@
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image
 
 from Generator import NeuralOptimalTransportGenerator
@@ -11,12 +13,21 @@ from Ablation.PairedClassSampler import PairedClassSampler
 from Ablation.module_ablation import (
     BinaryDomainDiscriminator,
     UnpairedDomainSampler,
+    adaptation_protocol,
     class_prior_to_sample_marginal,
+    compute_protocol_classification_loss,
     compute_joint_ot_scale,
+    configure_visual_finetuning,
+    derive_oracle_shared_labels,
+    reported_protocol,
     select_report_metrics,
+    set_frozen_batchnorm_eval,
     transport_projected_feature_basis,
 )
-from Ablation.paired_dataset import PairedModalTransform
+from Ablation.paired_dataset import (
+    PairedModalTransform,
+    filter_samples_by_original_labels,
+)
 from epoch_svd import build_epoch_pairs
 
 
@@ -147,6 +158,200 @@ class ResultReportingTests(unittest.TestCase):
         self.assertIs(selected, history[1])
         self.assertEqual(selected["accuracy"], 0.8)
         self.assertEqual(selected["precision_macro"], 0.3)
+
+
+class AdaptationProtocolTests(unittest.TestCase):
+    @staticmethod
+    def _args(use_target_labels=False, ratio=0.0, weight=0.0,
+              label_space_mode="partial_set"):
+        return SimpleNamespace(
+            use_target_labels=use_target_labels,
+            target_label_ratio=ratio,
+            target_cls_weight=weight,
+            label_space_mode=label_space_mode,
+        )
+
+    def test_protocol_states_are_disjoint(self):
+        self.assertEqual(adaptation_protocol(self._args(True)), "SDA")
+        self.assertEqual(adaptation_protocol(self._args(False, 0.2, 0.5)), "SSDA")
+        self.assertEqual(adaptation_protocol(self._args()), "UDA")
+
+    def test_oracle_shared_has_separate_reported_protocol(self):
+        args = self._args(label_space_mode="oracle_shared")
+        self.assertEqual(adaptation_protocol(args), "UDA")
+        self.assertEqual(reported_protocol(args), "ORACLE_SHARED_UDA")
+        with self.assertRaisesRegex(ValueError, "only defined for pure UDA"):
+            reported_protocol(self._args(True, label_space_mode="oracle_shared"))
+
+    def test_oracle_shared_label_intersection_is_explicit(self):
+        self.assertEqual(
+            derive_oracle_shared_labels([1, 2, 3, 3], [3, 4, 1]),
+            [1, 3],
+        )
+        with self.assertRaisesRegex(ValueError, "no shared classes"):
+            derive_oracle_shared_labels([1], [2])
+
+    def test_oracle_filter_keeps_original_ids_and_default_is_unchanged(self):
+        samples = [
+            {"label": 1, "name": "a"},
+            {"label": 4, "name": "b"},
+            {"label": 9, "name": "c"},
+        ]
+        self.assertEqual(filter_samples_by_original_labels(samples), samples)
+        filtered = filter_samples_by_original_labels(samples, {1, 9})
+        self.assertEqual([sample["label"] for sample in filtered], [1, 9])
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            filter_samples_by_original_labels(samples, set())
+
+
+class ProtocolClassificationLossTests(unittest.TestCase):
+    def setUp(self):
+        torch.manual_seed(31)
+        self.criterion = nn.CrossEntropyLoss()
+        self.source_labels = torch.tensor([0, 1, 2])
+        self.target_labels = torch.tensor([2, 1, 0])
+
+    def _logits(self):
+        return torch.randn(3, 3, requires_grad=True)
+
+    def test_sda_contains_source_full_target_and_class_paired_mid_ce(self):
+        source = self._logits()
+        target = self._logits()
+        intermediate = self._logits()
+        scale = 0.4
+
+        total, terms = compute_protocol_classification_loss(
+            self.criterion,
+            "SDA",
+            source,
+            self.source_labels,
+            target_logits=target,
+            target_labels=self.target_labels,
+            target_cls_weight=1.0,
+            intermediate_logits=intermediate,
+            intermediate_scale=scale,
+        )
+
+        expected = (
+            self.criterion(source, self.source_labels)
+            + self.criterion(target, self.target_labels)
+            + scale * self.criterion(intermediate, self.source_labels)
+        )
+        self.assertTrue(torch.allclose(total, expected))
+        self.assertEqual(terms["target_labeled_count"], 3)
+        total.backward()
+        self.assertIsNotNone(source.grad)
+        self.assertIsNotNone(target.grad)
+        self.assertIsNotNone(intermediate.grad)
+
+    def test_ssda_uses_only_fixed_target_subset_and_ignores_mid_logits(self):
+        source = self._logits()
+        target = self._logits()
+        intermediate = self._logits()
+        target_indices = torch.tensor([10, 11, 12])
+
+        total, terms = compute_protocol_classification_loss(
+            self.criterion,
+            "SSDA",
+            source,
+            self.source_labels,
+            target_logits=target,
+            target_labels=self.target_labels,
+            target_label_ratio=0.5,
+            target_cls_weight=0.7,
+            target_indices=target_indices,
+            target_labeled_indices={11},
+            intermediate_logits=intermediate,
+        )
+
+        expected = (
+            self.criterion(source, self.source_labels)
+            + 0.7 * self.criterion(target[1:2], self.target_labels[1:2])
+        )
+        self.assertTrue(torch.allclose(total, expected))
+        self.assertEqual(terms["target_labeled_count"], 1)
+        self.assertEqual(float(terms["intermediate"]), 0.0)
+        total.backward()
+        self.assertIsNone(intermediate.grad)
+
+    def test_uda_requires_no_target_labels_and_has_source_ce_only(self):
+        source = self._logits()
+        target = self._logits()
+        intermediate = self._logits()
+
+        total, terms = compute_protocol_classification_loss(
+            self.criterion,
+            "UDA",
+            source,
+            self.source_labels,
+            target_logits=target,
+            target_labels=None,
+            target_cls_weight=1.0,
+            intermediate_logits=intermediate,
+        )
+
+        self.assertTrue(
+            torch.allclose(total, self.criterion(source, self.source_labels))
+        )
+        self.assertEqual(terms["target_labeled_count"], 0)
+        total.backward()
+        self.assertIsNone(target.grad)
+        self.assertIsNone(intermediate.grad)
+
+    def test_labeled_protocols_require_target_labels(self):
+        for protocol in ("SDA", "SSDA"):
+            with self.subTest(protocol=protocol):
+                with self.assertRaisesRegex(ValueError, "requires target logits"):
+                    compute_protocol_classification_loss(
+                        self.criterion,
+                        protocol,
+                        self._logits(),
+                        self.source_labels,
+                    )
+
+    def test_invalid_protocol_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported adaptation protocol"):
+            compute_protocol_classification_loss(
+                self.criterion,
+                "DG",
+                self._logits(),
+                self.source_labels,
+            )
+
+
+class VisualFineTuningTests(unittest.TestCase):
+    class _DummyVisual(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.features = nn.Sequential(
+                *[
+                    nn.Sequential(nn.Linear(2, 2), nn.BatchNorm1d(2))
+                    for _ in range(8)
+                ]
+            )
+            self.proj = nn.Linear(2, 2)
+
+    def test_resnet_stage_indices_and_frozen_bn_modes(self):
+        model = self._DummyVisual()
+        configure_visual_finetuning(model)
+
+        for stage_index in range(5):
+            self.assertFalse(
+                any(parameter.requires_grad for parameter in model.features[stage_index].parameters())
+            )
+        for stage_index in (5, 6, 7):
+            self.assertTrue(
+                all(parameter.requires_grad for parameter in model.features[stage_index].parameters())
+            )
+        self.assertTrue(all(parameter.requires_grad for parameter in model.proj.parameters()))
+
+        model.train()
+        frozen_count = set_frozen_batchnorm_eval(model)
+        self.assertEqual(frozen_count, 5)
+        for stage_index in range(5):
+            self.assertFalse(model.features[stage_index][1].training)
+        for stage_index in (5, 6, 7):
+            self.assertTrue(model.features[stage_index][1].training)
 
 
 class TensorEpochUpdateTests(unittest.TestCase):
@@ -356,11 +561,11 @@ class SinkhornTransportTests(unittest.TestCase):
             transport_mode='sinkhorn',
             sinkhorn_iterations=100,
         )
-        source = torch.randn(4, 8)
-        target = torch.randn(3, 8)
+        source = torch.randn(4, 8, requires_grad=True)
+        target = torch.randn(3, 8, requires_grad=True)
         source_marginal = torch.tensor([0.1, 0.2, 0.3, 0.4])
 
-        _, details = generator(
+        intermediate, details = generator(
             source,
             target,
             return_details=True,
@@ -377,6 +582,11 @@ class SinkhornTransportTests(unittest.TestCase):
                 details['mass_plan'].sum(0), torch.full((3,), 1 / 3), atol=2e-4
             )
         )
+        self.assertGreater(int(details['sinkhorn_iterations_used'].item()), 100)
+        self.assertLess(float(details['marginal_residual']), 2e-4)
+        intermediate.square().mean().backward()
+        self.assertIsNotNone(source.grad)
+        self.assertIsNotNone(target.grad)
 
     def test_legacy_mode_keeps_original_transnet_row_softmax(self):
         torch.manual_seed(9)
