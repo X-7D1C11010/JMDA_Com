@@ -1,7 +1,7 @@
-协议=jmda_uda 轮数=100 数据根=/mnt/data/lixiang/data/Data
-日志目录=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda
+协议=jmda_oracle_shared_uda 轮数=100 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda
 生成所有方法共享的精确 VIS/IR 配对样本清单...
-[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261018_145753_809982
+[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261018_160218_978602
   backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
   backlight_train.txt: rows=113 sha256=2dee4a0ca188
   backlight_val.txt: rows=36 sha256=c670631f54c1
@@ -16,10 +16,10 @@
   rainy_val.txt: rows=26 sha256=fb713ee0fe84
   sunny_train.txt: rows=760 sha256=ff9110283d7f
 运行公共配置预检...
-[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261018_145753_809982/paired_protocol_manifest.json (13 lists)
+[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261018_160218_978602/paired_protocol_manifest.json (13 lists)
 [OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
-[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=20439/32102 MiB
-[OK] CUDA free-memory gate passed: 20439 MiB available >= 12288 MiB required
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=20565/32102 MiB
+[OK] CUDA free-memory gate passed: 20565 MiB available >= 12288 MiB required
 [OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
 [OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
 [OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
@@ -33,8 +33,15 @@
 [AUDIT] rainy: partial-set, target classes=6/14, source-only labels=[1, 2, 3, 7, 9, 11, 12, 13]
 [AUDIT] foggy: partial-set, target classes=9/14, source-only labels=[2, 6, 11, 12, 13]
 [AUDIT] dark: partial-set, target classes=8/14, source-only labels=[2, 3, 7, 9, 12, 13]
+[ORACLE] target-training label support will be read to filter source-only classes; this diagnostic is not strict UDA.
 [OK] JMDA-Net entry: /home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py
-[OK] JMDA protocol semantics: strict UDA; target_label_ratio=0, target_cls_weight=0, final checkpoint reporting
+[OK] JMDA protocol semantics: ORACLE_SHARED_UDA; target labels are excluded from losses, but target class support is read for filtering
 [OK] server preflight passed
 JMDA加载参数: batch=32 workers=4 SVD_batch=32 prefetch=2 pin_memory=1
->>> [jmda_net_uda_backlight]
+>>> [jmda_net_oracle_shared_uda_backlight]
+    done: jmda_net_oracle_shared_uda_backlight
+>>> [jmda_net_oracle_shared_uda_rainy]
+    done: jmda_net_oracle_shared_uda_rainy
+>>> [jmda_net_oracle_shared_uda_foggy]
+    done: jmda_net_oracle_shared_uda_foggy
+>>> [jmda_net_oracle_shared_uda_dark]
