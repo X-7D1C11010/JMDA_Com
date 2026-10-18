@@ -19,6 +19,7 @@ from Ablation.module_ablation import (
     compute_protocol_classification_loss,
     compute_joint_ot_scale,
     configure_visual_finetuning,
+    build_compact_label_map,
     derive_oracle_shared_labels,
     reported_protocol,
     select_report_metrics,
@@ -294,6 +295,14 @@ class AdaptationProtocolTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "no shared classes"):
             derive_oracle_shared_labels([1], [2])
+
+    def test_oracle_shared_label_map_is_compact_and_deterministic(self):
+        self.assertEqual(
+            build_compact_label_map([14, 1, 9, 5, 9]),
+            {1: 0, 5: 1, 9: 2, 14: 3},
+        )
+        with self.assertRaisesRegex(ValueError, "empty class support"):
+            build_compact_label_map([])
 
     def test_oracle_filter_keeps_original_ids_and_default_is_unchanged(self):
         samples = [

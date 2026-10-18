@@ -34,6 +34,7 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--label_space_mode partial_set", strict_block)
         self.assertNotIn("oracle_shared", strict_block)
         self.assertIn("--label_space_mode oracle_shared", oracle_block)
+        self.assertIn("--no_uda_source_reweighting", oracle_block)
         self.assertIn("jmda_net_oracle_shared_uda_", oracle_block)
 
     def test_oracle_results_cannot_be_recorded_as_uda(self):

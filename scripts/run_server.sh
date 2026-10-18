@@ -276,7 +276,8 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
          --ablation_mode full --no_auto_ablation_hparams \
          --transport_mode sinkhorn \
          --target_label_ratio 0 --target_cls_weight 0 \
-         --label_space_mode oracle_shared --sync_discriminator_lr \
+         --label_space_mode oracle_shared --no_uda_source_reweighting \
+         --sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_oracle_shared_uda_$t'"
   done

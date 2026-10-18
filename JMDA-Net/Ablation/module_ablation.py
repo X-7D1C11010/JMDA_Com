@@ -463,6 +463,14 @@ def derive_oracle_shared_labels(source_labels, target_labels):
     return shared_labels
 
 
+def build_compact_label_map(original_labels):
+    """Map an explicitly selected original label space to contiguous ids."""
+    labels = sorted(set(map(int, original_labels)))
+    if not labels:
+        raise ValueError("Cannot build a label map from an empty class support.")
+    return {original_label: index for index, original_label in enumerate(labels)}
+
+
 def select_report_metrics(metric_history, strategy='best', window=10):
     """Select one coherent metric record for a repeated training run.
 
@@ -796,7 +804,8 @@ def run_single_iteration(args, seed, logger):
     oracle_shared_labels = None
 
     src_train_ds = MultiModalDomainDataset(SOURCE_ROOT, domain_type='source', phase='train')
-    global_map = src_train_ds.get_label_map()
+    source_label_map = dict(src_train_ds.get_label_map())
+    global_map = dict(source_label_map)
     source_count_before_filter = len(src_train_ds)
 
     if args.label_space_mode == 'oracle_shared':
@@ -809,10 +818,24 @@ def run_single_iteration(args, seed, logger):
             phase='train',
         )
         target_count_before_filter = len(target_probe)
+        target_only_labels = sorted(
+            set(map(int, target_probe.labels)) - set(source_label_map)
+        )
+        if target_only_labels:
+            raise ValueError(
+                "ORACLE_SHARED_UDA requires target class support to be a "
+                "subset of the source label space; target-only original "
+                f"labels={target_only_labels}."
+            )
         oracle_shared_labels = derive_oracle_shared_labels(
             src_train_ds.labels,
             target_probe.labels,
         )
+        # Filtering samples while retaining the original 14-way classifier
+        # leaves unsupported logits in the CE denominator and in the target
+        # prior.  A shared-label-space diagnostic must use the selected class
+        # support consistently across labels, classifier outputs and metrics.
+        global_map = build_compact_label_map(oracle_shared_labels)
         src_train_ds = MultiModalDomainDataset(
             SOURCE_ROOT,
             domain_type='source',
@@ -825,14 +848,14 @@ def run_single_iteration(args, seed, logger):
             domain_type='target',
             phase='train',
             global_label_map=global_map,
-            allowed_original_labels=oracle_shared_labels,
         )
         logger.warning(
             "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. "
             f"reported_protocol={experiment_protocol}; shared original labels="
             f"{oracle_shared_labels}; source samples {source_count_before_filter}->"
-            f"{len(src_train_ds)}, target samples {target_count_before_filter}->"
-            f"{len(tgt_train_ds)}."
+            f"{len(src_train_ds)}; target samples retained without filtering="
+            f"{len(tgt_train_ds)}/{target_count_before_filter}; classifier classes="
+            f"{len(global_map)}."
         )
     else:
         tgt_train_ds = MultiModalDomainDataset(
@@ -861,12 +884,10 @@ def run_single_iteration(args, seed, logger):
             phase='train',
             global_label_map=global_map,
             deterministic_transform=True,
-            allowed_original_labels=oracle_shared_labels,
         )
 
     tgt_val_ds = MultiModalDomainDataset(TARGET_ROOT, domain_type='target', phase='val',
-                                         global_label_map=global_map, val_augment=False,
-                                         allowed_original_labels=oracle_shared_labels)
+                                         global_label_map=global_map, val_augment=False)
 
     logger.info(
         "Dataset audit: "
@@ -884,6 +905,7 @@ def run_single_iteration(args, seed, logger):
         f"target_train={target_train_counts}; "
         f"target_val={dict(sorted(Counter(tgt_val_ds.labels).items()))}"
     )
+    logger.info(f"Classifier label map (original->index): {global_map}")
     logger.info(
         "Exact VIS/IR pairing audit: "
         f"source={src_train_ds.pairing_stats}; "
@@ -1634,6 +1656,7 @@ def run_single_iteration(args, seed, logger):
     report_metrics['oracle_shared_labels'] = (
         list(oracle_shared_labels) if oracle_shared_labels is not None else []
     )
+    report_metrics['label_map_original_to_index'] = dict(global_map)
     if args.checkpoint_dir:
         os.makedirs(args.checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(
@@ -1648,6 +1671,7 @@ def run_single_iteration(args, seed, logger):
                 'adaptation_protocol': protocol,
                 'label_space_mode': args.label_space_mode,
                 'oracle_shared_labels': report_metrics['oracle_shared_labels'],
+                'label_map_original_to_index': dict(global_map),
                 'report_strategy': args.report_strategy,
                 'data_loading': {
                     'batch_size': args.batch_size,
@@ -1836,6 +1860,11 @@ def run_ablation_experiment(args):
         if all_iteration_results
         else []
     )
+    label_map_original_to_index = (
+        all_iteration_results[0].get('label_map_original_to_index', {})
+        if all_iteration_results
+        else {}
+    )
     machine_summary = {
         'protocol': experiment_protocol,
         'adaptation_protocol': protocol,
@@ -1844,6 +1873,7 @@ def run_ablation_experiment(args):
             args.label_space_mode == 'oracle_shared'
         ),
         'oracle_shared_labels': oracle_shared_labels,
+        'label_map_original_to_index': label_map_original_to_index,
         'report_strategy': args.report_strategy,
         'data_loading': {
             'batch_size': args.batch_size,

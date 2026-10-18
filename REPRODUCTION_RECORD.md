@@ -480,7 +480,7 @@ JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data \
 - **VIS 微调修复**：`VisualFeatureExtractor` 的 ResNet 位于匿名 `Sequential`，真实层名为 `features.5/6/7`。原 `layer2/3/4` 字符串匹配没有解冻骨干；现显式解冻 layer2--4 与 projection，并保持冻结 BatchNorm 为 eval。
 - **Sinkhorn 数值约束**：非均匀源边缘下，固定迭代可能只满足目标列边缘。现保留同一熵正则 OT，在配置的最少迭代后按双边残差进行有上限的继续缩放，并在日志记录实际迭代数。
 - **严格 UDA 模型选择**：服务器入口固定 `--report_strategy last`，保存/汇报 final checkpoint；epoch peak 只能作为诊断，不用于选择或主表结果。
-- **共同类别实验的边界**：新增 `jmda_oracle_shared_uda`，读取目标训练集类别支持后只保留源/目标共同类别。该操作使用了目标标签支持，协议名与日志均标记 `ORACLE_SHARED_UDA`，不得并入严格 UDA 主表；若做方法间比较，所有方法必须使用同一过滤清单。
+- **共同类别实验的边界**：新增 `jmda_oracle_shared_uda`，读取目标训练集类别支持后只保留源域中的共同类别；目标训练集和验证集不做选择性删样本。该操作使用了目标标签支持，协议名与日志均标记 `ORACLE_SHARED_UDA`，不得并入严格 UDA 主表；若做方法间比较，所有方法必须使用同一过滤清单。
 - **对比方法随机种子**：所有由 `run_server.sh` 启动的 SDA/UDA 对比入口现在实际控制 Python、NumPy、PyTorch CPU/CUDA RNG；此前多数脚本虽解析 `--seed`，但没有应用。
 - **AD-CLIP**：projector 子层改为 `ModuleList`，确保进入优化器与 checkpoint；token id 改为随模型迁移的 buffer；评估改用官方目标的 target-only style-mapping 路径，不再把同一目标图同时伪装成源/目标输入。
 - **CDAN**：将官方参数组中的 `lr_mult/decay_mult` 显式转换成 PyTorch 的组级 `lr/weight_decay`；此前这些自定义字段被 SGD 静默忽略。
@@ -504,4 +504,14 @@ bash scripts/run_server.sh vlm 100                     # 独立 VLM 表
 - 本地严格 UDA 与 `ORACLE_SHARED_UDA` 预检均通过；严格模式明确显示目标标签权重为 0、final checkpoint 报告，oracle 模式明确警告读取了目标训练类别支持。
 - `server_logs/jmda_uda/jmda_net_uda_backlight_20261013_211726_2491650.log` 是修复前启动且随后被终止的旧运行，只到 epoch 96/100，没有 final checkpoint，也没有新版本的 `src/tgt/mid` 损失拆分，因此不得用于判断修复后精度。修复后的数值结果必须重新完成服务器训练后再报告，不能由上述门禁测试推断或保证。
 - 修复后已在本机完整数据上完成两次逆光 1-epoch/1-seed 端到端烟测。正式 warm-up 配置验证了 `src/tgt/mid=2.3914/0/0`、目标标注观察数为 0、`report_strategy=last` 及 final checkpoint 保存；另一次仅为覆盖运行路径而临时设 `ot_warmup_epochs=0, ot_ramp_epochs=1`，实际执行 Neural OT 与三域判别器，得到有限损失、Sinkhorn 双边最大残差 `1.72e-06`、平均 50 次迭代，并保存带 `protocol=UDA`、`label_space_mode=partial_set`、空 `oracle_shared_labels` 的 final checkpoint。两次 1-epoch 指标只证明运行链路，不作为论文性能结果或超参数依据。
+
+### 11.8 2026-10-18 逆光平台期与共同类别实现复核
+
+- 最新运行只完成逆光 seed 42 的 epoch 1--61，随后人工停止；没有 traceback、OOM、NaN 或 final checkpoint。目标验证集仅 36 个样本，accuracy 的最小变化单位为 `1/36=0.0278`。
+- 严格 `jmda_uda` 使用全部 14 个源类别，而逆光只包含 9 个目标类别。日志显示源域准确率达到 100%，目标 accuracy 后期约为 0.3056，并持续预测 `14/14` 个类别，符合 partial-set 负迁移而非数值故障。
+- 历史 SDA 的 `PairedClassSampler` 实际只从源/目标共同类别采样；因此不能把其结果与使用全部 14 个源类别的严格 UDA 当成完全相同的有效标签空间。
+- `oracle_shared` 已修正为：只筛选源训练集与源 SVD 统计集、将共同原始标签紧凑映射到 `0..K-1`、同步缩减分类头和类别先验、完整保留目标训练/验证样本，并在日志/checkpoint/机器摘要中记录映射。
+- 服务器共同类别入口显式关闭额外的无标签 source-prior 重加权，以先验证“原方法损失 + 无目标分类监督 + 已知共同类别空间”。严格 partial-set UDA 的设置保持不变。
+- 本地数据级验证：逆光、雨天、雾天、黑天的源训练对分别由 760 筛为 515、401、515、493；共同类别数分别为 9、6、9、8，目标训练/验证样本均未被筛除。
+- 该共同类别设置读取目标训练类别支持，仍属于 `ORACLE_SHARED_UDA`（或 known-target-label-space UDA），不得改名为严格 UDA，也不得与严格 UDA 或其他未使用同一过滤清单的方法混入公平主表。
 
