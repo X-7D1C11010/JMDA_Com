@@ -1,11 +1,53 @@
 """Epoch-boundary feature collection for Tensor SVD projection updates."""
 
 from collections import defaultdict
+import numpy as np
 import random
 from typing import Dict, List, Sequence, Tuple
 
 import torch
-from torch.utils.data import default_collate
+from torch.utils.data import DataLoader, Dataset
+
+
+def _seed_data_worker(worker_id):
+    """Seed Python and NumPy from the worker seed assigned by DataLoader."""
+    del worker_id
+    worker_seed = torch.initial_seed() % (2 ** 32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+
+
+class _PairedFeatureDataset(Dataset):
+    """Expose fixed source/target index pairs to worker processes."""
+
+    def __init__(self, source_dataset, target_dataset, pairs):
+        self.source_dataset = source_dataset
+        self.target_dataset = target_dataset
+        self.pairs = list(pairs)
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, index):
+        source_index, target_index = self.pairs[index]
+        return self.source_dataset[source_index], self.target_dataset[target_index]
+
+
+def _loader_options(batch_size, num_workers, prefetch_factor, pin_memory, seed):
+    generator = torch.Generator()
+    generator.manual_seed(int(seed))
+    options = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "drop_last": False,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+        "worker_init_fn": _seed_data_worker,
+        "generator": generator,
+    }
+    if num_workers > 0:
+        options["prefetch_factor"] = prefetch_factor
+    return options
 
 
 def _indices_by_class(dataset) -> Dict[int, List[int]]:
@@ -95,6 +137,9 @@ def update_epoch_projections(
     class_paired: bool = True,
     balance_classes: bool = False,
     source_class_weights: torch.Tensor = None,
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
+    pin_memory: bool = False,
 ):
     """Extract complete feature banks and perform one projection update.
 
@@ -111,6 +156,11 @@ def update_epoch_projections(
         )
     if batch_size < 1:
         raise ValueError("batch_size must be positive.")
+    if num_workers < 0:
+        raise ValueError("num_workers cannot be negative.")
+    if prefetch_factor < 1:
+        raise ValueError("prefetch_factor must be positive.")
+    non_blocking = bool(pin_memory and device.type == "cuda")
 
     previous_training_states = [encoder.training for encoder in encoders]
     for encoder in encoders:
@@ -129,19 +179,26 @@ def update_epoch_projections(
                 class_paired=True,
                 balance_classes=balance_classes,
             )
-            for start in range(0, len(pairs), batch_size):
-                batch_pairs = pairs[start:start + batch_size]
-                source_batch = default_collate(
-                    [source_dataset[source_index] for source_index, _ in batch_pairs]
-                )
-                target_batch = default_collate(
-                    [target_dataset[target_index] for _, target_index in batch_pairs]
-                )
+            paired_loader = DataLoader(
+                _PairedFeatureDataset(source_dataset, target_dataset, pairs),
+                **_loader_options(
+                    batch_size,
+                    num_workers,
+                    prefetch_factor,
+                    pin_memory,
+                    seed,
+                ),
+            )
+            for source_batch, target_batch in paired_loader:
                 for mode, (encoder, key) in enumerate(
                     zip(encoders, modality_keys)
                 ):
-                    source_input = source_batch[key].to(device, non_blocking=True)
-                    target_input = target_batch[key].to(device, non_blocking=True)
+                    source_input = source_batch[key].to(
+                        device, non_blocking=non_blocking
+                    )
+                    target_input = target_batch[key].to(
+                        device, non_blocking=non_blocking
+                    )
                     source_features[mode].append(encoder(source_input).float())
                     target_features[mode].append(encoder(target_input).float())
         else:
@@ -151,20 +208,31 @@ def update_epoch_projections(
                 (source_dataset, source_features, True),
                 (target_dataset, target_features, False),
             ):
-                for start in range(0, len(dataset), batch_size):
-                    batch = default_collate(
-                        [
-                            dataset[index]
-                            for index in range(start, min(start + batch_size, len(dataset)))
-                        ]
-                    )
+                loader_seed = seed if keep_labels else seed + 1
+                loader = DataLoader(
+                    dataset,
+                    **_loader_options(
+                        batch_size,
+                        num_workers,
+                        prefetch_factor,
+                        pin_memory,
+                        loader_seed,
+                    ),
+                )
+                for batch in loader:
                     for mode, (encoder, key) in enumerate(
                         zip(encoders, modality_keys)
                     ):
-                        inputs = batch[key].to(device, non_blocking=True)
+                        inputs = batch[key].to(
+                            device, non_blocking=non_blocking
+                        )
                         feature_chunks[mode].append(encoder(inputs).float())
                     if keep_labels:
-                        source_labels.append(batch["label"].to(device))
+                        source_labels.append(
+                            batch["label"].to(
+                                device, non_blocking=non_blocking
+                            )
+                        )
     finally:
         for encoder, was_training in zip(encoders, previous_training_states):
             encoder.train(was_training)

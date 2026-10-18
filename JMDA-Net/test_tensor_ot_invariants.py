@@ -1,4 +1,5 @@
 import unittest
+import random
 from types import SimpleNamespace
 
 import numpy as np
@@ -28,7 +29,7 @@ from Ablation.paired_dataset import (
     PairedModalTransform,
     filter_samples_by_original_labels,
 )
-from epoch_svd import build_epoch_pairs
+from epoch_svd import build_epoch_pairs, update_epoch_projections
 
 
 class _LabelOnlyDataset:
@@ -43,6 +44,39 @@ class _LabelOnlyDataset:
             "label": torch.tensor(self.labels[index], dtype=torch.long),
             "index": torch.tensor(index, dtype=torch.long),
         }
+
+
+class _FeatureDataset:
+    """Small picklable dataset used to exercise SVD worker loading."""
+
+    def __init__(self, count, offset=0.0):
+        self.count = count
+        self.offset = float(offset)
+        self.labels = [index % 2 for index in range(count)]
+
+    def __len__(self):
+        return self.count
+
+    def __getitem__(self, index):
+        base = torch.tensor(
+            [index + self.offset, index + 1.0, index * 0.5 + 2.0],
+            dtype=torch.float32,
+        )
+        return {
+            "vis": base,
+            "ir": torch.flip(base, dims=(0,)),
+            "label": torch.tensor(self.labels[index], dtype=torch.long),
+        }
+
+
+class _RandomizedLabelDataset(_LabelOnlyDataset):
+    def __getitem__(self, index):
+        sample = super().__getitem__(index)
+        sample["worker_random"] = torch.tensor(
+            [random.random(), float(np.random.random()), float(torch.rand(()))],
+            dtype=torch.float64,
+        )
+        return sample
 
 
 class EpochPairingTests(unittest.TestCase):
@@ -60,6 +94,76 @@ class EpochPairingTests(unittest.TestCase):
         self.assertEqual(len(sampler), 2)
         self.assertEqual(set(source_seen), set(range(len(source))))
         self.assertEqual(set(target_seen), set(range(len(target))))
+
+    def test_unpaired_sampler_worker_loader_covers_domains_deterministically(self):
+        source = _RandomizedLabelDataset([0, 1, 2, 3, 4])
+        target = _RandomizedLabelDataset([8, 9])
+
+        def collect():
+            sampler = UnpairedDomainSampler(
+                source,
+                target,
+                batch_size=3,
+                num_workers=1,
+                prefetch_factor=1,
+                pin_memory=False,
+                seed=17,
+            )
+            source_seen = []
+            target_seen = []
+            worker_random = []
+            for source_batch, target_batch in sampler:
+                source_seen.extend(source_batch["index"].tolist())
+                target_seen.extend(target_batch["sample_index"].tolist())
+                worker_random.extend(source_batch["worker_random"].tolist())
+                worker_random.extend(target_batch["worker_random"].tolist())
+            return source_seen, target_seen, worker_random
+
+        first_source, first_target, first_random = collect()
+        second_source, second_target, second_random = collect()
+        self.assertEqual(first_source, second_source)
+        self.assertEqual(first_target, second_target)
+        self.assertEqual(first_random, second_random)
+        self.assertEqual(set(first_source), set(range(len(source))))
+        self.assertEqual(set(first_target), set(range(len(target))))
+
+    def test_unpaired_sampler_rejects_invalid_loader_parameters(self):
+        source = _LabelOnlyDataset([0])
+        target = _LabelOnlyDataset([1])
+        with self.assertRaisesRegex(ValueError, "num_workers"):
+            UnpairedDomainSampler(source, target, batch_size=1, num_workers=-1)
+        with self.assertRaisesRegex(ValueError, "prefetch_factor"):
+            UnpairedDomainSampler(
+                source, target, batch_size=1, prefetch_factor=0
+            )
+
+    def test_epoch_svd_worker_loader_updates_complete_unpaired_banks(self):
+        source = _FeatureDataset(5, offset=0.0)
+        target = _FeatureDataset(3, offset=0.25)
+        module = TensorBasedAlignmentStable(
+            input_dims=[3, 3],
+            output_dims=[2, 2],
+            num_modalities=2,
+            max_svd_sweeps=1,
+        )
+
+        update_info = update_epoch_projections(
+            tal_module=module,
+            encoders=[nn.Identity(), nn.Identity()],
+            modality_keys=["vis", "ir"],
+            source_dataset=source,
+            target_dataset=target,
+            batch_size=2,
+            device=torch.device("cpu"),
+            seed=23,
+            class_paired=False,
+            num_workers=1,
+            prefetch_factor=1,
+            pin_memory=False,
+        )
+
+        self.assertEqual(update_info["sample_count"], (5, 3))
+        self.assertEqual(int(module.projection_update_count.item()), 1)
 
     def test_class_prior_is_not_multiplied_by_source_class_frequency(self):
         labels = torch.tensor([0, 0, 0, 1])

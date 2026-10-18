@@ -4,7 +4,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset, Sampler
 from torch.optim.lr_scheduler import LambdaLR
 import numpy as np
 import random
@@ -536,6 +536,77 @@ def class_prior_to_sample_marginal(labels, class_prior):
     return sample_mass / sample_mass.sum().clamp_min(1e-8)
 
 
+def seed_data_worker(worker_id):
+    """Seed Python and NumPy from PyTorch's deterministic worker seed."""
+    del worker_id  # The worker-specific value is already folded into initial_seed().
+    worker_seed = torch.initial_seed() % (2 ** 32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+
+
+class _UnpairedDomainDataset(Dataset):
+    """Resolve a source/target index pair inside a DataLoader worker."""
+
+    def __init__(self, src_ds, tgt_ds):
+        self.src_ds = src_ds
+        self.tgt_ds = tgt_ds
+
+    def __len__(self):
+        return max(len(self.src_ds), len(self.tgt_ds))
+
+    def __getitem__(self, index_pair):
+        source_index, target_index = index_pair
+        source_sample = self.src_ds[source_index]
+        target_sample = dict(self.tgt_ds[target_index])
+        target_sample['sample_index'] = torch.tensor(target_index, dtype=torch.long)
+        return source_sample, target_sample
+
+
+class _UnpairedIndexBatchSampler(Sampler):
+    """Deterministic epoch-wise index batches for the worker DataLoader path."""
+
+    def __init__(self, source_count, target_count, batch_size, seed):
+        self.source_count = source_count
+        self.target_count = target_count
+        self.batch_size = batch_size
+        self.seed = int(seed)
+        self.epoch = 0
+        self.n_batches = math.ceil(max(source_count, target_count) / batch_size)
+
+    @staticmethod
+    def _take(indices, position, count, rng):
+        selected = []
+        while len(selected) < count:
+            if position >= len(indices):
+                rng.shuffle(indices)
+                position = 0
+            take = min(count - len(selected), len(indices) - position)
+            selected.extend(indices[position:position + take])
+            position += take
+        return selected, position
+
+    def __iter__(self):
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+        source_order = list(range(self.source_count))
+        target_order = list(range(self.target_count))
+        rng.shuffle(source_order)
+        rng.shuffle(target_order)
+        source_position = 0
+        target_position = 0
+        for _ in range(self.n_batches):
+            source_indices, source_position = self._take(
+                source_order, source_position, self.batch_size, rng
+            )
+            target_indices, target_position = self._take(
+                target_order, target_position, self.batch_size, rng
+            )
+            yield list(zip(source_indices, target_indices))
+
+    def __len__(self):
+        return self.n_batches
+
+
 class UnpairedDomainSampler:
     """Cover the larger domain and cycle the smaller one without labels.
 
@@ -546,15 +617,41 @@ class UnpairedDomainSampler:
     independently, and cycles only when one side is exhausted.
     """
 
-    def __init__(self, src_ds, tgt_ds, batch_size):
+    def __init__(self, src_ds, tgt_ds, batch_size, num_workers=0,
+                 prefetch_factor=2, pin_memory=False, seed=0):
         self.src_ds = src_ds
         self.tgt_ds = tgt_ds
         if batch_size < 1:
             raise ValueError("batch_size must be positive.")
+        if num_workers < 0:
+            raise ValueError("num_workers cannot be negative.")
+        if prefetch_factor < 1:
+            raise ValueError("prefetch_factor must be positive.")
         self.batch_size = batch_size
+        self.num_workers = int(num_workers)
+        self.prefetch_factor = int(prefetch_factor)
+        self.pin_memory = bool(pin_memory)
+        self.seed = int(seed)
         if len(src_ds) == 0 or len(tgt_ds) == 0:
             raise ValueError("Source and target datasets must both be non-empty.")
         self.n_batches = math.ceil(max(len(src_ds), len(tgt_ds)) / batch_size)
+        self._worker_loader = None
+        if self.num_workers > 0:
+            batch_sampler = _UnpairedIndexBatchSampler(
+                len(src_ds), len(tgt_ds), batch_size, seed=self.seed
+            )
+            loader_generator = torch.Generator()
+            loader_generator.manual_seed(self.seed)
+            self._worker_loader = DataLoader(
+                _UnpairedDomainDataset(src_ds, tgt_ds),
+                batch_sampler=batch_sampler,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                persistent_workers=True,
+                prefetch_factor=self.prefetch_factor,
+                worker_init_fn=seed_data_worker,
+                generator=loader_generator,
+            )
 
     @staticmethod
     def _take(indices, position, count):
@@ -569,6 +666,11 @@ class UnpairedDomainSampler:
         return selected, position
 
     def __iter__(self):
+        if self._worker_loader is not None:
+            yield from self._worker_loader
+            return
+
+        # Preserve the historical single-process path exactly when workers=0.
         source_order = list(range(len(self.src_ds)))
         target_order = list(range(len(self.tgt_ds)))
         random.shuffle(source_order)
@@ -591,8 +693,8 @@ class UnpairedDomainSampler:
         return self.n_batches
 
 
-def evaluate(net_vis, net_ir, tal_module, classifier, dataloader, device, 
-             label_map, use_tensor_module):
+def evaluate(net_vis, net_ir, tal_module, classifier, dataloader, device,
+             label_map, use_tensor_module, non_blocking=False):
     net_vis.eval()
     net_ir.eval()
     tal_module.eval()
@@ -605,9 +707,9 @@ def evaluate(net_vis, net_ir, tal_module, classifier, dataloader, device,
 
     with torch.no_grad():
         for data in dataloader:
-            vis_inputs = data['vis'].to(device)
-            ir_inputs = data['ir'].to(device)
-            labels = data['label'].to(device)
+            vis_inputs = data['vis'].to(device, non_blocking=non_blocking)
+            ir_inputs = data['ir'].to(device, non_blocking=non_blocking)
+            labels = data['label'].to(device, non_blocking=non_blocking)
 
             f_vis = net_vis(vis_inputs)
             f_ir = net_ir(ir_inputs)
@@ -678,6 +780,8 @@ def run_single_iteration(args, seed, logger):
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     BATCH_SIZE = args.batch_size
     EPOCHS = args.epochs
+    pin_memory = bool(args.pin_memory and DEVICE.type == 'cuda')
+    non_blocking = pin_memory
 
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -799,7 +903,15 @@ def run_single_iteration(args, seed, logger):
         paired_loader = PairedClassSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
         logger.info("Training mode: full target-label supervision (class-paired batches).")
     else:
-        paired_loader = UnpairedDomainSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
+        paired_loader = UnpairedDomainSampler(
+            src_train_ds,
+            tgt_train_ds,
+            BATCH_SIZE,
+            num_workers=args.num_workers,
+            prefetch_factor=args.prefetch_factor,
+            pin_memory=pin_memory,
+            seed=seed,
+        )
         if protocol == 'UDA':
             if args.label_space_mode == 'oracle_shared':
                 logger.info(
@@ -824,10 +936,24 @@ def run_single_iteration(args, seed, logger):
             )
     logger.info(
         f"Training batches per epoch: {len(paired_loader)}; "
-        f"batch_size={BATCH_SIZE}"
+        f"batch_size={BATCH_SIZE}; num_workers={args.num_workers}; "
+        f"prefetch_factor={args.prefetch_factor}; pin_memory={pin_memory}"
     )
-    val_loader = DataLoader(tgt_val_ds, batch_size=BATCH_SIZE, shuffle=False, 
-                           drop_last=False, num_workers=0)
+    val_loader_options = {
+        'batch_size': BATCH_SIZE,
+        'shuffle': False,
+        'drop_last': False,
+        'num_workers': args.num_workers,
+        'pin_memory': pin_memory,
+        'worker_init_fn': seed_data_worker,
+        'generator': torch.Generator().manual_seed(seed + 100_000),
+    }
+    if args.num_workers > 0:
+        val_loader_options.update({
+            'persistent_workers': True,
+            'prefetch_factor': args.prefetch_factor,
+        })
+    val_loader = DataLoader(tgt_val_ds, **val_loader_options)
 
     VIS_DIM = 512
     IR_DIM = 512
@@ -1019,6 +1145,9 @@ def run_single_iteration(args, seed, logger):
                     )
                     else None
                 ),
+                num_workers=args.num_workers,
+                prefetch_factor=args.prefetch_factor,
+                pin_memory=pin_memory,
             )
             # Epoch 1 has no learned downstream function to preserve. From
             # epoch 2 onward, move every projected-feature consumer into the
@@ -1103,15 +1232,16 @@ def run_single_iteration(args, seed, logger):
                     if key != 'label'
                 }
 
-            s_vis = src_data['vis'].to(DEVICE)
-            s_ir = src_data['ir'].to(DEVICE)
-            s_label = src_data['label'].to(DEVICE)
-            t_vis = tgt_data['vis'].to(DEVICE)
-            t_ir = tgt_data['ir'].to(DEVICE)
+            s_vis = src_data['vis'].to(DEVICE, non_blocking=non_blocking)
+            s_ir = src_data['ir'].to(DEVICE, non_blocking=non_blocking)
+            s_label = src_data['label'].to(DEVICE, non_blocking=non_blocking)
+            t_vis = tgt_data['vis'].to(DEVICE, non_blocking=non_blocking)
+            t_ir = tgt_data['ir'].to(DEVICE, non_blocking=non_blocking)
             # Target labels are deliberately not even moved to the device in
             # strict UDA.  They are available only in SDA/SSDA training.
             t_label = (
-                tgt_data['label'].to(DEVICE) if protocol != 'UDA' else None
+                tgt_data['label'].to(DEVICE, non_blocking=non_blocking)
+                if protocol != 'UDA' else None
             )
 
             f_s_vis, f_s_ir = net_vis(s_vis), net_ir(s_ir)
@@ -1157,7 +1287,9 @@ def run_single_iteration(args, seed, logger):
             source_marginal = None
             if collect_target_prior:
                 with torch.no_grad():
-                    target_indices = tgt_data['sample_index'].to(DEVICE).long()
+                    target_indices = tgt_data['sample_index'].to(
+                        DEVICE, non_blocking=non_blocking
+                    ).long()
                     target_probability_sum.index_add_(
                         0, target_indices, F.softmax(pred_tgt, dim=1)
                     )
@@ -1353,8 +1485,17 @@ def run_single_iteration(args, seed, logger):
                 )
                 target_prior_updates += 1
 
-        val_metrics = evaluate(net_vis, net_ir, tal_module, classifier, 
-                              val_loader, DEVICE, global_map, args.use_tensor_module)
+        val_metrics = evaluate(
+            net_vis,
+            net_ir,
+            tal_module,
+            classifier,
+            val_loader,
+            DEVICE,
+            global_map,
+            args.use_tensor_module,
+            non_blocking=non_blocking,
+        )
         train_acc = train_correct / train_total if train_total > 0 else 0
         val_acc = val_metrics['accuracy']
 
@@ -1508,6 +1649,13 @@ def run_single_iteration(args, seed, logger):
                 'label_space_mode': args.label_space_mode,
                 'oracle_shared_labels': report_metrics['oracle_shared_labels'],
                 'report_strategy': args.report_strategy,
+                'data_loading': {
+                    'batch_size': args.batch_size,
+                    'num_workers': args.num_workers,
+                    'svd_stat_batch_size': args.svd_stat_batch_size,
+                    'prefetch_factor': args.prefetch_factor,
+                    'pin_memory': pin_memory,
+                },
                 'net_vis': net_vis.state_dict(),
                 'net_ir': net_ir.state_dict(),
                 'tal_module': tal_module.state_dict(),
@@ -1578,6 +1726,12 @@ def run_ablation_experiment(args):
     logger.info(f"源域: {SOURCE_ROOT}")
     logger.info(f"目标域: {TARGET_ROOT}")
     logger.info(f"批次大小: {args.batch_size}")
+    logger.info(
+        f"数据加载: workers={args.num_workers}, "
+        f"prefetch_factor={args.prefetch_factor}, "
+        f"pin_memory(requested/active)={args.pin_memory}/"
+        f"{bool(args.pin_memory and DEVICE.type == 'cuda')}"
+    )
     logger.info(f"总轮数: {args.epochs}")
     logger.info(
         f"迭代次数: {NUM_ITERATIONS}; seeds="
@@ -1691,6 +1845,13 @@ def run_ablation_experiment(args):
         ),
         'oracle_shared_labels': oracle_shared_labels,
         'report_strategy': args.report_strategy,
+        'data_loading': {
+            'batch_size': args.batch_size,
+            'num_workers': args.num_workers,
+            'svd_stat_batch_size': args.svd_stat_batch_size,
+            'prefetch_factor': args.prefetch_factor,
+            'pin_memory': bool(args.pin_memory and DEVICE.type == 'cuda'),
+        },
         'num_iterations': len(all_iteration_results),
         'seeds': iteration_seeds[:len(all_iteration_results)],
         'metrics': {
@@ -1734,6 +1895,14 @@ def main():
                        default=os.environ.get('JMDA_TARGET_ROOT', 'all'),
                        help='目标域数据路径，或填 all 自动遍历 source_root 同级目录下其他天气文件夹')
     parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
+    parser.add_argument('--num_workers', type=int, default=0,
+                       help='DataLoader worker processes; zero preserves synchronous loading')
+    parser.add_argument('--prefetch_factor', type=int, default=2,
+                       help='batches prefetched by each worker when num_workers > 0')
+    parser.add_argument('--pin_memory', action='store_true', default=True,
+                       help='pin host tensors before CUDA transfer (enabled by default)')
+    parser.add_argument('--no_pin_memory', dest='pin_memory', action='store_false',
+                       help='disable pinned host tensors')
     parser.add_argument('--epochs', type=int, default=100, help='训练轮数')
     parser.add_argument('--num_iterations', type=int, default=5, help='迭代次数')
     parser.add_argument('--base_seed', type=int, default=42,
@@ -1826,6 +1995,14 @@ def main():
                        help='消融模式')
 
     args = parser.parse_args()
+    if args.batch_size < 1:
+        parser.error('--batch_size must be at least 1')
+    if args.svd_stat_batch_size < 1:
+        parser.error('--svd_stat_batch_size must be at least 1')
+    if args.num_workers < 0:
+        parser.error('--num_workers cannot be negative')
+    if args.prefetch_factor < 1:
+        parser.error('--prefetch_factor must be at least 1')
     if args.ot_warmup_epochs < 0:
         parser.error('--ot_warmup_epochs cannot be negative')
     if args.ot_ramp_epochs < 1:

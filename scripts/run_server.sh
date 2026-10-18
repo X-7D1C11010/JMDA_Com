@@ -14,6 +14,12 @@
 #   JMDA_NET_DIR    JMDA-Net 源码目录（默认使用本仓库 JMDA-Net/ 镜像）
 #   PYTHON          Python 解释器（默认 python）
 #   JMDA_SEED       当前运行的随机种子（默认 42；正式多种子实验由外层循环传入）
+#   JMDA_BATCH_SIZE  JMDA UDA 训练批次（默认 32）
+#   JMDA_NUM_WORKERS JMDA UDA DataLoader worker 数（默认 0）
+#   JMDA_SVD_STAT_BATCH_SIZE  JMDA UDA SVD 特征统计批次（默认 32）
+#   JMDA_PREFETCH_FACTOR  每个 worker 的预取批次数（默认 2；workers=0 时不启用）
+#   JMDA_PIN_MEMORY  是否为 JMDA UDA DataLoader 启用 pinned memory（0/1，默认 1）
+#   JMDA_MIN_FREE_GPU_MEMORY_MIB  可选的启动前空闲显存门禁（MiB；默认不启用）
 #   JMDA_CLASS_NAMES_FILE  14类真实英文名称文件（AD-CLIP/CoOp 必需）
 #   TRANSADAPTER_BACKBONE_WEIGHTS  固定的本地 Swin-T 预训练权重（UDA 必需）
 #
@@ -38,6 +44,47 @@ DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 PYTHON="${PYTHON:-python}"
 JMDA_NET_DIR="${JMDA_NET_DIR:-$HERE/JMDA-Net}"
 SEED="${JMDA_SEED:-42}"
+JMDA_BATCH_SIZE="${JMDA_BATCH_SIZE:-32}"
+JMDA_NUM_WORKERS="${JMDA_NUM_WORKERS:-0}"
+JMDA_SVD_STAT_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-32}"
+JMDA_PREFETCH_FACTOR="${JMDA_PREFETCH_FACTOR:-2}"
+JMDA_PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
+JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
+
+require_positive_integer() {
+  local name="$1" value="$2"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$name 必须是正整数: $value"
+    exit 1
+  fi
+}
+
+require_nonnegative_integer() {
+  local name="$1" value="$2"
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "$name 必须是非负整数: $value"
+    exit 1
+  fi
+}
+
+if [[ "$PROTOCOL" = "jmda_uda" || "$PROTOCOL" = "jmda_oracle_shared_uda" ]]; then
+  require_positive_integer "JMDA_BATCH_SIZE" "$JMDA_BATCH_SIZE"
+  require_nonnegative_integer "JMDA_NUM_WORKERS" "$JMDA_NUM_WORKERS"
+  require_positive_integer "JMDA_SVD_STAT_BATCH_SIZE" "$JMDA_SVD_STAT_BATCH_SIZE"
+  require_positive_integer "JMDA_PREFETCH_FACTOR" "$JMDA_PREFETCH_FACTOR"
+  case "$JMDA_PIN_MEMORY" in
+    0) JMDA_PIN_MEMORY_ARG="--no_pin_memory" ;;
+    1) JMDA_PIN_MEMORY_ARG="--pin_memory" ;;
+    *)
+      echo "JMDA_PIN_MEMORY 必须是 0 或 1: $JMDA_PIN_MEMORY"
+      exit 1
+      ;;
+  esac
+fi
+if [ -n "$JMDA_MIN_FREE_GPU_MEMORY_MIB" ]; then
+  require_nonnegative_integer \
+    "JMDA_MIN_FREE_GPU_MEMORY_MIB" "$JMDA_MIN_FREE_GPU_MEMORY_MIB"
+fi
 
 LOG_ROOT="$HERE/server_logs/$PROTOCOL"
 EFF_DIR="$HERE/efficiency_results/$PROTOCOL"
@@ -87,6 +134,11 @@ if [ "${JMDA_REQUIRE_CUDA:-1}" = "1" ]; then
 fi
 if [ "${JMDA_CHECK_ALL_PATHS:-1}" = "1" ]; then
   PREFLIGHT_ARGS+=(--check-all-paths)
+fi
+if [ -n "$JMDA_MIN_FREE_GPU_MEMORY_MIB" ]; then
+  PREFLIGHT_ARGS+=(
+    --min-free-gpu-memory-mib "$JMDA_MIN_FREE_GPU_MEMORY_MIB"
+  )
 fi
 echo "运行公共配置预检..."
 if ! "$PYTHON" "$HERE/tools/preflight_server.py" "${PREFLIGHT_ARGS[@]}"; then
@@ -178,6 +230,7 @@ if [ "$PROTOCOL" = "sda" ]; then
 
 elif [ "$PROTOCOL" = "jmda_uda" ]; then
   # ---- JMDA-Net UDA：单独放在 SDA 与其他 UDA 方法之间运行 ----
+  echo "JMDA加载参数: batch=$JMDA_BATCH_SIZE workers=$JMDA_NUM_WORKERS SVD_batch=$JMDA_SVD_STAT_BATCH_SIZE prefetch=$JMDA_PREFETCH_FACTOR pin_memory=$JMDA_PIN_MEMORY"
   for t in "${TARGETS[@]}"; do
     case "$t" in
       backlight) target_cn="逆光" ;;
@@ -189,6 +242,10 @@ elif [ "$PROTOCOL" = "jmda_uda" ]; then
       "cd '$JMDA_NET_DIR' && '$PYTHON' Ablation/module_ablation.py \
          --source_root '$DATA_ROOT/晴天' --target_root '$DATA_ROOT/$target_cn' \
          --epochs '$EPOCHS' --num_iterations '${JMDA_NUM_ITERATIONS:-5}' \
+         --batch_size '$JMDA_BATCH_SIZE' \
+         --num_workers '$JMDA_NUM_WORKERS' \
+         --svd_stat_batch_size '$JMDA_SVD_STAT_BATCH_SIZE' \
+         --prefetch_factor '$JMDA_PREFETCH_FACTOR' $JMDA_PIN_MEMORY_ARG \
          --ablation_mode full --no_auto_ablation_hparams \
          --transport_mode sinkhorn \
          --target_label_ratio 0 --target_cls_weight 0 \
@@ -200,6 +257,7 @@ elif [ "$PROTOCOL" = "jmda_uda" ]; then
 elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
   # ---- 共同类别支持 Oracle：读取目标训练类支持，仅作 partial-set 负迁移诊断 ----
   # 该协议使用独立日志/结果/checkpoint，严禁并入严格 UDA 主表。
+  echo "JMDA加载参数: batch=$JMDA_BATCH_SIZE workers=$JMDA_NUM_WORKERS SVD_batch=$JMDA_SVD_STAT_BATCH_SIZE prefetch=$JMDA_PREFETCH_FACTOR pin_memory=$JMDA_PIN_MEMORY"
   for t in "${TARGETS[@]}"; do
     case "$t" in
       backlight) target_cn="逆光" ;;
@@ -211,6 +269,10 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
       "cd '$JMDA_NET_DIR' && '$PYTHON' Ablation/module_ablation.py \
          --source_root '$DATA_ROOT/晴天' --target_root '$DATA_ROOT/$target_cn' \
          --epochs '$EPOCHS' --num_iterations '${JMDA_NUM_ITERATIONS:-5}' \
+         --batch_size '$JMDA_BATCH_SIZE' \
+         --num_workers '$JMDA_NUM_WORKERS' \
+         --svd_stat_batch_size '$JMDA_SVD_STAT_BATCH_SIZE' \
+         --prefetch_factor '$JMDA_PREFETCH_FACTOR' $JMDA_PIN_MEMORY_ARG \
          --ablation_mode full --no_auto_ablation_hparams \
          --transport_mode sinkhorn \
          --target_label_ratio 0 --target_cls_weight 0 \

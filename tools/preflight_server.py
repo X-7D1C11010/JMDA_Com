@@ -169,11 +169,25 @@ def parse_args():
     parser.add_argument('--targets', nargs='+', choices=TARGETS, required=True)
     parser.add_argument('--require-cuda', action='store_true')
     parser.add_argument('--check-all-paths', action='store_true')
+    parser.add_argument(
+        '--min-free-gpu-memory-mib',
+        type=int,
+        default=None,
+        help=(
+            'Optional CUDA free-memory gate in MiB. The check is disabled '
+            'when this argument is omitted.'
+        ),
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if (
+        args.min_free_gpu_memory_mib is not None
+        and args.min_free_gpu_memory_mib < 0
+    ):
+        fail('--min-free-gpu-memory-mib must be a non-negative integer')
     data_root = Path(args.data_root).expanduser().resolve()
     list_dir = Path(args.list_dir).expanduser().resolve()
     if not data_root.is_dir():
@@ -199,7 +213,33 @@ def main():
     if args.require_cuda and not torch.cuda.is_available():
         fail('CUDA is required but torch.cuda.is_available() is false')
     if torch.cuda.is_available():
-        print(f'[OK] CUDA device: {torch.cuda.get_device_name(0)}')
+        free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+        mib = 1024 * 1024
+        free_mib = free_bytes // mib
+        total_mib = total_bytes // mib
+        print(
+            f'[OK] CUDA device: {torch.cuda.get_device_name(0)}; '
+            f'free/total memory={free_mib}/{total_mib} MiB'
+        )
+        if args.min_free_gpu_memory_mib is not None:
+            required_bytes = args.min_free_gpu_memory_mib * mib
+            if free_bytes < required_bytes:
+                fail(
+                    'Insufficient free CUDA memory on the selected device: '
+                    f'{free_mib} MiB available, '
+                    f'{args.min_free_gpu_memory_mib} MiB required. '
+                    'Stop competing GPU jobs or select another device with '
+                    'CUDA_VISIBLE_DEVICES.'
+                )
+            print(
+                '[OK] CUDA free-memory gate passed: '
+                f'{free_mib} MiB available >= '
+                f'{args.min_free_gpu_memory_mib} MiB required'
+            )
+    elif args.min_free_gpu_memory_mib is not None:
+        fail(
+            '--min-free-gpu-memory-mib was requested, but CUDA is not available'
+        )
 
     lists = [list_dir / 'sunny_train.txt']
     for target in args.targets:
