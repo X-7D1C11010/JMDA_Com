@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import hashlib
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,6 +10,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import numpy as np
 import random
 from datetime import datetime
+from pathlib import Path
 import logging
 from sklearn.metrics import precision_score, recall_score, f1_score
 import argparse
@@ -99,6 +101,39 @@ def set_frozen_batchnorm_eval(module):
     return frozen_count
 
 
+def training_code_fingerprint():
+    """Fingerprint the exact JMDA implementation used by a server run."""
+    module_path = Path(__file__).resolve()
+    project_root = module_path.parents[1]
+    tracked_paths = (
+        module_path,
+        project_root / "Tensor.py",
+        project_root / "Generator.py",
+        project_root / "Discriminator.py",
+        project_root / "epoch_svd.py",
+        module_path.parent / "Models.py",
+        module_path.parent / "DataLoad.py",
+        module_path.parent / "Tensor.py",
+        module_path.parent / "Generator.py",
+        module_path.parent / "Discriminator.py",
+        module_path.parent / "epoch_svd.py",
+        module_path.parent / "paired_dataset.py",
+        module_path.parent / "PairedClassSampler.py",
+    )
+    digest = hashlib.sha256()
+    for path in tracked_paths:
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Cannot fingerprint missing JMDA implementation file: {path}"
+            )
+        digest.update(path.relative_to(project_root).as_posix().encode("utf-8"))
+        # A checkout may use CRLF on Windows and LF on Linux.  Normalize text
+        # newlines so the same implementation has one portable fingerprint.
+        content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        digest.update(content)
+    return digest.hexdigest()[:16]
+
+
 def count_trainable_parameters(module):
     return sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad)
 
@@ -114,12 +149,62 @@ def compute_joint_ot_scale(epoch, warmup_epochs, ramp_epochs, enabled):
     return min((epoch - warmup_epochs + 1) / ramp_epochs, 1.0)
 
 
+def is_uda_source_warmup(protocol, epoch, warmup_epochs):
+    """Whether this epoch must remain source-only before unlabeled alignment."""
+    if warmup_epochs < 0:
+        raise ValueError("warmup_epochs must be non-negative.")
+    return protocol == "UDA" and epoch < warmup_epochs
+
+
 def _reset_optimizer_state(optimizer, parameters):
     """Discard Adam moments whose coordinate system was reparameterized."""
     if optimizer is None:
         return
     for parameter in parameters:
         optimizer.state.pop(parameter, None)
+
+
+@torch.no_grad()
+def _least_changing_orthogonal_factor(matrix):
+    """Return a polar factor whose unidentified null-space stays near identity.
+
+    The closest orthogonal factor of a rank-deficient square matrix is not
+    unique.  A raw ``U @ Vh`` therefore lets the SVD choose arbitrary rotations
+    in directions where the source/target average contains no information.
+    Preserve the identified polar factor and solve a second Procrustes problem
+    in the null spaces to choose the completion closest to the identity map.
+    """
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("Orthogonal transport requires a square matrix.")
+    left, singular_values, right_h = torch.linalg.svd(
+        matrix,
+        full_matrices=True,
+    )
+    leading = float(singular_values.max()) if singular_values.numel() else 0.0
+    threshold = (
+        torch.finfo(matrix.dtype).eps * max(matrix.shape) * leading
+    )
+    effective_rank = int((singular_values > threshold).sum().item())
+    identified = left[:, :effective_rank].matmul(
+        right_h[:effective_rank, :]
+    )
+    if effective_rank == matrix.shape[0]:
+        return identified, effective_rank, threshold
+
+    left_null = left[:, effective_rank:]
+    right_null = right_h[effective_rank:, :].transpose(0, 1)
+    null_overlap = right_null.transpose(0, 1).matmul(left_null)
+    overlap_left, _, overlap_right_h = torch.linalg.svd(
+        null_overlap,
+        full_matrices=False,
+    )
+    null_rotation = overlap_right_h.transpose(0, 1).matmul(
+        overlap_left.transpose(0, 1)
+    )
+    completion = left_null.matmul(null_rotation).matmul(
+        right_null.transpose(0, 1)
+    )
+    return identified + completion, effective_rank, threshold
 
 
 @torch.no_grad()
@@ -133,21 +218,29 @@ def transport_projected_feature_basis(
     new_target_projections,
     optimizer_g=None,
     optimizer_d=None,
+    classifier_basis_mode="shared",
 ):
     """Keep learned downstream functions consistent after an SVD basis update.
 
     If a modal basis changes from P_old to P_new, projected row features
     satisfy z_old ~= z_new (P_new^T P_old). PyTorch stores a Linear weight
     transposed relative to row features, so its input weight is
-    right-multiplied by P_old^T P_new. Source and target share every
-    downstream network; consequently we use their least-squares average.
+    right-multiplied by P_old^T P_new. Domain-shared consumers use the closest
+    orthogonal common map obtained from the source/target average. Constraining
+    that approximation to an orthogonal map prevents repeated epoch updates
+    from shrinking their weights when the two domain maps disagree. In UDA,
+    however, only
+    source logits have a supervised classification loss, so the classifier
+    must be transported in the source coordinate system rather than by an
+    average that is not exact for either domain.
 
     Linear consumers are preserved exactly for a pure shared basis rotation.
-    A genuine subspace change cannot be inverted, but this is its
-    minimum-squared-error transport and prevents an epoch-boundary SVD update
-    from arbitrarily resetting the classifier, discriminator, and neural-OT
-    coordinate systems. The residual MLP's final pointwise Tanh makes its
-    vector-output transport an approximation outside the near-linear regime.
+    A genuine subspace change cannot be inverted; the source-anchored map and
+    orthogonal shared compromise prevent an epoch-boundary SVD update from
+    arbitrarily resetting or cumulatively shrinking the classifier,
+    discriminator, and neural-OT coordinate systems. The residual MLP's final
+    pointwise Tanh makes its vector-output transport an approximation outside
+    the near-linear regime.
     """
     projection_groups = (
         old_source_projections,
@@ -158,15 +251,37 @@ def transport_projected_feature_basis(
     if len({len(group) for group in projection_groups}) != 1:
         raise ValueError("Old/new source/target projection counts must match.")
 
-    blocks = []
+    if classifier_basis_mode not in {"shared", "source"}:
+        raise ValueError(
+            "classifier_basis_mode must be either 'shared' or 'source'."
+        )
+
+    source_blocks = []
+    target_blocks = []
+    shared_average_blocks = []
+    shared_transport_blocks = []
     source_overlaps = []
     target_overlaps = []
+    source_min_principal_cosines = []
+    target_min_principal_cosines = []
+    domain_map_gaps = []
+    shared_effective_ranks = []
+    shared_rank_thresholds = []
     for old_source, old_target, new_source, new_target in zip(*projection_groups):
         if old_source.shape != new_source.shape or old_target.shape != new_target.shape:
             raise ValueError("Old/new projection shapes must match.")
         source_map = old_source.transpose(0, 1).matmul(new_source)
         target_map = old_target.transpose(0, 1).matmul(new_target)
-        blocks.append(0.5 * (source_map + target_map))
+        source_blocks.append(source_map)
+        target_blocks.append(target_map)
+        shared_average = 0.5 * (source_map + target_map)
+        shared_transport, shared_rank, shared_rank_threshold = (
+            _least_changing_orthogonal_factor(shared_average)
+        )
+        shared_average_blocks.append(shared_average)
+        shared_transport_blocks.append(shared_transport)
+        shared_effective_ranks.append(shared_rank)
+        shared_rank_thresholds.append(shared_rank_threshold)
         rank = max(source_map.shape[0], 1)
         source_overlaps.append(
             float(source_map.square().sum().div(rank).clamp(0.0, 1.0))
@@ -174,31 +289,61 @@ def transport_projected_feature_basis(
         target_overlaps.append(
             float(target_map.square().sum().div(rank).clamp(0.0, 1.0))
         )
+        # Singular values of P_old^T P_new are cosines of the principal
+        # angles between the old and new projection subspaces.  Their minimum
+        # exposes a worst-case direction that no coordinate transport can
+        # recover after a genuine subspace change, especially at the first
+        # post-warm-up SVD update.
+        source_min_principal_cosines.append(
+            float(torch.linalg.svdvals(source_map).min())
+        )
+        target_min_principal_cosines.append(
+            float(torch.linalg.svdvals(target_map).min())
+        )
+        domain_map_gaps.append(
+            float(
+                torch.linalg.matrix_norm(source_map - target_map)
+                / max(rank ** 0.5, 1.0)
+            )
+        )
 
-    basis_map = torch.block_diag(*blocks)
-    feature_dim = basis_map.shape[0]
+    source_basis_map = torch.block_diag(*source_blocks)
+    target_basis_map = torch.block_diag(*target_blocks)
+    shared_average_map = torch.block_diag(*shared_average_blocks)
+    shared_basis_map = torch.block_diag(*shared_transport_blocks)
+    classifier_basis_map = (
+        source_basis_map
+        if classifier_basis_mode == "source"
+        else shared_basis_map
+    )
+    feature_dim = shared_basis_map.shape[0]
     transformed_parameters = []
 
-    def transport_linear_input(linear):
+    def transport_linear_input(linear, basis_map):
         if not isinstance(linear, nn.Linear) or linear.in_features != feature_dim:
             raise ValueError("Projected-feature consumer has an incompatible input width.")
         linear.weight.copy_(linear.weight.matmul(basis_map))
         transformed_parameters.append(linear.weight)
 
-    transport_linear_input(classifier.fc[0])
-    transport_linear_input(discriminator.discriminator[0])
+    transport_linear_input(classifier.fc[0], classifier_basis_map)
+    transport_linear_input(discriminator.discriminator[0], shared_basis_map)
 
     if generator is not None:
-        transport_linear_input(generator.cost_net.proj[0])
+        # CostNet applies one shared mapping to both domains, so no single
+        # exact transport exists when their bases move differently. The
+        # orthogonal Procrustes compromise avoids cumulative norm collapse.
+        transport_linear_input(generator.cost_net.proj[0], shared_basis_map)
 
         residual_input = generator.mlp[0]
         if residual_input.in_features != 2 * feature_dim + 1:
             raise ValueError("Neural-OT residual input width is incompatible.")
         residual_input.weight[:, :feature_dim].copy_(
-            residual_input.weight[:, :feature_dim].matmul(basis_map)
+            residual_input.weight[:, :feature_dim].matmul(source_basis_map)
         )
         residual_input.weight[:, feature_dim:2 * feature_dim].copy_(
-            residual_input.weight[:, feature_dim:2 * feature_dim].matmul(basis_map)
+            residual_input.weight[:, feature_dim:2 * feature_dim].matmul(
+                target_basis_map
+            )
         )
         transformed_parameters.append(residual_input.weight)
 
@@ -206,12 +351,12 @@ def transport_projected_feature_basis(
         if residual_output.out_features != feature_dim:
             raise ValueError("Neural-OT residual output width is incompatible.")
         residual_output.weight.copy_(
-            basis_map.transpose(0, 1).matmul(residual_output.weight)
+            shared_basis_map.transpose(0, 1).matmul(residual_output.weight)
         )
         transformed_parameters.append(residual_output.weight)
         if residual_output.bias is not None:
             residual_output.bias.copy_(
-                basis_map.transpose(0, 1).matmul(residual_output.bias)
+                shared_basis_map.transpose(0, 1).matmul(residual_output.bias)
             )
             transformed_parameters.append(residual_output.bias)
 
@@ -233,14 +378,49 @@ def transport_projected_feature_basis(
         ],
     )
 
-    identity = torch.eye(feature_dim, device=basis_map.device, dtype=basis_map.dtype)
-    non_orthogonality = torch.linalg.matrix_norm(
-        basis_map.transpose(0, 1).matmul(basis_map) - identity
+    identity = torch.eye(
+        feature_dim,
+        device=shared_basis_map.device,
+        dtype=shared_basis_map.dtype,
+    )
+    average_non_orthogonality = torch.linalg.matrix_norm(
+        shared_average_map.transpose(0, 1).matmul(shared_average_map) - identity
+    ) / max(feature_dim ** 0.5, 1.0)
+    source_non_orthogonality = torch.linalg.matrix_norm(
+        source_basis_map.transpose(0, 1).matmul(source_basis_map) - identity
+    ) / max(feature_dim ** 0.5, 1.0)
+    target_non_orthogonality = torch.linalg.matrix_norm(
+        target_basis_map.transpose(0, 1).matmul(target_basis_map) - identity
+    ) / max(feature_dim ** 0.5, 1.0)
+    transport_non_orthogonality = torch.linalg.matrix_norm(
+        shared_basis_map.transpose(0, 1).matmul(shared_basis_map) - identity
     ) / max(feature_dim ** 0.5, 1.0)
     return {
         "source_subspace_overlap": float(np.mean(source_overlaps)),
         "target_subspace_overlap": float(np.mean(target_overlaps)),
-        "basis_map_non_orthogonality": float(non_orthogonality),
+        "source_min_principal_cosine": float(
+            min(source_min_principal_cosines)
+        ),
+        "target_min_principal_cosine": float(
+            min(target_min_principal_cosines)
+        ),
+        # Preserve the historical diagnostic on the raw average so logs still
+        # expose domain disagreement instead of hiding it behind the
+        # orthogonal map actually applied to shared consumers.
+        "basis_map_non_orthogonality": float(average_non_orthogonality),
+        "source_basis_map_non_orthogonality": float(
+            source_non_orthogonality
+        ),
+        "target_basis_map_non_orthogonality": float(
+            target_non_orthogonality
+        ),
+        "shared_transport_non_orthogonality": float(
+            transport_non_orthogonality
+        ),
+        "source_target_basis_map_gap": float(np.mean(domain_map_gaps)),
+        "shared_transport_effective_ranks": tuple(shared_effective_ranks),
+        "shared_transport_rank_thresholds": tuple(shared_rank_thresholds),
+        "classifier_basis_mode": classifier_basis_mode,
     }
 
 
@@ -1055,17 +1235,28 @@ def run_single_iteration(args, seed, logger):
             f"class conditional={use_class_conditional_ot}"
         )
         if args.use_tensor_module:
-            logger.info(
-                "Joint optimization schedule: Tensor/SVD warm-up for "
-                f"{args.ot_warmup_epochs} epochs, then OT loss ramp over "
-                f"{args.ot_ramp_epochs} epochs."
-            )
+            if protocol == 'UDA':
+                logger.info(
+                    "Joint optimization schedule: source-only warm-up for "
+                    f"{args.uda_source_warmup_epochs} epochs (no target forward, "
+                    "cross-domain SVD, Tensor loss, adversarial loss, or OT), "
+                    f"then OT ramps over {args.ot_ramp_epochs} epochs."
+                )
+            else:
+                logger.info(
+                    "Joint optimization schedule: Tensor/SVD warm-up for "
+                    f"{args.ot_warmup_epochs} epochs, then OT loss ramp over "
+                    f"{args.ot_ramp_epochs} epochs."
+                )
     if args.use_tensor_module:
-        statistics_description = (
-            "complete class-paired target-training bank"
-            if protocol == 'SDA'
-            else "complete independent source/target training banks"
-        )
+        if protocol == 'SDA':
+            statistics_description = "complete class-paired target-training bank"
+        elif protocol == 'UDA':
+            statistics_description = (
+                "complete independent source/target training banks after warm-up"
+            )
+        else:
+            statistics_description = "complete independent source/target training banks"
         logger.info(
             f"Tensor projection update: once per epoch from the "
             f"{statistics_description}; projection_dim={PROJ_DIM}, "
@@ -1127,14 +1318,26 @@ def run_single_iteration(args, seed, logger):
     metric_history = []
 
     for epoch in range(EPOCHS):
+        uda_source_warmup_active = is_uda_source_warmup(
+            protocol,
+            epoch,
+            args.uda_source_warmup_epochs,
+        )
+        effective_ot_warmup = (
+            max(args.ot_warmup_epochs, args.uda_source_warmup_epochs)
+            if protocol == 'UDA'
+            else args.ot_warmup_epochs
+        )
         joint_ot_scale = compute_joint_ot_scale(
             epoch=epoch,
-            warmup_epochs=args.ot_warmup_epochs,
+            warmup_epochs=effective_ot_warmup,
             ramp_epochs=args.ot_ramp_epochs,
             enabled=(args.use_tensor_module and args.use_ot_module),
         )
+        if uda_source_warmup_active:
+            joint_ot_scale = 0.0
 
-        if args.use_tensor_module:
+        if args.use_tensor_module and not uda_source_warmup_active:
             old_source_projections = [
                 projection.detach().clone()
                 for projection in tal_module.U_matrices
@@ -1185,11 +1388,25 @@ def run_single_iteration(args, seed, logger):
                     new_target_projections=tal_module.V_matrices,
                     optimizer_g=optimizer_g,
                     optimizer_d=optimizer_d,
+                    # Only source logits carry supervised CE in pure UDA.
+                    # SDA has labels on both domains and retains a shared
+                    # orthogonal compromise for the common classifier.
+                    classifier_basis_mode=(
+                        "source" if protocol == "UDA" else "shared"
+                    ),
                 )
                 svd_info.update(basis_info)
             logger.info(f"Epoch [{epoch + 1}/{EPOCHS}] | {format_svd_update(svd_info)}")
             epoch_projection_update_count = int(
                 tal_module.projection_update_count.item()
+            )
+        elif args.use_tensor_module:
+            epoch_projection_update_count = int(
+                tal_module.projection_update_count.item()
+            )
+            logger.info(
+                f"Epoch [{epoch + 1}/{EPOCHS}] | UDA source-only warm-up: "
+                "cross-domain SVD/Tensor/OT updates are disabled."
             )
         else:
             epoch_projection_update_count = None
@@ -1236,7 +1453,10 @@ def run_single_iteration(args, seed, logger):
         collect_target_prior = (
             protocol != 'SDA'
             and args.uda_source_reweighting
-            and epoch >= args.uda_prior_warmup_epochs
+            and epoch >= max(
+                args.uda_prior_warmup_epochs,
+                args.uda_source_warmup_epochs if protocol == 'UDA' else 0,
+            )
         )
         target_probability_sum = torch.zeros(
             len(tgt_train_ds), len(global_map), device=DEVICE
@@ -1257,6 +1477,38 @@ def run_single_iteration(args, seed, logger):
             s_vis = src_data['vis'].to(DEVICE, non_blocking=non_blocking)
             s_ir = src_data['ir'].to(DEVICE, non_blocking=non_blocking)
             s_label = src_data['label'].to(DEVICE, non_blocking=non_blocking)
+
+            if uda_source_warmup_active:
+                # A label-free cross-domain plan has no semantic anchor before
+                # the shared encoders/classifier learn the source task. Keep
+                # this phase genuinely source-only: target images do not even
+                # pass through train-mode BatchNorm statistics.
+                f_s_vis, f_s_ir = net_vis(s_vis), net_ir(s_ir)
+                if args.use_tensor_module:
+                    p_s_vis = f_s_vis.matmul(tal_module.U_matrices[0])
+                    p_s_ir = f_s_ir.matmul(tal_module.U_matrices[1])
+                else:
+                    p_s_vis, p_s_ir = f_s_vis, f_s_ir
+                feat_src = torch.cat([p_s_vis, p_s_ir], dim=1)
+                pred_src = classifier(feat_src)
+                loss_source = criterion_cls(pred_src, s_label)
+
+                optimizer_g.zero_grad()
+                loss_source.backward()
+                torch.nn.utils.clip_grad_norm_(net_vis.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(net_ir.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(classifier.parameters(), max_norm=1.0)
+                optimizer_g.step()
+
+                loss_value = loss_source.item()
+                loss_accum += loss_value
+                loss_cls_accum += loss_value
+                loss_cls_source_accum += loss_value
+                _, predicted = torch.max(pred_src.data, 1)
+                train_correct += (predicted == s_label).sum().item()
+                train_total += s_label.size(0)
+                continue
+
             t_vis = tgt_data['vis'].to(DEVICE, non_blocking=non_blocking)
             t_ir = tgt_data['ir'].to(DEVICE, non_blocking=non_blocking)
             # Target labels are deliberately not even moved to the device in
@@ -1657,6 +1909,11 @@ def run_single_iteration(args, seed, logger):
         list(oracle_shared_labels) if oracle_shared_labels is not None else []
     )
     report_metrics['label_map_original_to_index'] = dict(global_map)
+    report_metrics['code_fingerprint'] = getattr(
+        args,
+        'code_fingerprint',
+        None,
+    )
     if args.checkpoint_dir:
         os.makedirs(args.checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(
@@ -1673,6 +1930,9 @@ def run_single_iteration(args, seed, logger):
                 'oracle_shared_labels': report_metrics['oracle_shared_labels'],
                 'label_map_original_to_index': dict(global_map),
                 'report_strategy': args.report_strategy,
+                'projection_dim': args.projection_dim,
+                'code_fingerprint': getattr(args, 'code_fingerprint', None),
+                'uda_source_warmup_epochs': args.uda_source_warmup_epochs,
                 'data_loading': {
                     'batch_size': args.batch_size,
                     'num_workers': args.num_workers,
@@ -1710,6 +1970,8 @@ def run_ablation_experiment(args):
     SOURCE_ROOT = args.source_root
     TARGET_ROOT = args.target_root
     target_weather = os.path.basename(TARGET_ROOT)
+    code_fingerprint = training_code_fingerprint()
+    args.code_fingerprint = code_fingerprint
 
     tensor_flag = "with_tensor" if args.use_tensor_module else "without_tensor"
     ot_flag = "with_ot" if args.use_ot_module else "without_ot"
@@ -1739,6 +2001,7 @@ def run_ablation_experiment(args):
     logger.info(f"模块消融实验 - {ablation_name}")
     logger.info(f"目标域天气: {target_weather}")
     logger.info(f"训练开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"训练代码指纹: {code_fingerprint}")
     logger.info(f"设备: {DEVICE}")
     logger.info(f"协议: {experiment_protocol} (adaptation={protocol})")
     logger.info(f"标签空间模式: {args.label_space_mode}")
@@ -1787,6 +2050,7 @@ def run_ablation_experiment(args):
         logger.info(
             "UDA无标签对应: all-pairs Sinkhorn Tensor/SVD; "
             f"source-prior reweighting={args.uda_source_reweighting}, "
+            f"source_only_warmup={args.uda_source_warmup_epochs}, "
             f"prior_warmup={args.uda_prior_warmup_epochs}, "
             f"momentum={args.uda_prior_momentum}, "
             f"uniform_mix={args.uda_prior_uniform_mix}"
@@ -1875,6 +2139,9 @@ def run_ablation_experiment(args):
         'oracle_shared_labels': oracle_shared_labels,
         'label_map_original_to_index': label_map_original_to_index,
         'report_strategy': args.report_strategy,
+        'projection_dim': args.projection_dim,
+        'code_fingerprint': code_fingerprint,
+        'uda_source_warmup_epochs': args.uda_source_warmup_epochs,
         'data_loading': {
             'batch_size': args.batch_size,
             'num_workers': args.num_workers,
@@ -1961,8 +2228,11 @@ def main():
     parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
     parser.add_argument('--adv_loss_weight', type=float, default=0.08, help='domain adversarial loss weight')
     parser.add_argument('--tensor_loss_weight', type=float, default=0.12, help='Tensor alignment loss weight')
-    parser.add_argument('--projection_dim', type=int, default=64,
-                       help='rank retained by each epoch-level modal SVD projection')
+    parser.add_argument('--projection_dim', type=int, default=None,
+                       help=(
+                           'rank retained by each epoch-level modal SVD projection; '
+                           'defaults to 16 for pure UDA and 64 for SDA/SSDA'
+                       ))
     parser.add_argument('--transport_mode', type=str, default='sinkhorn',
                        choices=['legacy_row_softmax', 'row_softmax', 'sinkhorn'],
                        help='transport-plan construction; legacy mode reproduces the original implementation')
@@ -1984,6 +2254,11 @@ def main():
                        action='store_false', help='use a uniform source marginal in UDA')
     parser.add_argument('--uda_prior_momentum', type=float, default=0.9,
                        help='EMA momentum for the unlabeled target class prior')
+    parser.add_argument('--uda_source_warmup_epochs', type=int, default=10,
+                       help=(
+                           'pure UDA source-only epochs before cross-domain '
+                           'SVD, Tensor alignment, adversarial loss, or OT'
+                       ))
     parser.add_argument('--uda_prior_warmup_epochs', type=int, default=10,
                        help='source-only warm-up before estimating the unlabeled target class prior')
     parser.add_argument('--uda_prior_uniform_mix', type=float, default=0.10,
@@ -2025,10 +2300,19 @@ def main():
                        help='消融模式')
 
     args = parser.parse_args()
+    if args.projection_dim is None:
+        # Preserve the historical supervised setting while preventing direct
+        # UDA invocations from silently falling back to the unstable 64-D
+        # configuration diagnosed in the four-weather server run.
+        args.projection_dim = (
+            16 if adaptation_protocol(args) == 'UDA' else 64
+        )
     if args.batch_size < 1:
         parser.error('--batch_size must be at least 1')
     if args.svd_stat_batch_size < 1:
         parser.error('--svd_stat_batch_size must be at least 1')
+    if args.projection_dim < 1:
+        parser.error('--projection_dim must be at least 1')
     if args.num_workers < 0:
         parser.error('--num_workers cannot be negative')
     if args.prefetch_factor < 1:
@@ -2047,6 +2331,16 @@ def main():
         parser.error('--uda_prior_momentum must be in [0, 1)')
     if args.uda_prior_warmup_epochs < 0:
         parser.error('--uda_prior_warmup_epochs cannot be negative')
+    if args.uda_source_warmup_epochs < 0:
+        parser.error('--uda_source_warmup_epochs cannot be negative')
+    if (
+        adaptation_protocol(args) == 'UDA'
+        and args.uda_source_warmup_epochs >= args.epochs
+    ):
+        parser.error(
+            '--uda_source_warmup_epochs must be smaller than --epochs in UDA; '
+            'otherwise no cross-domain alignment is trained'
+        )
     if not 0.0 <= args.uda_prior_uniform_mix <= 1.0:
         parser.error('--uda_prior_uniform_mix must be in [0, 1]')
     if args.label_space_mode == 'oracle_shared':

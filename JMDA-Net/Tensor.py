@@ -406,6 +406,94 @@ class TensorBasedAlignmentStable(nn.Module):
         rotation = left.matmul(right_h)
         return new_source.matmul(rotation), new_target.matmul(rotation)
 
+    @staticmethod
+    def _least_changing_orthogonal_completion(
+        informative_basis: torch.Tensor,
+        old_basis: torch.Tensor,
+        total_rank: int,
+    ) -> torch.Tensor:
+        """Complete an identified SVD subspace without rotating its nullspace.
+
+        Singular vectors attached to numerically zero singular values are not
+        identified by the Procrustes objective.  Taking those columns directly
+        from a fresh SVD makes them jump arbitrarily between epochs.  Project
+        the previous basis into the orthogonal complement of the newly
+        identified subspace and retain the closest ``total_rank``-dimensional
+        completion instead.  This only chooses among objective-equivalent
+        null-space directions; it does not change the identified optimal
+        subspace or its trace objective.
+        """
+        informative_rank = informative_basis.shape[1]
+        if informative_rank > total_rank:
+            raise ValueError("informative_basis exceeds the requested rank.")
+        if old_basis.shape[1] != total_rank:
+            raise ValueError("old_basis width must equal total_rank.")
+        if informative_rank == total_rank:
+            return informative_basis
+        if informative_rank == 0:
+            return old_basis.clone()
+
+        residual = old_basis - informative_basis.matmul(
+            informative_basis.transpose(0, 1).matmul(old_basis)
+        )
+        left, _, _ = torch.linalg.svd(residual, full_matrices=False)
+        needed = total_rank - informative_rank
+        completion = left[:, :needed]
+        # Remove numerical leakage back into the identified subspace before
+        # the reduced QR.  The prefix itself is already orthonormal.
+        completion = completion - informative_basis.matmul(
+            informative_basis.transpose(0, 1).matmul(completion)
+        )
+        completion, _ = torch.linalg.qr(completion, mode="reduced")
+        return torch.cat((informative_basis, completion[:, :needed]), dim=1)
+
+    @classmethod
+    def _stabilize_rank_deficient_pair(
+        cls,
+        new_source: torch.Tensor,
+        new_target: torch.Tensor,
+        old_source: torch.Tensor,
+        old_target: torch.Tensor,
+        informative_rank: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Use the previous bases for SVD directions with no numerical signal."""
+        retained_rank = new_source.shape[1]
+        informative_rank = min(max(int(informative_rank), 0), retained_rank)
+        source_candidate = cls._least_changing_orthogonal_completion(
+            new_source[:, :informative_rank], old_source, retained_rank
+        )
+        target_candidate = cls._least_changing_orthogonal_completion(
+            new_target[:, :informative_rank], old_target, retained_rank
+        )
+        return cls._align_paired_subspace(
+            source_candidate,
+            target_candidate,
+            old_source,
+            old_target,
+        )
+
+    @staticmethod
+    def _effective_rank(
+        covariance: torch.Tensor,
+        singular_values: torch.Tensor,
+    ) -> Tuple[int, float]:
+        """Return the standard dtype-aware numerical matrix rank.
+
+        ``self.eps`` is a normalization guard, not a matrix-rank tolerance.
+        Reusing its fixed 1e-8 value for float32 covariances treated round-off
+        directions as informative. This matches the default relative cutoff
+        used by ``torch.linalg.matrix_rank`` while reusing the existing SVD.
+        """
+        if singular_values.numel() == 0:
+            return 0, 0.0
+        leading_value = singular_values[0]
+        if not torch.isfinite(leading_value) or leading_value <= 0:
+            return 0, 0.0
+        dtype_epsilon = torch.finfo(covariance.dtype).eps
+        threshold = dtype_epsilon * max(covariance.shape) * leading_value
+        effective_rank = int((singular_values > threshold).sum().item())
+        return effective_rank, float(threshold)
+
     @torch.no_grad()
     def _alternating_svd_update(
         self,
@@ -419,10 +507,14 @@ class TensorBasedAlignmentStable(nn.Module):
         relative_change = float("inf")
         converged = False
         effective_ranks = []
+        stabilized_null_dims = []
+        rank_thresholds = []
 
         for sweep in range(self.max_svd_sweeps):
             current_singular_values = []
             effective_ranks = []
+            stabilized_null_dims = []
+            rank_thresholds = []
 
             for mode in range(self.num_modalities):
                 # Other modal projections remain fixed at their latest values.
@@ -438,11 +530,17 @@ class TensorBasedAlignmentStable(nn.Module):
                 rank = self.output_dims[mode]
                 new_source = left[:, :rank]
                 new_target = right_h.transpose(-2, -1)[:, :rank]
-                new_source, new_target = self._align_paired_subspace(
+                effective_rank, rank_threshold = self._effective_rank(
+                    covariance,
+                    singular_values,
+                )
+                informative_rank = min(effective_rank, rank)
+                new_source, new_target = self._stabilize_rank_deficient_pair(
                     new_source,
                     new_target,
                     self.U_matrices[mode],
                     self.V_matrices[mode],
+                    informative_rank,
                 )
 
                 self.U_matrices[mode].copy_(new_source)
@@ -450,16 +548,9 @@ class TensorBasedAlignmentStable(nn.Module):
                 retained = singular_values[:rank]
                 getattr(self, f"singular_values_{mode}").copy_(retained)
                 current_singular_values.append(retained.clone())
-                if singular_values.numel() == 0 or singular_values[0] <= self.eps:
-                    effective_rank = 0
-                else:
-                    threshold = (
-                        self.eps
-                        * max(covariance.shape)
-                        * singular_values[0]
-                    )
-                    effective_rank = int((singular_values > threshold).sum().item())
                 effective_ranks.append(effective_rank)
+                stabilized_null_dims.append(rank - informative_rank)
+                rank_thresholds.append(rank_threshold)
 
             if previous_singular_values is not None:
                 changes = []
@@ -480,6 +571,8 @@ class TensorBasedAlignmentStable(nn.Module):
             "relative_singular_change": relative_change,
             "singular_values": tuple(values.detach().clone() for values in current_singular_values),
             "effective_ranks": tuple(effective_ranks),
+            "stabilized_null_dims": tuple(stabilized_null_dims),
+            "rank_thresholds": tuple(rank_thresholds),
         }
 
     @torch.no_grad()
@@ -496,6 +589,8 @@ class TensorBasedAlignmentStable(nn.Module):
         relative_change = float("inf")
         converged = False
         effective_ranks = []
+        stabilized_null_dims = []
+        rank_thresholds = []
         plan_info = None
 
         for sweep in range(self.max_svd_sweeps):
@@ -518,6 +613,8 @@ class TensorBasedAlignmentStable(nn.Module):
             )
             current_singular_values = []
             effective_ranks = []
+            stabilized_null_dims = []
+            rank_thresholds = []
 
             for mode in range(self.num_modalities):
                 covariance = self._unpaired_mode_cross_covariance(
@@ -532,23 +629,26 @@ class TensorBasedAlignmentStable(nn.Module):
                 rank = self.output_dims[mode]
                 new_source = left[:, :rank]
                 new_target = right_h.transpose(-2, -1)[:, :rank]
-                new_source, new_target = self._align_paired_subspace(
+                effective_rank, rank_threshold = self._effective_rank(
+                    covariance,
+                    singular_values,
+                )
+                informative_rank = min(effective_rank, rank)
+                new_source, new_target = self._stabilize_rank_deficient_pair(
                     new_source,
                     new_target,
                     self.U_matrices[mode],
                     self.V_matrices[mode],
+                    informative_rank,
                 )
                 self.U_matrices[mode].copy_(new_source)
                 self.V_matrices[mode].copy_(new_target)
                 retained = singular_values[:rank]
                 getattr(self, f"singular_values_{mode}").copy_(retained)
                 current_singular_values.append(retained.clone())
-                if singular_values.numel() == 0 or singular_values[0] <= self.eps:
-                    effective_rank = 0
-                else:
-                    threshold = self.eps * max(covariance.shape) * singular_values[0]
-                    effective_rank = int((singular_values > threshold).sum().item())
                 effective_ranks.append(effective_rank)
+                stabilized_null_dims.append(rank - informative_rank)
+                rank_thresholds.append(rank_threshold)
 
             if previous_singular_values is not None:
                 changes = []
@@ -572,6 +672,8 @@ class TensorBasedAlignmentStable(nn.Module):
                 values.detach().clone() for values in current_singular_values
             ),
             "effective_ranks": tuple(effective_ranks),
+            "stabilized_null_dims": tuple(stabilized_null_dims),
+            "rank_thresholds": tuple(rank_thresholds),
             "unlabeled_plan_marginal_residual": float(
                 plan_info["marginal_residual"]
             ),

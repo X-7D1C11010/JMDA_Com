@@ -1,1 +1,0 @@
-Moved Permanently. Redirecting to https://raw.githubusercontent.com/sunjunaimer/Boomda/master/README.md

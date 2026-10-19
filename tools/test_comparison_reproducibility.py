@@ -18,12 +18,10 @@ COMPARISON_ENTRYPOINTS = (
     "MDD/train_mdd_sda.py",
     "MCC/train_mcc.py",
     "MCC/train_mcc_sda.py",
-    "TransAdapter/train_transadapter.py",
-    "AD-CLIP/train_adclip.py",
-    "Modfinity/train_modfinity.py",
-    "Modfinity/train_modfinity_sda.py",
-    "Boomda/train_boomda_jmda.py",
-    "Boomda/train_boomda_sda.py",
+    "CCSA/train_ccsa.py",
+    "d-SNE/train_dsne.py",
+    "PDA/train_pda.py",
+    "MCFT/train_mcft.py",
 )
 
 
@@ -41,50 +39,11 @@ class ComparisonReproducibilityTests(unittest.TestCase):
                     source,
                 )
 
-    def test_adclip_registers_projector_banks(self):
-        source = (ROOT / "AD-CLIP/adclip_model.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(source.count("self.linear1 = nn.ModuleList"), 2)
-        self.assertIn("self.linear = nn.ModuleList", source)
-        self.assertNotIn(".to(device_cuda)", source)
-        self.assertIn(
-            'self.register_buffer("tokenized_prompts", tokenized_prompts)',
-            source,
-        )
-        self.assertIn("torch.arange(x.shape[0], device=x.device)", source)
-
-    def test_adclip_evaluation_is_target_only(self):
-        model_source = (ROOT / "AD-CLIP/adclip_model.py").read_text(
-            encoding="utf-8"
-        )
-        train_source = (ROOT / "AD-CLIP/train_adclip.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("def forward_target(self, target_data):", model_source)
-        self.assertIn("def forward_target(self, t_image):", model_source)
-        self.assertIn("model.forward_target(imgs)", train_source)
-        self.assertNotIn("model(imgs, imgs)", train_source)
-
-    def test_multimodal_uda_rejects_label_selected_ais(self):
-        for relative_path in (
-            "Modfinity/train_modfinity.py",
-            "Boomda/train_boomda_jmda.py",
-        ):
+    def test_sda_entrypoints_read_the_shared_labelled_subset(self):
+        for relative_path in ("CCSA/train_ccsa.py", "d-SNE/train_dsne.py"):
             with self.subTest(entrypoint=relative_path):
                 source = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn("if args.use_ais:", source)
-                self.assertIn("not valid in strict UDA", source)
-
-    def test_multimodal_pair_augmentation_replays_one_rng_state(self):
-        for relative_path in (
-            "Modfinity/train_modfinity.py",
-            "Modfinity/train_modfinity_sda.py",
-            "Boomda/train_boomda_jmda.py",
-            "Boomda/train_boomda_sda.py",
-        ):
-            with self.subTest(entrypoint=relative_path):
-                source = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn("transform_rng_state = torch.get_rng_state()", source)
-                self.assertIn("torch.set_rng_state(transform_rng_state)", source)
+                self.assertIn("_sda_{args.target_labels_per_class}shot_seed", source)
 
     def test_cdan_relative_optimizer_metadata_is_materialized(self):
         module_path = ROOT / "CDAN/optimizer_utils.py"

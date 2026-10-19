@@ -2,7 +2,7 @@
 
 ## 1. 任务概述
 
-本任务针对 6 类域适应（Domain Adaptation, DA）方法，在 JMDA-Net 跨天气场景数据集上完成代码下载、数据适配、冒烟测试与结果记录。
+本任务在 JMDA-Net 跨天气场景数据集上完成对比方法的代码下载、数据适配、冒烟测试与结果记录。
 
 - **源域（Source）**：晴天（Sunny）
 - **目标域（Target）**：逆光（Backlight）、雨天（Rainy）、雾天（Foggy）、黑天（Dark）
@@ -10,6 +10,8 @@
 - **工作目录**：`D:\Code\JMDA_Com`
 
 **2026-10 追加**：第二批新增 4 种 DA 方法——**MDD、MCC**（采用清华 Transfer-Learning-Library 现代实现）、**Boomda**（作者代码，三路编码器替换为 IR/VIS/AIS）、**MODfinity**（无公开代码，按 CVPR 2025 论文忠实复现，标注 our reimplementation）。详见第 3.1、6.7–6.10 节及第 8 节第二批结果。
+
+> **注意：2026-10-19 方法清单变更（现行有效）**：Boomda、MODfinity、AD-CLIP、CoOp、TransAdapter 及其相关脚本已按要求删除，本文档中描述这些方法的历史章节（3.1 部分、6.4–6.6、6.9–6.10、8.1、9.2–9.3 中对应条目）**仅作为历史记录保留、不再可复现**。现行保留并纳入一键脚本的方法为 9 个：DeepCORAL、DANN、CDAN、MDD、MCC、CCSA、d-SNE、PDA、MCFT（外加本文方法 JMDA-Net）。现行清单与新增方法说明见第 12 节。
 
 ## 2. 数据集概况
 
@@ -68,13 +70,16 @@ JMDA-Net 数据集为多模态（可见光 + 红外）跨天气域适应数据�
 - **timm**: 1.0.27
 - **transformers**: 4.57.6
 
-## 5. 目录结构
+## 5. 目录结构（2026-10-19 变更后）
 
 ```
 D:\Code\JMDA_Com\
 ├── prepare_data.py              # 数据列表生成脚本
-├── run_all_methods.py           # 全方法批量运行脚本
-├── results_summary.txt          # 结果汇总
+├── results_summary.txt          # 历史结果汇总（含已删除方法的历史数据）
+├── scripts\
+│   ├── run_all_sunny.ps1        # 一键启动：9 方法 x 4 天气 x 5 seed
+│   ├── run_uda_sunny.ps1        # 一键启动：仅 5 个 UDA 基线
+│   └── run_server.sh            # 服务器批量入口（sda/uda/supervised 协议分离）
 ├── data_lists\                  # 各域图像列表文件
 │   ├── sunny_train.txt
 │   ├── sunny_val.txt
@@ -96,17 +101,6 @@ D:\Code\JMDA_Com\
 │   ├── train_cdan.py
 │   ├── pytorch\                # 原始代码（已修改 network.py）
 │   └── output\
-├── AD-CLIP\                     # CLIP-based DA 方法
-│   ├── train_adclip.py
-│   ├── adclip_model.py         # 独立模型组件（去除 dassl 依赖）
-│   └── output\
-├── CoOp\                        # VLM DA 方法
-│   ├── train_coop.py
-│   ├── coop_model.py           # 独立模型组件
-│   └── output\
-├── TransAdapter\                # 多模态 Transformer DA 方法
-│   ├── train_transadapter.py
-│   └── output\
 ├── Transfer-Learning-Library\   # thuml/tllib（jsdelivr 逐文件下载的裁剪版）
 │   └── tllib\                   # 仅保留 MDD/MCC 所需子集（alignment/self_training/
 │                                #   modules/utils/vision），__init__ 已裁剪并标注
@@ -116,14 +110,16 @@ D:\Code\JMDA_Com\
 ├── MCC\                         # MCC（tllib 官方示例改编）
 │   ├── train_mcc.py
 │   └── output\
-├── Boomda\                      # Boomda 作者代码（jsdelivr 下载）+ JMDA 适配
-│   ├── train_boomda_jmda.py     # IR/VIS/AIS 三编码器替换版训练脚本
-│   ├── models\                  # 作者原始模块（Boomda_model/min_norm_solvers/等）
-│   └── output\
-├── Modfinity\                   # MODfinity（our reimplementation）
-│   ├── train_modfinity.py
-│   └── output\
-└── run_new_methods.py           # 第二批 4 方法 × 4 目标域批量运行脚本
+├── CCSA\                        # CCSA（ICCV 2017，SDA；原作 Keras 移植）
+│   └── train_ccsa.py
+├── d-SNE\                       # d-SNE（CVPR 2019，SDA；原作 mxnet 移植）
+│   └── train_dsne.py
+├── PDA\                         # PDA（AAAI 2024，UDA；CLIP 提示学习）
+│   └── train_pda.py
+├── MCFT\                        # MCFT（TGRS 2024；VIS+IR 监督分类）
+│   ├── mcft_model.py            # 作者 MViT 移植（去 einops/timm 依赖）
+│   └── train_mcft.py
+└── JMDA-Net\                    # 本文方法源码镜像（Ablation/main_sda.py 等）
 ```
 
 ## 6. 各方法适配修改说明
@@ -396,12 +392,12 @@ python D:\Code\JMDA_Com\run_new_methods.py
 为保证论文表格公平与监督口径清晰，全部实验拆分为两条互不混合的轨道，结果分表呈现，**不得跨标签预算/模态/监督设置排名**：
 
 - **SDA（Semi-supervised / Supervised DA，论文主表）**：所有方法使用完全相同的源标签和**完全相同的目标标注子集**（共享 `data_lists/{target}_sda_10shot_seed42.txt`，预算 10 标注/类，seed=42，由 `tools/make_sda_lists.py` 一次性生成）。
-  - 对 DANN/DeepCORAL/CDAN/MDD/MCC/MODfinity/Boomda **仅统一增加目标分类损失 L_cls_target（默认权重 1.0）**，各方法的原始域对抗/相关对齐/条件对抗/Margin 差异/最小类混淆/伪标签/教师选择/模态平衡机制**全部原样保留**，结果命名为 `*-SDA`；不得用真值替换任何伪标签机制。
-  - 主表成员：Source-only-SDA、Joint Training（源+目标 CE，无任何对齐模块）、7 个 *-SDA 基线、JMDA-Net-SDA、Target-only Oracle（仅用目标标注子集训练）。`Target-only-Oracle-Full`（全量目标标注）属于不同标签预算，单独报告。
-- **UDA（严格无监督）**：DANN/DeepCORAL/CDAN/MDD/MCC/MODfinity/Boomda/TransAdapter/AD-CLIP/JMDA-Net-UDA 的训练、采样、损失、调参、早停、最佳 epoch 选择**均不得使用目标真值**；目标标签仅用于最终测试。
-- **CoOp 不是 UDA**（源域训练提示词），放入独立 VLM 表。
+  - 对 DANN/DeepCORAL/CDAN/MDD/MCC/CCSA/d-SNE **仅统一增加目标分类损失 L_cls_target（默认权重 1.0）**，各方法的原始域对抗/相关对齐/条件对抗/Margin 差异/最小类混淆/对比语义对齐/随机邻域嵌入机制**全部原样保留**，结果命名为 `*-SDA`；不得用真值替换任何伪标签机制。
+  - 主表成员：Source-only-SDA、Joint Training（源+目标 CE，无任何对齐模块）、6 个 *-SDA 基线、JMDA-Net-SDA、Target-only Oracle（仅用目标标注子集训练）。`Target-only-Oracle-Full`（全量目标标注）属于不同标签预算，单独报告。（注：2026-10-19 按方法清单收敛要求删除了 `SDA_Baselines/` 基线目录，故 Source-only/Joint Training/Target-only Oracle 三个基线当前不再可运行，仅作历史记录；保留并可复现的 SDA 基线为 DANN/DeepCORAL/CDAN/MDD/MCC/CCSA/d-SNE。）
+- **UDA（严格无监督）**：DANN/DeepCORAL/CDAN/MDD/MCC/PDA/JMDA-Net-UDA 的训练、采样、损失、调参、早停、最佳 epoch 选择**均不得使用目标真值**；目标标签仅用于最终测试。
+- **MCFT 不是 UDA**（源域监督、VIS+IR 双模态），放入独立 Supervised 表。
 
-效率记录按协议分别保存，字段含 `protocol`、`target_label_count`、`target_labels_per_class`、`modalities`、`backbone`、`pretraining`；汇总文件按 SDA/UDA/VLM 分节。
+效率记录按协议分别保存，字段含 `protocol`、`target_label_count`、`target_labels_per_class`、`modalities`、`backbone`、`pretraining`；汇总文件按 SDA/UDA/Supervised 分节。
 
 ### 11.2 SDA 共享标注子集
 
@@ -416,8 +412,7 @@ python D:\Code\JMDA_Com\run_new_methods.py
 
 ### 11.3 新增/修改文件清单
 
-- SDA 训练脚本：`DANN/train_dann_sda.py`、`DeepCORAL/train_deepcoral_sda.py`、`CDAN/train_cdan_sda.py`、`MDD/train_mdd_sda.py`、`MCC/train_mcc_sda.py`、`Modfinity/train_modfinity_sda.py`、`Boomda/train_boomda_sda.py`（统一模式 `loss = 原始loss + w_cls_target * CE(目标标注子集)`；DANN/DeepCORAL/CDAN 改为源驱动 epoch）
-- SDA 基线（新目录 **`SDA_Baselines/`**）：`sda_baselines_impl.py`、`train_source_only_sda.py`、`train_joint_training.py`、`train_target_only.py`
+- SDA 训练脚本：`DANN/train_dann_sda.py`、`DeepCORAL/train_deepcoral_sda.py`、`CDAN/train_cdan_sda.py`、`MDD/train_mdd_sda.py`、`MCC/train_mcc_sda.py`、`CCSA/train_ccsa.py`（SDA，`adadelta` + 1-α/α 加权 CE/CSA）、`d-SNE/train_dsne.py`（SDA，`loss = (1-α)·xent + α·dSNE`）；统一模式 `loss = 原始loss + w_cls_target * CE(目标标注子集)`（CCSA/d-SNE 的 α 对比项即其原始语义/邻域项）
 - 工具：`tools/make_sda_lists.py`、`tools/data_paths.py`（跨平台路径重映射）、`tools/efficiency_common.py`、`tools/benchmark_efficiency.py`（protocol/标签预算/骨干字段）
 - 服务器批量入口：`scripts/run_server.sh`
 - JMDA-Net 本体源码镜像（2026-10 起统一归入本仓库，与对比方法目录区分）：顶层 **`JMDA-Net/`** 目录。其中 `JMDA-Net/main_sda.py` 为 JMDA-Net-SDA 入口（原 `main.py` 未修改），`JMDA-Net/Ablation/module_ablation.py` 为 JMDA-Net-UDA 入口（`--target_label_ratio 0 --target_cls_weight 0`）。镜像仅含源码，遵循 JMDA-Net 自身 `.gitignore`，第三方实验目录（MambaOut-main 等）、数据、日志、权重、文档均不纳入；镜像内的 main_sda.py 已适配仓库布局（自动定位 `../data_lists` 与 `../tools`，数据根回退 `/mnt/data/lixiang/data/Data`）
@@ -459,7 +454,7 @@ export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data
 #    效率结果 -> efficiency_results/<protocol>/）
 bash scripts/run_server.sh sda 100     # SDA 论文主表（含 JMDA-Net-SDA）
 bash scripts/run_server.sh uda 100     # 严格 UDA（含 JMDA-Net-UDA）
-bash scripts/run_server.sh vlm 100     # CoOp，独立 VLM 表
+bash scripts/run_server.sh supervised 100   # MCFT，独立 Supervised 表
 ```
 
 说明：脚本自动编排全部方法 × 4 目标域（backlight/rainy/foggy/dark）；JMDA-Net-SDA 与 JMDA-Net-UDA 调用本仓库 `JMDA-Net/` 目录中的代码。单方法也可直接运行，例如：
@@ -493,7 +488,7 @@ bash scripts/run_server.sh sda 100                     # SDA
 bash scripts/run_server.sh jmda_uda 100                # JMDA-Net 严格 UDA
 bash scripts/run_server.sh jmda_oracle_shared_uda 100  # 共同类 oracle 诊断
 bash scripts/run_server.sh uda 100                     # 其他严格 UDA 方法
-bash scripts/run_server.sh vlm 100                     # 独立 VLM 表
+bash scripts/run_server.sh supervised 100              # MCFT，独立 Supervised 表
 ```
 
 本轮修复后的静态与数值门禁（2026-10-14）如下：
@@ -514,4 +509,113 @@ bash scripts/run_server.sh vlm 100                     # 独立 VLM 表
 - 服务器共同类别入口显式关闭额外的无标签 source-prior 重加权，以先验证“原方法损失 + 无目标分类监督 + 已知共同类别空间”。严格 partial-set UDA 的设置保持不变。
 - 本地数据级验证：逆光、雨天、雾天、黑天的源训练对分别由 760 筛为 515、401、515、493；共同类别数分别为 9、6、9、8，目标训练/验证样本均未被筛除。
 - 该共同类别设置读取目标训练类别支持，仍属于 `ORACLE_SHARED_UDA`（或 known-target-label-space UDA），不得改名为严格 UDA，也不得与严格 UDA 或其他未使用同一过滤清单的方法混入公平主表。
+
+### 11.9 2026-10-18 四天气低结果与 SVD 秩缺陷修复
+
+- 四个 `ORACLE_SHARED_UDA` seed-42 任务均正常跑满 100 epoch，类别筛选、紧凑标签映射、目标标签损失为 0、final checkpoint 报告均已生效；最终 accuracy 为逆光 0.4444、雨天 0.1923、雾天 0.0348、黑天 0.0500。它们不是启动失败或旧代码未同步。
+- 历史 `new_full_sinkhorn.log` 的有监督 Full 使用目标验证集 `best` 报告，五个种子的 target-best 均值为逆光 0.5667、雨天 0.5385、雾天 0.4243、黑天 0.5067；但同一日志的 epoch-100 均值仅为 0.3278、0.1769、0.1409、0.2567。旧高分包含明显的目标标签选模乐观偏差，不能作为 UDA final checkpoint 的直接预期。
+- 雾天/黑天最终值低于随机猜测附近，而源训练 accuracy 分别为 0.9632/1.0000。Sinkhorn 双边残差保持有限且很小，故主要证据不支持 OT 数值求解失败，而支持跨域投影/语义对应失稳。
+- 本轮服务器入口遗漏了历史 Full 配置使用的 `projection_dim=16`，实际采用新默认 64。与此同时，四天气红外跨域协方差的有效秩中位数仅为 19--42，最低为 11--14；继续保留 64 个方向会把大量数值零空间当成可识别方向。
+- 旧代码的 `ot_warmup_epochs=10` 只关闭 Neural OT，仍从 epoch 1 以未完成源域预训练的随机/弱语义特征构造无标签 Tensor/SVD 对应并施加 Tensor loss。雨天在 OT 尚未开启的 epoch 1--10 已从 0.1538 降至 0.0385，雾天也长期低于随机附近，证明这不是单纯的后期 OT 问题。纯 UDA 现默认先做 10 epoch 真正的 source-only warm-up：不前向目标训练图像、不更新跨域 SVD、不施加 Tensor/域对抗/OT，再启动原有无标签对齐；SDA/SSDA 路径不变。该时序不增加损失或目标标签，但论文须披露并消融 warm-up=0/10。
+- `Tensor.py` 现只用有效奇异方向更新已识别子空间；数值零空间使用与上一 epoch 最接近的正交补。这是在 SVD 目标未识别方向中选择稳定代表，不改变 Tensor/SVD 主目标。日志新增 `stabilized_null_dims`。
+- UDA 的分类器基迁移改为以有监督源域坐标为锚；Neural-OT residual 的源、目标输入块分别使用各自映射。共享判别器/CostNet/残差输出采用源目标平均映射的最近正交 Procrustes 因子，避免不同域换基时逐 epoch 乘入非正交收缩；原始平均映射的风险仍由 `basis_nonorth` 记录，实际搬运映射另记 `transport_nonorth`。
+- 换基日志另记 `basis_min_cos_src/tgt`（旧/新子空间最小主角余弦）。它直接暴露首次 post-warm-up SVD 中无法由坐标搬运恢复的最坏方向；若该值接近 0，即使代码运行正确，warm-up 学到的分类函数也可能因真实子空间替换而受损。
+- `scripts/run_server.sh` 现在为 JMDA UDA 显式传入 `projection_dim=16`；`module_ablation.py` 在省略该参数时也按协议选择纯 UDA=16、SDA/SSDA=64，既避免 UDA 直跑命令再次落回不稳定的 64 维，又保持监督路径旧口径。服务器仍可用 `JMDA_PROJECTION_DIM` 显式覆盖，正式敏感性实验应保留 16/32/64/128 的预注册对照。
+- 有效秩阈值改为按 covariance dtype 的机器精度计算，不再把固定的归一化 `eps=1e-8` 错当成 float32 数值秩容差；日志新增 `rank_thresholds`。
+- JMDA 服务器入口默认在训练前运行协议接线测试及 `test_tensor_ot_invariants.py`；任一门禁失败时不再浪费 GPU 启动正式任务，可用 `JMDA_RUN_INVARIANT_TESTS=0` 显式关闭（正式运行不建议）。
+- 启动脚本和 Python 入口都要求纯 UDA 的总 epoch 严格大于 source-only warm-up；否则全程没有任何跨域更新，现会直接失败，避免把 source-only smoke 误记为 UDA 结果。
+- `tools/audit_jmda_uda_log.py` 已接入 JMDA 两条服务器入口：进程退出码为 0 后仍会逐 seed 核验代码指纹、16 维配置、完整 source-only 区间、首次 SVD 次序与诊断、每轮目标分类观察数/损失为 0、连续投影更新、final checkpoint 和 `report_strategy=last`。任一协议或配置不变量失败都会把任务重新标记为 failed；低于随机水平、首次换基最小主角余弦过低或源准确率骤降只作为性能警告，不使用目标标签替代模型选择。
+- 新日志、机器摘要与 checkpoint 记录 16 位训练代码指纹，用于确认服务器实际执行的是同一组 JMDA 核心文件，避免把未同步代码误判为修复无效。
+- `projection_dim=16` 显式传参与 dtype-aware 数值秩阈值属于配置/数值错误修复；零空间延续和换基搬运属于原 SVD 实现细化。真正的 source-only warm-up 改变了 UDA 训练时序，虽未增加目标标签、伪标签或新损失，仍应按训练协议的实质性变化披露，并做 warm-up=0/10 消融，不能把它隐藏成普通 bug fix。若修复后强天气域仍低，剩余问题是无标签 all-pairs OT 不能保证类别语义匹配；任何伪标签/类条件无监督扩展均属于更进一步的实质性算法变化，必须单独命名并做消融。
+
+### 11.10 2026-10-19 部署与结果完整性门禁补强
+
+- `server_logs/jmda_oracle_shared_uda/*_20261018_160218_978602.log` 是上述修复落地前的已完成输出：其日志明确为 `projection_dim=64`、epoch 1 即执行 SVD，且没有 source-only warm-up、稳定零空间、基运输细分诊断或训练代码指纹。因此它们能证明旧实现发生了跨域投影失稳，但不能验证 16 维 + 真 source-only warm-up 的当前实现。
+- 日志审计现在从启动器接收预期代码指纹、迭代次数、base seed、总轮数、warm-up 和投影维度；逐 seed 核对连续编号与精确 seed 序列，并证明 `reported_acc` 及 summary 的 accuracy/precision/recall/F1 values、mean、std 均来自最后一轮，而不是 target-best。
+- UDA 与 `ORACLE_SHARED_UDA` 的结果收集记录强制清空 `best_acc`；目标验证峰值仍可留在原始日志作诊断，但不得进入可被误用的主结果字段。
+- 核心源码指纹统一将 CRLF/LF 归一后计算，`run_server.sh` 固定要求已审核版本的指纹，并在生成清单、占用 GPU 前无条件重算核对（即使关闭可选数值测试也不能绕过）。服务器遗漏同步任一核心文件时会在训练前失败；训练后审计再次核对日志指纹。
+- 共享判别器/Neural-OT 使用的平均基映射若秩亏，其 polar 因子并不唯一；现在在未识别零空间选择最接近 identity 的正交补，避免任意旋转。日志增加共享运输有效秩/阈值；这是原坐标运输的数值实现细化，不改变损失、标签使用或方法目标。
+- 仓库新增针对 `scripts/run_server.sh` 的 LF 属性并将当前脚本规范为 LF，避免 Windows 直接上传到 Linux 后由隐藏 `\r` 导致 Bash 启动/续行错误。结果收集器失败也会计入套件失败数，低性能警告则仍不改变协议成功状态。
+- 截至本节记录时尚无当前修复版本产生的服务器训练日志。静态门禁只能证明协议接线与数值不变量，不能保证目标准确率；下一步必须先跑 1 seed × 4 天气诊断，并重点检查 epoch 10→11 的源准确率、`basis_min_cos_src`、有效秩及预测类别覆盖，再决定是否需要披露为方法局限或开展实质性算法扩展。
+- 日志审计 JSON 现直接提取首次 post-warm-up 的 `effective_ranks`、`stabilized_null_dims`、`shared_transport_ranks` 与 `basis_domain_gap`，并校验投影维度、有效秩和零空间补全维数的一致性；存在数值零方向或共享运输秩亏时只发性能警告，不使用目标标签改变 checkpoint。
+
+## 12. 2026-10-19 第二批新方法（CCSA / d-SNE / PDA / MCFT）与方法清单收敛
+
+### 12.1 方法来源与开源仓库
+
+本批 4 个方法的开源代码按要求下载到本地（不下载官方数据集），并移植到本仓库统一数据/效率口径：
+
+| 方法 | 上游仓库 | 原始框架 | 本仓库实现文件 | 协议 | 输入模态 |
+|------|----------|----------|----------------|------|----------|
+| CCSA | [samotiian/CCSA](https://github.com/samotiian/CCSA) | Keras | `CCSA/train_ccsa.py` | SDA | VIS |
+| d-SNE | [aws-samples/d-SNE](https://github.com/aws-samples/d-SNE) | MXNet | `d-SNE/train_dsne.py` | SDA | VIS |
+| PDA | [BaiShuanghao/Prompt-based-Distribution-Alignment](https://github.com/BaiShuanghao/Prompt-based-Distribution-Alignment) | PyTorch (dassl) + CLIP | `PDA/train_pda.py` | UDA | VIS (CLIP) |
+| MCFT | [SYFYN0317/MCFT](https://github.com/SYFYN0317/MCFT) | PyTorch (MViT) | `MCFT/mcft_model.py`、`MCFT/train_mcft.py` | Supervised | VIS+IR |
+
+CCSA / d-SNE 原作即为有监督域适应（SDA），因此并入 SDA 主表；PDA 为严格无监督（UDA）；MCFT 为源域监督的 VIS+IR 双模态分类，单独成表。
+
+### 12.2 移植与忠实性要点
+
+- **CCSA**（ICCV 2017，对比语义对齐）：逐字移植原作者 `Initialization.py` 的 `Create_Model()` 拓扑——两层 3×3 valid 卷积（32→32）→ MaxPool → Dropout(0.25) → Flatten → FC(120) → FC(84)，分类头 Dropout(0.5)+FC(14)；`euclidean_distance` 与 `contrastive_loss`（margin=1）逐行移植；总损失 `loss = (1-α)·CE + α·CSA`，α=0.25（原论文默认），优化器 Adadelta（原作默认）。**唯一按项目要求替换的是输入尺寸**（改为 224×224，14 类），首层展平维度相应变化。
+- **d-SNE**（CVPR 2019，随机邻域嵌入）：`custom_layers.dSNELoss` 逐行移植（`y_same/y_diff` 掩码、`where(y_same, max_dists, inter_cls_dists)`、`relu(max_intra - min_inter + margin)`，margin=1），并对源/目标双向对称计算；主干替换为 ResNet-18（ImageNet 预训练）+ 4096→512 embedding 头；`loss = (1-α)·xent + α·dSNE`，α=0.1；SGD(lr=1e-3, momentum=0.9, weight_decay=1e-4)。目录名 `d-SNE` 含连字符，效率适配器用 `_load_module_from_file()` 加载以绕过非法模块名。
+- **PDA**（AAAI 2024，提示分布对齐）：`PromptLearner`/`TextEncoder`/`ImageEncoder_Trans`/`IFT_Module`/`CustomCLIP` 全部移植，去除 dassl 依赖；超参沿用 Office-31 设定（confi=0.9、warm_up=1、epoch_switch=0、feature bank K=5），SGD(lr=0.003, momentum=0.9, weight_decay=5e-4)；CLIP ViT-B/16 权重经 certifi CA bundle 下载并做 SHA-256 校验。**类别提示词为占位名**：本数据集无官方真实类别名，脚本在无映射文件时回退 `class_1..class_14` 并打印警告，效率记录标注 `prompt_source=placeholder`（真实类别名可由 `JMDA_CLASS_NAMES_FILE` 提供）。
+- **MCFT**（TGRS 2024，多模态对比融合 Transformer）：作者 MViT 结构忠实移植并去除 einops/timm/scipy 依赖；VIS/IR 按文件名 stem 精确配对（`PairedVisIrDataset`），无配对样本丢弃并打印数量；保留原作 `itm_head = Linear(patch*patch*nout*8, 2)` 的展平形式（与展平序列宽度一致）。**忠实性标注**：原作 `AGENT_TOKEN_SPLIT=169` 常量与 15×15 patch 网格不自洽（属原作 bug），本实现逐字保留该常量并在此建档说明；`_sample_negative()` 对零权重行回退均匀采样（原作会 RuntimeError）。
+
+### 12.3 本地冒烟测试结果（不做本地正式训练）
+
+均为 `--target backlight --epochs 1`，只验证全链路可运行，数字不代表正式结果：
+
+| 脚本 | 协议 | 结果 |
+|------|------|------|
+| `CCSA/train_ccsa.py` | SDA | 正常训练/评估/保存，日志与效率记录完整 |
+| `d-SNE/train_dsne.py` | SDA | 正常训练/评估/保存，日志与效率记录完整 |
+| `PDA/train_pda.py` | UDA | CLIP 提示学习 + 分布对齐链路完整，目标标签仅用于最终测试 |
+| `MCFT/train_mcft.py` | Supervised | VIS+IR 配对加载、双模态融合训练/评估链路完整 |
+
+### 12.4 效率基准结果（fp32，RTX 4060 Ti，1 MAC = 2 FLOPs）
+
+`tools/benchmark_efficiency.py` 新增 4 个适配器（`ccsa`/`dsne`/`pda`/`mcft`）后测得的静态与推理指标：
+
+| 方法 | 协议 | 参数量 | 可训练参数 | GFLOPs | 推理延迟(ms) | 备注 |
+|------|------|--------|------------|--------|--------------|------|
+| CCSA | SDA | 46.49M | 46.49M | 1.07 | 1.11 | Keras CNN 移植，224px 输入 |
+| d-SNE | SDA | 15.38M | 15.38M | 3.66 | 2.25 | ResNet-18 + 512 维嵌入 |
+| PDA | UDA | 152.87M | 3.18M | 479.39 | 33.91 | CLIP ViT-B/16，仅提示上下文可训练 |
+| MCFT | Supervised | 2.14M | 2.14M | 0.20 | 13.25 | MViT，15×15 patch 网格，VIS+IR |
+
+为对照，同批 UDA 传统方法（`dann`/`deepcoral`/`cdan`/`mdd`/`mcc`，ResNet-18 主干，224px 输入）效率为：DANN 11.44M/3.65 GFLOPs/2.87ms、DeepCORAL 11.18M/3.65 GFLOPs/2.18ms、CDAN 13.41M/14.59 GFLOPs/2.58ms、MDD 11.96M/3.65 GFLOPs/3.47ms、MCC 11.82M/3.65 GFLOPs/2.75ms。
+
+> **注意（启动脚本修复）**：`tools/benchmark_efficiency.py` 的 `ADAPTERS` 以**小写**为键，而一键脚本的显示名称为大写（`DANN`、`MCFT` 等）。初版 `scripts/run_all_sunny.ps1` 直接把显示名传给 `--methods`，导致微基准全部被判定为 "Unknown method" 而跳过（Params/GFLOPs/Latency 列为空）。现已加入 `$AdapterKeys` 显示名→小写键映射，并将三组 benchmark 日志按协议拆分为 `benchmark_uda.log`/`benchmark_sda.log`/`benchmark_supervised.log`，避免覆盖。
+
+### 12.5 一键启动脚本
+
+`scripts/run_all_sunny.ps1`：源域=晴天，目标域=逆光/雨天/雾天/黑天，每个目标域独立实验，每方法×目标×种子一次，默认 5 个种子(42–46)。脚本自动完成三组效率微基准（UDA / SDA / Supervised）与全部训练，并重新生成汇总。
+
+```powershell
+# 全部 9 方法 × 4 天气 × 5 种子
+powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1
+
+# 自定义：只跑 CCSA/d-SNE，1 epoch，单目标单种子
+powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 `
+  -Methods CCSA,d-SNE -Epochs 1 -Seeds 42 -Targets backlight
+
+# 关键参数：-Methods -Seeds -Targets -Epochs -OutDir -BenchRepeats
+#           -TargetLabelsPerClass (SDA 预算, 默认10) -SdaSeed (默认42)
+#           -ClipCacheDir (PDA) -SkipBenchmark
+```
+
+效率结果保存到 `-OutDir`（默认 `efficiency_results/all_sunny`），含原始运行记录 `efficiency_runs.csv`、汇总表 `efficiency_summary.csv` 与 Markdown 表 `efficiency_table.md`；SDA/UDA/Supervised 三协议**分表呈现，不跨表排名**。服务器端对应入口为 `scripts/run_server.sh {sda|uda|supervised}`。
+
+### 12.6 方法清单收敛（删除清单）
+
+按要求删除除 **DeepCORAL、DANN、CDAN、MDD、MCC、CCSA、d-SNE、PDA、MCFT** 之外的对比方法目录及其相关内容：
+
+- 删除的方法目录：`AD-CLIP/`、`Boomda/`、`CoOp/`、`Modfinity/`、`TransAdapter/`、`SDA_Baselines/`
+- 删除的 legacy 启动脚本：`run_all_methods.py`、`run_new_methods.py`
+- 清理引用：`tools/benchmark_efficiency.py`（移除 5 个废弃适配器与注册项）、`tools/test_comparison_reproducibility.py`（入口清单与针对性测试）、`tools/preflight_server.py`（TransAdapter 检查）、`tools/efficiency_common.py`、`tools/make_sda_lists.py`、`DANN/train_dann_sda.py`（注释）、`scripts/run_server.sh`（sda/uda/supervised 方法清单）
+
+**保留说明**：
+- `Transfer-Learning-Library/` 与 JMDA-Net 的 tllib 依赖（MDD/MCC 依赖其裁剪子集）——删除会破坏 MDD/MCC，故保留。
+- `JMDA-Net/` 为本文方法（JMDA-Net）源码镜像，不属于被删除的对比方法。
+
 

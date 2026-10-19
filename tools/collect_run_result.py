@@ -65,7 +65,7 @@ def _infer_method_target(run_tag):
 
 
 def _infer_input_modalities(method):
-    if method.startswith(('jmda_net', 'modfinity', 'boomda')):
+    if method.startswith(('jmda_net', 'mcft')):
         return 'VIS+IR'
     return 'VIS'
 
@@ -156,6 +156,13 @@ def parse_metrics(text):
     return metrics
 
 
+def apply_protocol_metric_policy(metrics, protocol):
+    """Remove target-label-selected fields from UDA-family result records."""
+    if protocol.lower() in ('uda', 'oracle_shared_uda'):
+        metrics['best_acc'] = None
+    return metrics
+
+
 def append_csv_record(csv_path, record):
     """Append a record, migrating older result tables to the current schema."""
     existing_rows = []
@@ -209,7 +216,7 @@ def main():
         text = handle.read()
 
     method, target = _infer_method_target(args.run_tag)
-    metrics = parse_metrics(text)
+    metrics = apply_protocol_metric_policy(parse_metrics(text), args.protocol)
     error_type, error_summary = _failure_summary(text, args.status)
     timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     record = {

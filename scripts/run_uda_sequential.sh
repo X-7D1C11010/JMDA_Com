@@ -2,7 +2,7 @@
 # Formal UDA sequence only:
 #   1) JMDA-Net UDA (its internal iterations use seeds 42..)
 #   2) comparison UDA methods for every requested seed
-# CoOp is intentionally excluded because it is a supervised prompt-learning
+# MCFT is intentionally excluded because it is a supervised multimodal
 # baseline and must be reported separately.
 set -euo pipefail
 
@@ -53,6 +53,6 @@ done
   --protocol UDA \
   --output-dir "$HERE/results/summaries"
 
-echo "All UDA phases completed. CoOp was not run."
+echo "All UDA phases completed. The supervised MCFT baseline was not run here."
 echo "Use final_acc (not best_acc) from $HERE/results/runs.csv for UDA reporting."
 

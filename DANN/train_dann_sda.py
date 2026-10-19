@@ -17,7 +17,7 @@ SDA protocol (paper main results):
 Epoch length note: the UDA script ran min(len(src), len(tgt)) batches. With a
 small labeled target subset that would shrink the epoch, so the SDA variant
 iterates over the SOURCE loader (unchanged epoch size) and cycles the target
-subset iterator, exactly like the MDD/MCC/MODfinity/Boomda loops already do.
+subset iterator, exactly like the other SDA loops (MDD/MCC/CCSA/d-SNE) do.
 
 Usage:
     python train_dann_sda.py --target backlight --epochs 3

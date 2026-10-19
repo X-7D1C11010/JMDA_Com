@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command experiment order (original protocol per comparison method):
 #   1) JMDA-Net UDA, 2) original UDA comparison methods,
-#   3) CoOp VLM baseline, 4) unified efficiency benchmark.
+#   3) MCFT supervised multimodal baseline, 4) unified efficiency benchmark.
 # Existing JMDA-Net supervised results are intentionally not rerun here.
 set -euo pipefail
 
@@ -17,8 +17,8 @@ bash "$HERE/scripts/run_server.sh" jmda_uda "$EPOCHS"
 echo "[2/4] Original-protocol UDA comparison methods"
 bash "$HERE/scripts/run_server.sh" uda "$EPOCHS"
 
-echo "[3/4] CoOp supervised prompt-learning baseline (reported separately)"
-bash "$HERE/scripts/run_server.sh" vlm "$EPOCHS"
+echo "[3/4] MCFT supervised multimodal baseline (reported separately)"
+bash "$HERE/scripts/run_server.sh" supervised "$EPOCHS"
 
 if [ "${RUN_EFFICIENCY:-1}" = "1" ]; then
   echo "[4/4] Unified efficiency benchmark"

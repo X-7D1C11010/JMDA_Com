@@ -1,2 +1,0 @@
-bash scripts/Boomda.sh VL 1 0 IEMOCAP IEMOCAP logs/0813VL_ie2ie label.csv 2e-3 "0.1" "'-1 1 0 0'" "'1 0.1 0.1 0.4'"
-bash scripts/Boomda.sh AVL 1 0 MSP MSP logs/1501cAVL_ms2ms label.csv 2e-3 "0.1" "'-1 1 0 0'" "'1 0.1 0.18 0.4'"

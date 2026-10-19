@@ -172,7 +172,8 @@ def measure_inference_latency(model, inputs, device,
             return model(inp)
 
     # Warmup — use no_grad (not inference_mode) when forward_fn is provided,
-    # because some models (e.g. Boomda) need enable_grad() internally for hooks.
+    # because some models (e.g. CLIP-based prompt learners) need grad enabled
+    # internally for their hooks.
     grad_ctx = torch.no_grad() if forward_fn is not None else torch.inference_mode()
     with grad_ctx:
         for _ in range(warmup):

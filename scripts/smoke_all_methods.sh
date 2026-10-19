@@ -17,7 +17,7 @@ bash "$HERE/scripts/run_server.sh" jmda_uda 1
 echo "[smoke 2/3] original-protocol UDA comparison methods"
 bash "$HERE/scripts/run_server.sh" uda 1
 
-echo "[smoke 3/3] CoOp supervised prompt-learning baseline"
-bash "$HERE/scripts/run_server.sh" vlm 1
+echo "[smoke 3/3] MCFT supervised multimodal baseline"
+bash "$HERE/scripts/run_server.sh" supervised 1
 
 echo "All one-epoch smoke tests passed."

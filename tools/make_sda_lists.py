@@ -15,7 +15,7 @@ Selection rules:
   * fixed RNG seed (default 42), per-class sampling of N samples;
   * samples that have an IR partner (canonical JMDA-Net pairing) are
     preferred, so the same subset is usable by the multimodal methods
-    (MODfinity-SDA / Boomda-SDA / JMDA-Net-SDA) without dropping entries;
+    (JMDA-Net-SDA) without dropping entries;
   * if a class has fewer than N usable samples, all of them are taken and the
     shortfall is reported.
 

@@ -14,6 +14,7 @@ from Ablation.PairedClassSampler import PairedClassSampler
 from Ablation.module_ablation import (
     BinaryDomainDiscriminator,
     UnpairedDomainSampler,
+    _least_changing_orthogonal_factor,
     adaptation_protocol,
     class_prior_to_sample_marginal,
     compute_protocol_classification_loss,
@@ -21,6 +22,7 @@ from Ablation.module_ablation import (
     configure_visual_finetuning,
     build_compact_label_map,
     derive_oracle_shared_labels,
+    is_uda_source_warmup,
     reported_protocol,
     select_report_metrics,
     set_frozen_batchnorm_eval,
@@ -235,6 +237,15 @@ class ResultReportingTests(unittest.TestCase):
             compute_joint_ot_scale(0, 3, 2, enabled=False),
             1.0,
         )
+
+    def test_uda_source_warmup_is_protocol_scoped(self):
+        self.assertTrue(is_uda_source_warmup("UDA", epoch=0, warmup_epochs=10))
+        self.assertTrue(is_uda_source_warmup("UDA", epoch=9, warmup_epochs=10))
+        self.assertFalse(is_uda_source_warmup("UDA", epoch=10, warmup_epochs=10))
+        self.assertFalse(is_uda_source_warmup("SDA", epoch=0, warmup_epochs=10))
+        self.assertFalse(is_uda_source_warmup("SSDA", epoch=0, warmup_epochs=10))
+        with self.assertRaises(ValueError):
+            is_uda_source_warmup("UDA", epoch=0, warmup_epochs=-1)
 
     def test_best_strategy_keeps_metrics_from_one_checkpoint(self):
         history = [
@@ -585,7 +596,223 @@ class TensorEpochUpdateTests(unittest.TestCase):
         self.assertAlmostEqual(
             diagnostics["target_subspace_overlap"], 1.0, places=5
         )
+        self.assertAlmostEqual(
+            diagnostics["source_min_principal_cosine"], 1.0, places=5
+        )
+        self.assertAlmostEqual(
+            diagnostics["target_min_principal_cosine"], 1.0, places=5
+        )
         self.assertLess(diagnostics["basis_map_non_orthogonality"], 1e-5)
+        self.assertLess(
+            diagnostics["source_basis_map_non_orthogonality"], 1e-5
+        )
+        self.assertLess(
+            diagnostics["target_basis_map_non_orthogonality"], 1e-5
+        )
+
+    def test_rank_deficient_shared_polar_keeps_unidentified_axes_unchanged(self):
+        matrix = torch.diag(torch.tensor([-1.0, 0.0, 0.0]))
+        transport, effective_rank, threshold = (
+            _least_changing_orthogonal_factor(matrix)
+        )
+
+        self.assertEqual(effective_rank, 1)
+        self.assertGreater(threshold, 0.0)
+        self.assertTrue(
+            torch.allclose(
+                transport,
+                torch.diag(torch.tensor([-1.0, 1.0, 1.0])),
+                atol=1e-6,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                transport.transpose(0, 1).matmul(transport),
+                torch.eye(3),
+                atol=1e-6,
+            )
+        )
+
+    def test_uda_classifier_transport_is_anchored_to_source_basis(self):
+        torch.manual_seed(37)
+        modal_rank = 3
+        feature_dim = 2 * modal_rank
+        old_source = [
+            torch.linalg.qr(torch.randn(7, modal_rank)).Q,
+            torch.linalg.qr(torch.randn(8, modal_rank)).Q,
+        ]
+        old_target = [
+            torch.linalg.qr(torch.randn(7, modal_rank)).Q,
+            torch.linalg.qr(torch.randn(8, modal_rank)).Q,
+        ]
+        source_rotations = [
+            torch.linalg.qr(torch.randn(modal_rank, modal_rank)).Q
+            for _ in range(2)
+        ]
+        target_rotations = [
+            torch.linalg.qr(torch.randn(modal_rank, modal_rank)).Q
+            for _ in range(2)
+        ]
+        new_source = [
+            projection.matmul(rotation)
+            for projection, rotation in zip(old_source, source_rotations)
+        ]
+        new_target = [
+            projection.matmul(rotation)
+            for projection, rotation in zip(old_target, target_rotations)
+        ]
+        source_map = torch.block_diag(*source_rotations)
+
+        classifier = Classifier(input_dim=feature_dim, num_classes=4).eval()
+        discriminator = BinaryDomainDiscriminator(feature_dim=feature_dim).eval()
+        generator = NeuralOptimalTransportGenerator(
+            feature_dim=feature_dim,
+            hidden_dim=10,
+            transport_mode="sinkhorn",
+        ).eval()
+        old_source_features = torch.randn(5, feature_dim)
+        new_source_features = old_source_features.matmul(source_map)
+        expected = classifier(old_source_features)
+        shared_parameter_norms = {
+            "discriminator": discriminator.discriminator[0].weight.norm().clone(),
+            "cost": generator.cost_net.proj[0].weight.norm().clone(),
+            "residual_input": generator.mlp[0].weight.norm().clone(),
+            "residual_output": generator.mlp[2].weight.norm().clone(),
+        }
+
+        diagnostics = transport_projected_feature_basis(
+            classifier,
+            discriminator,
+            generator,
+            old_source,
+            old_target,
+            new_source,
+            new_target,
+            classifier_basis_mode="source",
+        )
+
+        self.assertTrue(
+            torch.allclose(classifier(new_source_features), expected, atol=1e-5)
+        )
+        self.assertEqual(diagnostics["classifier_basis_mode"], "source")
+        self.assertGreater(diagnostics["source_target_basis_map_gap"], 1e-3)
+        self.assertGreater(diagnostics["basis_map_non_orthogonality"], 1e-3)
+        self.assertLess(
+            diagnostics["source_basis_map_non_orthogonality"], 1e-5
+        )
+        self.assertLess(
+            diagnostics["target_basis_map_non_orthogonality"], 1e-5
+        )
+        self.assertLess(
+            diagnostics["shared_transport_non_orthogonality"], 1e-5
+        )
+        self.assertTrue(
+            torch.allclose(
+                discriminator.discriminator[0].weight.norm(),
+                shared_parameter_norms["discriminator"],
+                atol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                generator.cost_net.proj[0].weight.norm(),
+                shared_parameter_norms["cost"],
+                atol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                generator.mlp[0].weight.norm(),
+                shared_parameter_norms["residual_input"],
+                atol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                generator.mlp[2].weight.norm(),
+                shared_parameter_norms["residual_output"],
+                atol=1e-5,
+            )
+        )
+
+    def test_basis_transport_resets_only_reparameterized_adam_state(self):
+        torch.manual_seed(43)
+        modal_rank = 2
+        feature_dim = 2 * modal_rank
+        old_source = [
+            torch.linalg.qr(torch.randn(6, modal_rank)).Q,
+            torch.linalg.qr(torch.randn(7, modal_rank)).Q,
+        ]
+        old_target = [projection.clone() for projection in old_source]
+        rotations = [
+            torch.linalg.qr(torch.randn(modal_rank, modal_rank)).Q
+            for _ in range(2)
+        ]
+        new_source = [
+            projection.matmul(rotation)
+            for projection, rotation in zip(old_source, rotations)
+        ]
+        new_target = [projection.clone() for projection in new_source]
+
+        classifier = Classifier(input_dim=feature_dim, num_classes=3)
+        discriminator = BinaryDomainDiscriminator(feature_dim=feature_dim)
+        generator = NeuralOptimalTransportGenerator(
+            feature_dim=feature_dim,
+            hidden_dim=8,
+            transport_mode="sinkhorn",
+        )
+        optimizer_g = torch.optim.Adam(
+            list(classifier.parameters()) + list(generator.parameters()),
+            lr=1e-3,
+        )
+        optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=1e-3)
+
+        optimizer_g.zero_grad()
+        sum(
+            parameter.square().mean()
+            for parameter in list(classifier.parameters())
+            + list(generator.parameters())
+        ).backward()
+        optimizer_g.step()
+        optimizer_d.zero_grad()
+        sum(
+            parameter.square().mean()
+            for parameter in discriminator.parameters()
+        ).backward()
+        optimizer_d.step()
+
+        transformed_g = (
+            classifier.fc[0].weight,
+            generator.cost_net.proj[0].weight,
+            generator.mlp[0].weight,
+            generator.mlp[2].weight,
+            generator.mlp[2].bias,
+        )
+        transformed_d = (discriminator.discriminator[0].weight,)
+        untouched_g = classifier.fc[0].bias
+        untouched_d = discriminator.discriminator[0].bias
+        self.assertTrue(all(parameter in optimizer_g.state for parameter in transformed_g))
+        self.assertTrue(all(parameter in optimizer_d.state for parameter in transformed_d))
+        self.assertIn(untouched_g, optimizer_g.state)
+        self.assertIn(untouched_d, optimizer_d.state)
+
+        transport_projected_feature_basis(
+            classifier,
+            discriminator,
+            generator,
+            old_source,
+            old_target,
+            new_source,
+            new_target,
+            optimizer_g=optimizer_g,
+            optimizer_d=optimizer_d,
+            classifier_basis_mode="source",
+        )
+
+        self.assertTrue(all(parameter not in optimizer_g.state for parameter in transformed_g))
+        self.assertTrue(all(parameter not in optimizer_d.state for parameter in transformed_d))
+        self.assertIn(untouched_g, optimizer_g.state)
+        self.assertIn(untouched_d, optimizer_d.state)
 
     def test_paired_procrustes_alignment_removes_subspace_rotation(self):
         torch.manual_seed(5)
@@ -606,6 +833,112 @@ class TensorEpochUpdateTests(unittest.TestCase):
 
         self.assertTrue(torch.allclose(aligned_source, old_source, atol=1e-5))
         self.assertTrue(torch.allclose(aligned_target, old_target, atol=1e-5))
+
+    def test_rank_deficient_completion_keeps_identified_prefix_orthogonal(self):
+        torch.manual_seed(41)
+        old_basis = torch.linalg.qr(torch.randn(12, 6)).Q
+        informative_basis = torch.linalg.qr(torch.randn(12, 2)).Q
+
+        completed = (
+            TensorBasedAlignmentStable._least_changing_orthogonal_completion(
+                informative_basis,
+                old_basis,
+                total_rank=6,
+            )
+        )
+
+        self.assertEqual(tuple(completed.shape), (12, 6))
+        self.assertTrue(
+            torch.allclose(
+                completed.transpose(0, 1).matmul(completed),
+                torch.eye(6),
+                atol=1e-5,
+                rtol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(completed[:, :2], informative_basis, atol=1e-5)
+        )
+
+    def test_effective_rank_uses_float32_machine_precision(self):
+        covariance = torch.zeros(512, 512, dtype=torch.float32)
+        singular_values = torch.tensor([1.0, 3.0e-5], dtype=torch.float32)
+
+        effective_rank, threshold = TensorBasedAlignmentStable._effective_rank(
+            covariance,
+            singular_values,
+        )
+
+        self.assertEqual(effective_rank, 1)
+        self.assertGreater(threshold, float(singular_values[1]))
+
+    def test_rank_deficient_pair_retains_previous_null_subspaces(self):
+        torch.manual_seed(42)
+        old_source = torch.linalg.qr(torch.randn(12, 6)).Q
+        old_target = torch.linalg.qr(torch.randn(11, 6)).Q
+        new_source = torch.linalg.qr(torch.randn(12, 6)).Q
+        new_target = torch.linalg.qr(torch.randn(11, 6)).Q
+        new_source[:, :2] = old_source[:, :2]
+        new_target[:, :2] = old_target[:, :2]
+
+        stable_source, stable_target = (
+            TensorBasedAlignmentStable._stabilize_rank_deficient_pair(
+                new_source,
+                new_target,
+                old_source,
+                old_target,
+                informative_rank=2,
+            )
+        )
+
+        self.assertTrue(
+            torch.allclose(
+                stable_source.matmul(stable_source.transpose(0, 1)),
+                old_source.matmul(old_source.transpose(0, 1)),
+                atol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                stable_target.matmul(stable_target.transpose(0, 1)),
+                old_target.matmul(old_target.transpose(0, 1)),
+                atol=1e-5,
+            )
+        )
+
+    def test_rank_deficient_update_reports_stabilized_null_dimensions(self):
+        torch.manual_seed(43)
+        module = TensorBasedAlignmentStable(
+            input_dims=[8, 6],
+            output_dims=[4, 4],
+            num_modalities=2,
+            max_svd_sweeps=1,
+        )
+        latent_source = torch.randn(12, 1)
+        latent_target = torch.randn(10, 1)
+        source = [
+            latent_source.matmul(torch.randn(1, 8)),
+            latent_source.matmul(torch.randn(1, 6)),
+        ]
+        target = [
+            latent_target.matmul(torch.randn(1, 8)),
+            latent_target.matmul(torch.randn(1, 6)),
+        ]
+
+        info = module.update_unpaired_projections(source, target)
+
+        self.assertIn("stabilized_null_dims", info)
+        self.assertIn("rank_thresholds", info)
+        self.assertTrue(any(value > 0 for value in info["stabilized_null_dims"]))
+        for projection in (*module.U_matrices, *module.V_matrices):
+            self.assertTrue(
+                torch.allclose(
+                    projection.transpose(0, 1).matmul(projection),
+                    torch.eye(4),
+                    atol=1e-5,
+                    rtol=1e-5,
+                )
+            )
 
     def test_epoch_update_is_orthogonal_and_forward_is_read_only(self):
         torch.manual_seed(7)

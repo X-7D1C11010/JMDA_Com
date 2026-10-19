@@ -294,20 +294,6 @@ def main():
             f'({len(names)} classes)'
         )
 
-    if args.protocol == 'uda':
-        weights_path = os.environ.get(
-            'TRANSADAPTER_BACKBONE_WEIGHTS', ''
-        ).strip()
-        if not weights_path:
-            fail(
-                'TRANSADAPTER_BACKBONE_WEIGHTS must name the exact local '
-                'pretrained Swin-T checkpoint for a reproducible formal run.'
-            )
-        weights = Path(weights_path).expanduser().resolve()
-        if not weights.is_file():
-            fail(f'TransAdapter backbone checkpoint is missing: {weights}')
-        print(f'[OK] TransAdapter pretrained checkpoint: {weights}')
-
     if args.protocol == 'jmda_oracle_shared_uda':
         print(
             '[ORACLE] target-training label support will be read to filter '

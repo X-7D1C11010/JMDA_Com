@@ -50,6 +50,21 @@ def _make_ir_input(bs, device):
 def _make_ais_input(bs, device, dim=23040):
     return torch.randn(bs, dim, device=device)
 
+def _make_mcft_patch(bs, device):
+    """MCFT's architecture contract: tokens are a patch_size x patch_size grid
+    (15x15), which is what the released model reshapes its position embedding to."""
+    return torch.randn(bs, 3, 15, 15, device=device)
+
+def _load_module_from_file(module_name, path):
+    """Load a .py file as a module; needed for d-SNE/ whose directory name is not
+    a valid Python identifier."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 # ── DANN ────────────────────────────────────────────────────────────────────
 def adapter_dann():
     from DANN.train_dann import DANN
@@ -88,6 +103,9 @@ def adapter_deepcoral():
 
 # ── CDAN ────────────────────────────────────────────────────────────────────
 def adapter_cdan():
+    # train_cdan.py imports sibling helpers (optimizer_utils) by bare name, so
+    # the CDAN directory must be importable when loaded as a package.
+    sys.path.insert(0, os.path.join(PROJ, 'CDAN'))
     from CDAN.train_cdan import ResNetFc, AdversarialNetwork, RandomLayer
     class CDANWrapper(nn.Module):
         def __init__(self):
@@ -155,6 +173,106 @@ def adapter_mcc():
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'vis_shape':'(1,3,224,224)'}
 
+# ── CCSA (SDA) ───────────────────────────────────────────────────────────────
+def adapter_ccsa():
+    from CCSA.train_ccsa import CCSA, build_pairs, euclidean_distance, contrastive_loss
+    def build():
+        return CCSA(num_classes=14)
+    def make_input(bs, device):
+        return _make_vis_input(bs, device)
+    def forward_loss(model, inp):
+        tgt = _make_vis_input(inp.size(0), inp.device)
+        logits_s, logits_t, f_s, f_t = model(inp, tgt)
+        labels_s = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels_t = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        si, ti, yc = build_pairs(labels_s, labels_t)
+        distance = euclidean_distance(f_s[si], f_t[ti])
+        ce = 0.5 * (nn.CrossEntropyLoss()(logits_s, labels_s) +
+                    nn.CrossEntropyLoss()(logits_t, labels_t))
+        return 0.75 * ce + 0.25 * contrastive_loss(yc, distance)
+    return {'name':'CCSA','group':'visual_vlm','modalities':'VIS',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'vis_shape':'(1,3,224,224)'}
+
+# ── d-SNE (SDA) ──────────────────────────────────────────────────────────────
+def adapter_dsne():
+    mod = _load_module_from_file('dsne_train_module',
+                                 os.path.join(PROJ, 'd-SNE', 'train_dsne.py'))
+    def build():
+        return mod.DSNE(num_classes=14)
+    def make_input(bs, device):
+        return _make_vis_input(bs, device)
+    def forward_loss(model, inp):
+        tgt = _make_vis_input(inp.size(0), inp.device)
+        labels_s = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels_t = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        logits_s, f_s = model(inp, return_embedding=True)
+        logits_t, f_t = model(tgt, return_embedding=True)
+        xent = 0.5 * (nn.CrossEntropyLoss()(logits_s, labels_s) +
+                      nn.CrossEntropyLoss()(logits_t, labels_t))
+        aux = 0.5 * (mod.dsne_loss(f_s, labels_s, f_t, labels_t) +
+                     mod.dsne_loss(f_t, labels_t, f_s, labels_s))
+        return 0.9 * xent + 0.1 * aux
+    return {'name':'d-SNE','group':'visual_vlm','modalities':'VIS',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'vis_shape':'(1,3,224,224)'}
+
+# ── MCFT (VIS+IR supervised) ─────────────────────────────────────────────────
+def adapter_mcft():
+    from MCFT.train_mcft import build_model
+    def build():
+        return build_model()
+    def make_input(bs, device):
+        return {'vis': _make_mcft_patch(bs, device), 'ir': _make_mcft_patch(bs, device)}
+    def forward_loss(model, inp):
+        labels = torch.randint(0, 14, (inp['vis'].size(0),), device=inp['vis'].device)
+        logits, loss_ita, loss_itm = model(inp['vis'], inp['ir'], labels)
+        return nn.CrossEntropyLoss()(logits, labels) + 0.1 * loss_ita + loss_itm
+    def forward_infer(model, inp):
+        # forward() needs a label for the ITM hard-negative mining; inference
+        # uses zeros, which the ITM path treats as "no negatives available".
+        labels = torch.zeros(inp['vis'].size(0), dtype=torch.long, device=inp['vis'].device)
+        logits, _, _ = model(inp['vis'], inp['ir'], labels)
+        return logits
+    return {'name':'MCFT','group':'multimodal','modalities':'VIS+IR',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'forward_infer':forward_infer,
+            'vis_shape':'(1,3,15,15)','ir_shape':'(1,3,15,15)'}
+
+# ── PDA (UDA, CLIP) ──────────────────────────────────────────────────────────
+def adapter_pda():
+    import copy
+    from PDA.train_pda import CustomCLIP, load_clip_to_cpu
+    classnames = [f'class_{i + 1}' for i in range(14)]  # same placeholder prompts as training
+    clip_model = load_clip_to_cpu('ViT-B/16')
+    def build():
+        # CustomCLIP holds the CLIP submodules by reference, so the caller's
+        # .to(device) would mutate the shared template. Each repeat gets its own
+        # copy, keeping construction (CPU token ids) and the dumped model
+        # consistent.
+        clip_local = copy.deepcopy(clip_model)
+        model = CustomCLIP(classnames, clip_local, n_ctx=2, num_tokens=2,
+                           ctx_init='a_photo_of_a',
+                           num_layer=len(clip_local.transformer.resblocks),
+                           hidden_size=clip_local.visual.conv1.out_channels,
+                           location='middle', share_layer=[0, 5], deep_layer=None)
+        for name, param in model.named_parameters():
+            param.requires_grad_(False)
+            if 'prompt_learner' in name:
+                param.requires_grad_(True)
+            if 'bank' in name:
+                param.requires_grad_(False)
+        return model
+    def make_input(bs, device):
+        return _make_vis_input(bs, device)
+    def forward_loss(model, inp):
+        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        _, loss = model(inp, label=labels, epoch=0, train=True)
+        return loss
+    return {'name':'PDA','group':'visual_vlm','modalities':'VIS',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'vis_shape':'(1,3,224,224)(fp16)'}
+
 # ── Source-only ──────────────────────────────────────────────────────────────
 def adapter_source_only():
     from torchvision import models as tvm
@@ -170,236 +288,6 @@ def adapter_source_only():
         return nn.CrossEntropyLoss()(out, labels)
     return {'name':'Source-only','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
-
-# ── Boomda ───────────────────────────────────────────────────────────────────
-def adapter_boomda():
-    # Boomda's 'models' package conflicts with torchvision.models; insert Boomda
-    # dir at front of sys.path and remove cached 'models' module.
-    boomda_dir = os.path.join(PROJ, 'Boomda')
-    sys.path.insert(0, boomda_dir)
-    for key in list(sys.modules.keys()):
-        if key == 'models' or key.startswith('models.'):
-            # Only remove Boomda's own models, not torchvision.models
-            mod = sys.modules[key]
-            if hasattr(mod, '__file__') and mod.__file__ and 'Boomda' in mod.__file__:
-                del sys.modules[key]
-            elif not hasattr(mod, '__file__') or 'torchvision' not in str(getattr(mod, '__file__', '')):
-                # Remove ambiguous modules to force re-import
-                if key == 'models':
-                    del sys.modules[key]
-    from train_boomda_jmda import BoomdaJMDA
-    class Opt:
-        embd_size_a=256; embd_size_v=512; embd_size_l=512
-        output_dim=14; lr=1e-4; enc_lr=1e-5; beta1=0.5; isTrain=True
-        use_ais=False
-        save_dir=os.path.join(PROJ,'Boomda','output')
-    opt = Opt()
-    def build():
-        return BoomdaJMDA(opt)
-    def make_input(bs, device):
-        return {
-            'vision': _make_vis_input(bs, device),
-            'ir': _make_ir_input(bs, device),
-            'ais': _make_ais_input(bs, device),
-        }
-    def forward_loss(model, inp):
-        # Build source + target batch
-        data = {k: v for k, v in inp.items()}
-        data_t = {k: v.clone() for k, v in inp.items()}
-        data['label'] = torch.randint(0, 14, (inp['vision'].size(0),), device=inp['vision'].device)
-        data_t['label'] = torch.randint(0, 14, (inp['vision'].size(0),), device=inp['vision'].device)
-        model.set_input(data, data_t, alpha=0.1)
-        model.forward()
-        loss = model.criterion_ce(model.logits, model.label)
-        return loss
-    def forward_infer(model, inp):
-        # Match the validation/deployment path: one sample stream, encoders and
-        # the joint classifier only (no target copy or adaptation losses).
-        model.ais_eval = inp['ais']
-        model.visual_eval = inp['vision']
-        model.ir_eval = inp['ir']
-        model.forward_eval()
-        return model.logits
-    return {'name':'Boomda','group':'trimodal','modalities':'VIS+IR (AIS disabled)',
-            'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'forward_infer':forward_infer,
-            'vis_shape':'(1,3,224,224)','ir_shape':'(1,3,224,224)','ais_shape':'(1,23040)'}
-
-# ── MODfinity ────────────────────────────────────────────────────────────────
-def adapter_modfinity():
-    from Modfinity.train_modfinity import MODfinity
-    def build():
-        return MODfinity(num_classes=14, feat_dim=512, tau=0.07)
-    def make_input(bs, device):
-        return {
-            'ir': _make_ir_input(bs, device),
-            'vision': _make_vis_input(bs, device),
-            'ais': _make_ais_input(bs, device),
-        }
-    def forward_loss(model, inp):
-        feats = model.features(inp)
-        labels = torch.randint(0, 14, (inp['vision'].size(0),), device=inp['vision'].device)
-        loss = 0
-        for m in model.MODALITIES:
-            logits = model.classifiers[m](feats[m])
-            loss = loss + nn.CrossEntropyLoss()(logits, labels)
-        return loss
-    def forward_infer(model, inp):
-        return model(inp)
-    return {'name':'MODfinity*','group':'trimodal','modalities':'VIS+IR (AIS disabled)',
-            'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'forward_infer':forward_infer,
-            'vis_shape':'(1,3,224,224)','ir_shape':'(1,3,224,224)','ais_shape':'(1,23040)'}
-
-# ── AD-CLIP ───────────────────────────────────────────────────────────────────
-def adapter_adclip():
-    AD_DIR = os.path.join(PROJ, 'AD-CLIP')
-    sys.path.insert(0, AD_DIR)
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('adclip_clip_pkg',
-        os.path.join(AD_DIR, 'clip', '__init__.py'),
-        submodule_search_locations=[os.path.join(AD_DIR, 'clip')])
-    pkg = importlib.util.module_from_spec(spec)
-    sys.modules['adclip_clip_pkg'] = pkg
-    spec.loader.exec_module(pkg)
-    def _load_submodule(pkg, name, fn):
-        s = importlib.util.spec_from_file_location(f'adclip_clip_pkg.{name}',
-            os.path.join(AD_DIR, 'clip', fn))
-        m = importlib.util.module_from_spec(s)
-        setattr(pkg, name, m)
-        sys.modules[f'adclip_clip_pkg.{name}'] = m
-        s.loader.exec_module(m)
-        return m
-    cm = _load_submodule(pkg, 'model', 'model.py')
-    cc = _load_submodule(pkg, 'clip', 'clip.py')
-    cc.model = cm; cc.build_model = cm.build_model
-    clip_mod = cc
-
-    class SimpleCfg:
-        class INPUT:
-            SIZE = [224, 224]
-        class MODEL:
-            class BACKBONE:
-                NAME = 'RN50'
-                PATH = os.path.expanduser('~/.cache/clip')
-
-    classnames = [f'class_{i}' for i in range(1, 15)]
-    # Load CLIP RN50 (cached)
-    clip_model, _ = clip_mod.load('RN50', device='cpu')
-    clip_model.float()
-
-    from adclip_model import CustomCLIP, entropy_loss
-    def build():
-        model = CustomCLIP(SimpleCfg(), classnames, clip_model)
-        # Freeze everything except prompt_learner (same as training)
-        for name, param in model.named_parameters():
-            if 'prompt_learner' not in name:
-                param.requires_grad_(False)
-        return model
-    def make_input(bs, device):
-        return _make_vis_input(bs, device)
-    def forward_loss(model, inp):
-        # model(s_img, t_img) -> (source_logits, target_probs, ...)
-        out = model(inp, inp)
-        source_logits = out[0]
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
-        # Handle potential shape issues
-        try:
-            return nn.CrossEntropyLoss()(source_logits, labels)
-        except Exception:
-            # fallback: use NLL with log of target_probs
-            target_probs = out[1]
-            return nn.NLLLoss()(torch.log(target_probs + 1e-8), labels)
-    def forward_infer(model, inp):
-        out = model(inp, inp)
-        return out[1]  # target_probs
-    return {'name':'AD-CLIP','group':'visual_vlm','modalities':'CLIP',
-            'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'forward_infer':forward_infer,
-            'vis_shape':'(1,3,224,224)'}
-
-# ── CoOp ──────────────────────────────────────────────────────────────────────
-def adapter_coop():
-    sys.path.insert(0, os.path.join(PROJ, 'CoOp'))
-    from coop_model import CustomCLIP as CoOpModel
-    # Ensure we get the OpenAI CLIP package from site-packages,
-    # not AD-CLIP's local clip directory which may have been inserted
-    # at the front of sys.path by the adclip adapter.
-    import importlib, importlib.util
-    # Find the real clip package in site-packages
-    clip_pkg = None
-    for p in sys.path:
-        if 'site-packages' in p or 'site-package' in p:
-            clip_init = os.path.join(p, 'clip', '__init__.py')
-            if os.path.isfile(clip_init):
-                spec = importlib.util.spec_from_file_location('clip', clip_init,
-                    submodule_search_locations=[os.path.join(p, 'clip')])
-                clip_pkg = importlib.util.module_from_spec(spec)
-                sys.modules['clip'] = clip_pkg
-                spec.loader.exec_module(clip_pkg)
-                break
-    if clip_pkg is None:
-        clip_pkg = importlib.import_module('clip')
-
-    class CoOpCfg:
-        class INPUT:
-            SIZE = [224, 224]
-        class MODEL:
-            class BACKBONE:
-                NAME = 'RN50'
-            INIT_WEIGHTS = ''
-        class TRAINER:
-            class COOP:
-                N_CTX = 16
-                CTX_INIT = ''
-                CSC = False
-                CLASS_TOKEN_POSITION = 'end'
-                PREC = 'fp32'
-
-    classnames = [f'class_{i}' for i in range(1, 15)]
-    # Load CLIP RN50 (standard package, cached)
-    clip_model, _ = clip_pkg.load('RN50', device='cpu')
-    clip_model.float()
-
-    def build():
-        model = CoOpModel(CoOpCfg(), classnames, clip_model)
-        # Freeze everything except prompt_learner (same as training)
-        for name, param in model.named_parameters():
-            if 'prompt_learner' not in name:
-                param.requires_grad_(False)
-        return model
-    def make_input(bs, device):
-        return _make_vis_input(bs, device)
-    def forward_loss(model, inp):
-        logits = model(inp)
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
-        return nn.CrossEntropyLoss()(logits, labels)
-    def forward_infer(model, inp):
-        return model(inp)
-    return {'name':'CoOp','group':'visual_vlm','modalities':'CLIP',
-            'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'forward_infer':forward_infer,
-            'vis_shape':'(1,3,224,224)'}
-
-# ── TransAdapter ──────────────────────────────────────────────────────────────
-def adapter_transadapter():
-    from TransAdapter.train_transadapter import TransAdapter
-    def build():
-        return TransAdapter(num_classes=14, pretrained=True)
-    def make_input(bs, device):
-        return _make_vis_input(bs, device)
-    def forward_loss(model, inp):
-        cls_out, dom_out, _ = model(inp, alpha=0.5)
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
-        dom_labels = torch.randint(0, 2, (inp.size(0),), device=inp.device)
-        return nn.CrossEntropyLoss()(cls_out, labels) + nn.CrossEntropyLoss()(dom_out, dom_labels)
-    def forward_infer(model, inp):
-        cls_out, _, _ = model(inp, alpha=0.0)
-        return cls_out
-    return {'name':'TransAdapter','group':'visual_vlm','modalities':'VIS',
-            'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'forward_infer':forward_infer,
             'vis_shape':'(1,3,224,224)'}
 
 # ── JMDA-Net (various ablation modes) ──────────────────────────────────────────
@@ -493,11 +381,10 @@ BACKBONE_INFO = {
     'cdan':           ('ResNet-18', 'ImageNet'),
     'mdd':            ('ResNet-18', 'ImageNet'),
     'mcc':            ('ResNet-18', 'ImageNet'),
-    'boomda':         ('ResNet-18 x2 (optional AIS 1D-CNN)', 'ImageNet'),
-    'modfinity':      ('ResNet-18 x2 (optional AIS 1D-CNN)', 'ImageNet'),
-    'adclip':         ('CLIP RN50', 'CLIP'),
-    'coop':           ('CLIP RN50', 'CLIP'),
-    'transadapter':   ('Swin-T', 'ImageNet'),
+    'ccsa':           ('CCSA-CNN (conv 32x2 + fc120/fc84)', 'None (from scratch)'),
+    'dsne':           ('ResNet-18 (original: mxnet ResNet-101)', 'ImageNet'),
+    'mcft':           ('MCFT MViT (patch 15x15, dim=64)', 'None (from scratch)'),
+    'pda':            ('CLIP ViT-B/16 + PDA prompts', 'CLIP zero-shot'),
     'jmda_baseline':  ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
     'jmda_tensor_only': ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
     'jmda_ot_only':   ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
@@ -511,11 +398,10 @@ ADAPTERS = {
     'cdan': adapter_cdan,
     'mdd': adapter_mdd,
     'mcc': adapter_mcc,
-    'boomda': adapter_boomda,
-    'modfinity': adapter_modfinity,
-    'adclip': adapter_adclip,
-    'coop': adapter_coop,
-    'transadapter': adapter_transadapter,
+    'ccsa': adapter_ccsa,
+    'dsne': adapter_dsne,
+    'mcft': adapter_mcft,
+    'pda': adapter_pda,
     'jmda_baseline': lambda: adapter_jmda('baseline'),
     'jmda_tensor_only': lambda: adapter_jmda('tensor_only'),
     'jmda_ot_only': lambda: adapter_jmda('ot_only'),
@@ -831,7 +717,7 @@ def main():
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--protocol', type=str, default='benchmark',
-                        choices=['UDA', 'SDA', 'VLM', 'benchmark'],
+                        choices=['UDA', 'SDA', 'Supervised', 'VLM', 'benchmark'],
                         help='Supervision protocol recorded in the output rows; '
                              'SDA/UDA results are kept in separate tables.')
     parser.add_argument('--target-labels-per-class', dest='target_labels_per_class',
@@ -899,11 +785,10 @@ def main():
         ('CDAN', 'CDAN/train_cdan.py', 'ResNetFc+AdversarialNet', 'ImageListDataset (VIS)'),
         ('MDD', 'MDD/train_mdd.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
         ('MCC', 'MCC/train_mcc.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
-        ('Boomda', 'Boomda/train_boomda_jmda.py', 'BoomdaJMDA', 'PairedMultimodalDataset (AIS disabled by default)'),
-        ('MODfinity*', 'Modfinity/train_modfinity.py', 'MODfinity', 'PairedMultimodalDataset (AIS disabled by default)'),
-        ('AD-CLIP', 'AD-CLIP/train_adclip.py', 'CustomCLIP(RN50)', 'ImageListDataset (VIS)'),
-        ('CoOp', 'CoOp/train_coop.py', 'CustomCLIP(RN50)', 'ImageListDataset (VIS)'),
-        ('TransAdapter', 'TransAdapter/train_transadapter.py', 'TransAdapter(Swin-T)', 'ImageListDataset (VIS)'),
+        ('CCSA', 'CCSA/train_ccsa.py', 'CCSA-CNN (Keras port)', 'ImageListDataset (VIS, SDA subset)'),
+        ('d-SNE', 'd-SNE/train_dsne.py', 'DSNE(ResNet-18 + 512 embed)', 'ImageListDataset (VIS, SDA subset)'),
+        ('MCFT', 'MCFT/train_mcft.py', 'MViT (VIS+IR)', 'PairedVisIrDataset (VIS+IR, 15x15)'),
+        ('PDA', 'PDA/train_pda.py', 'CustomCLIP(ViT-B/16)', 'ImageListDataset (VIS)'),
         ('JMDA-Net', os.path.join(JMDA_NET_DIR, 'Ablation', 'module_ablation.py'),
          'VisFeat+IRFeat+TAL+OTGen', 'MultiModalDomainDataset (VIS+IR)'),
     ]
