@@ -1,7 +1,9 @@
+nohup: 忽略输入
+[OK] JMDA reviewed code fingerprint: 7d95307f51fd4d5d
 协议=jmda_oracle_shared_uda 轮数=100 数据根=/mnt/data/lixiang/data/Data
 日志目录=/home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda
 生成所有方法共享的精确 VIS/IR 配对样本清单...
-[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261018_160218_978602
+[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261019_211434_12676
   backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
   backlight_train.txt: rows=113 sha256=2dee4a0ca188
   backlight_val.txt: rows=36 sha256=c670631f54c1
@@ -16,10 +18,9 @@
   rainy_val.txt: rows=26 sha256=fb713ee0fe84
   sunny_train.txt: rows=760 sha256=ff9110283d7f
 运行公共配置预检...
-[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261018_160218_978602/paired_protocol_manifest.json (13 lists)
+[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261019_211434_12676/paired_protocol_manifest.json (13 lists)
 [OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
-[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=20565/32102 MiB
-[OK] CUDA free-memory gate passed: 20565 MiB available >= 12288 MiB required
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=31564/32110 MiB
 [OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
 [OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
 [OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
@@ -37,14 +38,34 @@
 [OK] JMDA-Net entry: /home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py
 [OK] JMDA protocol semantics: ORACLE_SHARED_UDA; target labels are excluded from losses, but target class support is read for filtering
 [OK] server preflight passed
-JMDA加载参数: batch=32 workers=4 SVD_batch=32 prefetch=2 pin_memory=1
+运行 JMDA 协议接线门禁...
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 0.005s
+
+OK
+运行 JMDA Tensor/OT 数值门禁...
+............配对采样器已初始化，共 2 个共有类别；每个epoch覆盖全部 4 个目标样本，并按类别平衡扩展为 6 个训练观测。
+........../home/lixiang/lx/JMDA_Com/JMDA-Net/test_tensor_ot_invariants.py:1032: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  self.assertLess(float(details['marginal_residual']), 2e-4)
+.................
+----------------------------------------------------------------------
+Ran 39 tests in 0.226s
+
+OK
+JMDA加载参数: batch=32 workers=4 projection_dim=16 source_warmup=10 SVD_batch=32 prefetch=2 pin_memory=1
 >>> [jmda_net_oracle_shared_uda_backlight]
     done: jmda_net_oracle_shared_uda_backlight
+    protocol audit completed: jmda_net_oracle_shared_uda_backlight (JMDA log audit status: WARN)
 >>> [jmda_net_oracle_shared_uda_rainy]
     done: jmda_net_oracle_shared_uda_rainy
+    protocol audit completed: jmda_net_oracle_shared_uda_rainy (JMDA log audit status: WARN)
 >>> [jmda_net_oracle_shared_uda_foggy]
     done: jmda_net_oracle_shared_uda_foggy
+    protocol audit completed: jmda_net_oracle_shared_uda_foggy (JMDA log audit status: WARN)
 >>> [jmda_net_oracle_shared_uda_dark]
     done: jmda_net_oracle_shared_uda_dark
+    protocol audit completed: jmda_net_oracle_shared_uda_dark (JMDA log audit status: WARN)
 阶段结束（jmda_oracle_shared_uda）：失败任务数=0。
 全部任务成功（jmda_oracle_shared_uda）。
