@@ -13,13 +13,13 @@ def _iteration(index, total, final_accuracy=0.30, min_cosine=0.80):
         return (
             f"Epoch [{epoch}/4] | UDA pseudo-class pairing: "
             "target_label_source=source-prototype (no target ground truth), "
-            f"pseudo_feature_space={'native-pre-svd' if epoch == 1 else 'aligned-svd'}, "
-            "class_counts=[4, 2, 1, 1], coverage_repairs=1, "
-            "assigned_confidence=0.7000, repaired-vs-nearest agreement=0.8750, "
+            f"pseudo_feature_space={'native-pre-svd' if epoch == 2 else 'aligned-svd'}, "
+            "class_counts=[4, 2, 1, 1], coverage_repairs=0, "
+            "assigned_confidence=0.7000, repaired-vs-nearest agreement=1.0000, "
             "modality_source_bal_acc=[0.8, 0.6], modality_weights=[0.7, 0.3], "
             "modality_reliability_estimator=leave-one-out-source-prototypes, "
             f"change_rate={change_rate}, target_samples=8, "
-            "balanced_epoch_samples=16, training_batches=1"
+            "epoch_samples=8, training_batches=1"
         )
 
     return "\n".join(
@@ -29,18 +29,12 @@ def _iteration(index, total, final_accuracy=0.30, min_cosine=0.80):
             "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. classifier classes=4.",
             "Target training item label exposure: include_label=False; "
             "UDA must be False.",
-            pseudo(1, "n/a"),
-            (
-                "Epoch [1/4] | SVD update #1: pairs=80, sweeps=2, "
-                "effective_ranks=(64, 64), stabilized_null_dims=(0, 0), "
-                "rank_thresholds=(1e-5, 1e-5), "
-                "classifier_basis=shared, class_paired=True, class_balanced=True, "
-                "target_labels_source=pseudo"
-            ),
+            "Epoch [1/4] | UDA source-only warm-up: cross-domain "
+            "SVD/Tensor/OT updates are disabled.",
             "Epoch [1/4] | Loss: 1.0 (Cls: 1.0 [src/tgt/mid=1.0/0.0/0.0; labeled-target-observations=0], TAL: -0.1) | OT scale: 0.00 | Source Train Acc: 0.6000 | Val Acc: 0.2000 | Val P/R/F1 (Macro): 0.1000/0.2000/0.1300 | LR feature/other/discriminator: 5e-6/2e-4/2e-4",
-            pseudo(2, "0.2500"),
+            pseudo(2, "n/a"),
             (
-                "Epoch [2/4] | SVD update #2: pairs=80, sweeps=2, "
+                "Epoch [2/4] | SVD update #1: pairs=8, sweeps=2, "
                 "effective_ranks=(64, 64), stabilized_null_dims=(0, 0), "
                 "rank_thresholds=(1e-5, 1e-5), basis_overlap_src/tgt=0.9/0.9, "
                 f"basis_min_cos_src/tgt={min_cosine}/0.7, "
@@ -49,15 +43,15 @@ def _iteration(index, total, final_accuracy=0.30, min_cosine=0.80):
                 "shared_transport_ranks=(64, 64), "
                 "shared_transport_rank_thresholds=(1e-6, 1e-6), "
                 "classifier_basis=shared, basis_transport=legacy_supervised, "
-                "class_paired=True, class_balanced=True, "
+                "class_paired=True, class_balanced=False, "
                 "target_labels_source=pseudo"
             ),
             "Epoch [2/4] | Loss: 0.8 (Cls: 0.8 [src/tgt/mid=0.8/0.0/0.0; labeled-target-observations=0], TAL: -0.1) | OT scale: 0.00 | Source Train Acc: 0.8000 | Val Acc: 0.2500 | Val P/R/F1 (Macro): 0.2000/0.2500/0.2200 | LR feature/other/discriminator: 5e-6/2e-4/2e-4",
             pseudo(3, "0.1250"),
-            "Epoch [3/4] | SVD update #3: pairs=80, sweeps=2, effective_ranks=(64, 64), stabilized_null_dims=(0, 0), class_paired=True, class_balanced=True, target_labels_source=pseudo",
+            "Epoch [3/4] | SVD update #2: pairs=8, sweeps=2, effective_ranks=(64, 64), stabilized_null_dims=(0, 0), class_paired=True, class_balanced=False, target_labels_source=pseudo",
             "Epoch [3/4] | Loss: 0.7 (Cls: 0.7 [src/tgt/mid=0.7/0.0/0.1; labeled-target-observations=0], TAL: -0.1) | OT scale: 0.00 | Source Train Acc: 0.7800 | Val Acc: 0.2600 | Val P/R/F1 (Macro): 0.2400/0.2600/0.2500 | LR feature/other/discriminator: 5e-6/2e-4/2e-4",
             pseudo(4, "0.0000"),
-            "Epoch [4/4] | SVD update #4: pairs=80, sweeps=2, effective_ranks=(64, 64), stabilized_null_dims=(0, 0), class_paired=True, class_balanced=True, target_labels_source=pseudo",
+            "Epoch [4/4] | SVD update #3: pairs=8, sweeps=2, effective_ranks=(64, 64), stabilized_null_dims=(0, 0), class_paired=True, class_balanced=False, target_labels_source=pseudo",
             f"Epoch [4/4] | Loss: 0.6 (Cls: 0.6 [src/tgt/mid=0.6/0.0/0.0; labeled-target-observations=0], TAL: -0.1) | OT scale: 0.00 | Source Train Acc: 0.8200 | Val Acc: {final_accuracy:.4f} | Val P/R/F1 (Macro): 0.3100/0.3200/0.3150 | LR feature/other/discriminator: 5e-6/2e-4/2e-4",
             f"Report strategy: last, window=10, reported_acc={final_accuracy:.4f}; target-label best checkpoint is not selected or reported in UDA.",
             "Saved final checkpoint: checkpoint.pth",
@@ -72,11 +66,13 @@ def _log(iterations=2, final_accuracy=0.30, min_cosine=0.80):
         "label_space_mode": "oracle_shared",
         "report_strategy": "last",
         "projection_dim": 64,
-        "uda_source_warmup_epochs": 0,
+        "uda_source_warmup_epochs": 1,
         "uda_pairing_mode": "source_prototype_pseudo_class",
         "target_ground_truth_used_for_pairing": False,
         "target_training_item_labels_exposed": False,
         "target_train_samples": 8,
+        "target_training_data_source": "label_free_pair_manifest",
+        "target_pair_manifest_sha256": "0" * 64,
         "visual_finetuning_mode": "legacy_supervised",
         "adaptive_sinkhorn": False,
         "transport_mode": "sinkhorn",
@@ -170,7 +166,7 @@ class JmdaLogAuditTests(unittest.TestCase):
             text,
             expected_protocol="ORACLE_SHARED_UDA",
             expected_projection_dim=64,
-            expected_warmup_epochs=0,
+            expected_warmup_epochs=1,
             expected_total_epochs=4,
             expected_code_fingerprint=expected_code_fingerprint,
             expected_num_iterations=expected_num_iterations,
@@ -255,16 +251,30 @@ class JmdaLogAuditTests(unittest.TestCase):
             )
         )
 
-    def test_pseudo_class_counts_must_cover_classifier_and_target_samples(self):
+    def test_oracle_summary_requires_label_free_target_pair_manifest(self):
         corrupted = _log(iterations=1).replace(
-            "class_counts=[4, 2, 1, 1]",
-            "class_counts=[8, 0, 0, 0]",
+            '"target_training_data_source": "label_free_pair_manifest"',
+            '"target_training_data_source": "labelled_filesystem_dataset"',
         )
         result = self.audit(corrupted)
         self.assertEqual(result["status"], "FAIL")
         self.assertTrue(
             any(
-                "invalid pseudo class_counts" in error
+                "label-free pair manifest" in error
+                for error in result["protocol_errors"]
+            )
+        )
+
+    def test_pseudo_class_counts_must_match_classifier_and_target_samples(self):
+        corrupted = _log(iterations=1).replace(
+            "class_counts=[4, 2, 1, 1]",
+            "class_counts=[7, 0, 0, 0]",
+        )
+        result = self.audit(corrupted)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(
+            any(
+                "pseudo counts do not sum" in error
                 for error in result["protocol_errors"]
             )
         )

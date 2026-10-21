@@ -23,7 +23,9 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
-PROGRESS_RE = re.compile(r'Epoch \[(\d+)/(\d+)\] iter \[\d+/\d+\]\s+(.*)$')
+# 兼容两种训练日志格式：tllib 系（MDD/MCC）用 "iter [i/n]"，
+# 其余方法（DANN/DeepCORAL/CDAN/PDA）用 "batch [i/n]"。
+PROGRESS_RE = re.compile(r'Epoch \[(\d+)/(\d+)\] (?:iter|batch) \[\d+/\d+\]\s+(.*)$')
 ACC_RE = re.compile(r'^Epoch \[(\d+)/\d+\] target val accuracy:\s*([0-9.]+)')
 PRF_RE = re.compile(
     r'Val Precision \(Macro\):\s*([0-9.]+)\s*\|\s*'
@@ -31,7 +33,8 @@ PRF_RE = re.compile(
     r'Val F1 \(Macro\):\s*([0-9.]+)\s*\|\s*'
     r'Val class coverage:\s*(\d+)/(\d+)'
 )
-KV_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)=(-?[0-9.]+)')
+# 数值支持科学计数法（如 lr=9.93e-04）
+KV_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)=(-?[0-9][0-9.]*(?:[eE][+-]?[0-9]+)?)')
 FINAL_RE = re.compile(r'^Final target val accuracy.*?:\s*([0-9.]+)')
 PEAK_RE = re.compile(r'^Diagnostic peak target val accuracy.*?:\s*([0-9.]+)')
 SPLIT_RE = re.compile(r'Source train:\s*(\d+),\s*target train:\s*(\d+),\s*target val:\s*(\d+)')
@@ -236,6 +239,8 @@ def main():
         })
 
     loss_columns = sorted(k for k in loss_keys if k not in META_COLUMNS and k != 'epoch')
+    # 画 loss 面板时排除准确率类键（src_acc/acc_x 量纲是 0-100 或 0-1，会把损失线压扁）
+    plot_columns = [k for k in loss_columns if 'acc' not in k.lower()]
     all_fields = ['method', 'target', 'seed', 'epoch'] \
         + [c for c in META_COLUMNS if any(c in r for r in all_rows)] + loss_columns
     write_csv(out_dir / 'all_epochs.csv', all_rows, all_fields)
@@ -244,7 +249,7 @@ def main():
 
     plot_count = 0
     if not args.no_plots:
-        plot_count = make_plots(series, out_dir / 'plots', loss_columns)
+        plot_count = make_plots(series, out_dir / 'plots', plot_columns)
 
     print(f'parsed {parsed} logs from {logs_dir}')
     print(f'  per-run curves : {out_dir / "curves"}')

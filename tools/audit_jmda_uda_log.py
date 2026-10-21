@@ -346,7 +346,7 @@ def audit_text(
             for svd_epoch, _, _, tail in svd_records:
                 for required in (
                     "class_paired=True",
-                    "class_balanced=True",
+                    "class_balanced=False",
                     "target_labels_source=pseudo",
                 ):
                     if required not in tail:
@@ -362,7 +362,9 @@ def audit_text(
             observed_pseudo_epochs = [
                 int(epoch) for epoch, _, _ in pseudo_pair_records
             ]
-            expected_pseudo_epochs = list(range(1, expected_total_epochs + 1))
+            expected_pseudo_epochs = list(
+                range(expected_warmup_epochs + 1, expected_total_epochs + 1)
+            )
             if observed_pseudo_epochs != expected_pseudo_epochs:
                 errors.append(
                     f"iteration {iteration_index}: pseudo-pairing epochs expected "
@@ -382,7 +384,7 @@ def audit_text(
                     "leave-one-out-source-prototypes",
                     "change_rate=",
                     "target_samples=",
-                    "balanced_epoch_samples=",
+                    "epoch_samples=",
                     "training_batches=",
                 ):
                     if required not in tail:
@@ -392,7 +394,7 @@ def audit_text(
                         )
                 expected_pseudo_space = (
                     "native-pre-svd"
-                    if int(pseudo_epoch) == 1
+                    if int(pseudo_epoch) == expected_warmup_epochs + 1
                     else "aligned-svd"
                 )
                 if (
@@ -411,9 +413,9 @@ def audit_text(
                     tail,
                     "repaired-vs-nearest agreement",
                 )
-                balanced_epoch_samples = _parse_int_field(
+                epoch_samples = _parse_int_field(
                     tail,
-                    "balanced_epoch_samples",
+                    "epoch_samples",
                 )
                 training_batches = _parse_int_field(tail, "training_batches")
                 modality_accuracies = _parse_float_list_field(
@@ -427,7 +429,7 @@ def audit_text(
                 if (
                     class_counts is None
                     or not class_counts
-                    or any(count < 1 for count in class_counts)
+                    or any(count < 0 for count in class_counts)
                 ):
                     errors.append(
                         f"iteration {iteration_index}, epoch {pseudo_epoch}: "
@@ -449,30 +451,15 @@ def audit_text(
                             "pseudo counts do not sum to target_samples: "
                             f"counts={class_counts}, target_samples={target_samples}"
                         )
-                    expected_balanced_samples = max(class_counts) * len(class_counts)
-                    if balanced_epoch_samples != expected_balanced_samples:
+                    if epoch_samples != target_samples:
                         errors.append(
                             f"iteration {iteration_index}, epoch {pseudo_epoch}: "
-                            "balanced_epoch_samples mismatch: expected "
-                            f"{expected_balanced_samples}, found "
-                            f"{balanced_epoch_samples}"
-                        )
-                    if (
-                        target_samples
-                        and expected_balanced_samples / target_samples > 4.0
-                    ):
-                        warnings.append(
-                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
-                            "pseudo-class balancing expands target exposure by "
-                            f"{expected_balanced_samples / target_samples:.2f}x"
+                            "epoch_samples must equal target_samples without "
+                            f"pseudo-label oversampling: {epoch_samples} != "
+                            f"{target_samples}"
                         )
                 if (
-                    coverage_repairs is None
-                    or coverage_repairs < 0
-                    or (
-                        summary_class_count
-                        and coverage_repairs >= summary_class_count
-                    )
+                    coverage_repairs != 0
                 ):
                     errors.append(
                         f"iteration {iteration_index}, epoch {pseudo_epoch}: "
@@ -482,11 +469,8 @@ def audit_text(
                     target_samples
                     and coverage_repairs is not None
                     and agreement is not None
-                    and not math.isclose(
-                        agreement,
-                        1.0 - coverage_repairs / target_samples,
-                        abs_tol=DISPLAYED_METRIC_TOLERANCE,
-                    )
+                    and not math.isclose(agreement, 1.0,
+                                         abs_tol=DISPLAYED_METRIC_TOLERANCE)
                 ):
                     errors.append(
                         f"iteration {iteration_index}, epoch {pseudo_epoch}: "
@@ -535,9 +519,9 @@ def audit_text(
                     if isinstance(summary.get("data_loading"), dict)
                     else None
                 )
-                if balanced_epoch_samples and summary_batch_size:
+                if epoch_samples and summary_batch_size:
                     expected_batches = _expected_training_batches_without_singleton(
-                        balanced_epoch_samples,
+                        epoch_samples,
                         summary_batch_size,
                     )
                     if training_batches != expected_batches:
@@ -719,11 +703,12 @@ def audit_text(
                     f"iteration {iteration_index}, epoch {schedule_epoch}: "
                     "OT/LR total-epoch denominator mismatch"
                 )
-            if schedule_epoch <= ot_warmup_epochs:
+            effective_ot_warmup = ot_warmup_epochs + expected_warmup_epochs
+            if schedule_epoch <= effective_ot_warmup:
                 expected_ot_scale = 0.0
             else:
                 expected_ot_scale = min(
-                    (schedule_epoch - ot_warmup_epochs) / ot_ramp_epochs,
+                    (schedule_epoch - effective_ot_warmup) / ot_ramp_epochs,
                     1.0,
                 )
             if not math.isclose(
@@ -953,6 +938,26 @@ def audit_text(
             errors.append("oracle summary is missing oracle_shared_labels")
         if not oracle_expected and oracle_labels not in ([], None):
             errors.append("strict UDA summary contains oracle_shared_labels")
+        target_data_source = summary.get("target_training_data_source")
+        pair_manifest_sha256 = summary.get("target_pair_manifest_sha256")
+        if oracle_expected:
+            if target_data_source != "label_free_pair_manifest":
+                errors.append(
+                    "oracle target training data must come from a label-free "
+                    "pair manifest"
+                )
+            if not isinstance(pair_manifest_sha256, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", pair_manifest_sha256
+            ):
+                errors.append(
+                    "oracle summary is missing a valid label-free pair "
+                    "manifest sha256"
+                )
+        elif pair_manifest_sha256 not in (None, ""):
+            errors.append(
+                "strict UDA summary unexpectedly contains an oracle pair "
+                "manifest fingerprint"
+            )
         if pseudo_paired and not oracle_expected:
             errors.append(
                 "source-prototype pseudo pairing is currently restricted to "

@@ -58,6 +58,86 @@ class PairedModalTransform:
         )
 
 
+class LabelFreePairedTargetDataset(torch.utils.data.Dataset):
+    """Target-training VIS/IR pairs prepared without per-sample class labels."""
+
+    def __init__(
+        self,
+        pair_list_path,
+        num_classes,
+        deterministic_transform=False,
+    ):
+        self.samples = []
+        with open(pair_list_path, "r", encoding="utf-8") as handle:
+            for line_number, raw in enumerate(handle, 1):
+                line = raw.rstrip("\r\n")
+                if not line:
+                    continue
+                fields = line.split("\t")
+                if len(fields) != 2 or not all(fields):
+                    raise ValueError(
+                        "Invalid label-free target pair at "
+                        f"{pair_list_path}:{line_number}."
+                    )
+                vis_path, ir_path = fields
+                if os.path.splitext(os.path.basename(vis_path))[0] != (
+                    os.path.splitext(os.path.basename(ir_path))[0]
+                ):
+                    raise ValueError(
+                        "Label-free target pair has mismatched filename stems at "
+                        f"{pair_list_path}:{line_number}."
+                    )
+                if not os.path.isfile(vis_path) or not os.path.isfile(ir_path):
+                    raise FileNotFoundError(
+                        "Label-free target pair is missing an image at "
+                        f"{pair_list_path}:{line_number}."
+                    )
+                self.samples.append({"vis": vis_path, "ir": ir_path})
+        if not self.samples:
+            raise ValueError(f"Label-free target pair list is empty: {pair_list_path}")
+
+        self.labels = None
+        self.unique_labels = []
+        self.label_map = None
+        self.num_classes = int(num_classes)
+        self.include_label = False
+        self.domain_label = 1
+        self.phase = "train"
+        self.val_augment = False
+        self.deterministic_transform = bool(deterministic_transform)
+        self.pairing_stats = {
+            "source": "independent_label_free_pair_manifest",
+            "selected_phase_pairs_before_filter": len(self.samples),
+            "filtered_out_pairs": 0,
+            "selected_phase_pairs": len(self.samples),
+            "retained_original_labels": "withheld_from_training_dataset",
+        }
+        self.paired_transform = PairedModalTransform(
+            phase="val" if self.deterministic_transform else "train",
+            val_augment=False,
+        )
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        sample = self.samples[index]
+        try:
+            vis_img = Image.open(sample["vis"]).convert("RGB")
+            ir_img = Image.open(sample["ir"]).convert("L").convert("RGB")
+        except (OSError, ValueError) as error:
+            raise RuntimeError(
+                "Failed to load a label-free exact VIS/IR pair: "
+                f"index={index}, vis={sample['vis']!r}, ir={sample['ir']!r}."
+            ) from error
+        vis_tensor, ir_tensor = self.paired_transform(vis_img, ir_img)
+        return {
+            "vis": vis_tensor,
+            "ir": ir_tensor,
+            "domain_label": self.domain_label,
+        }
+
+
 class PairedMultiModalDomainDataset(MultiModalDomainDataset):
     """Match modalities by filename stem and apply paired transformations."""
 
@@ -277,5 +357,6 @@ class PairedMultiModalDomainDataset(MultiModalDomainDataset):
 __all__ = [
     "PairedModalTransform",
     "PairedMultiModalDomainDataset",
+    "LabelFreePairedTargetDataset",
     "filter_samples_by_original_labels",
 ]

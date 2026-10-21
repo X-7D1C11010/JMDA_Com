@@ -18,7 +18,7 @@
 #   JMDA_BATCH_SIZE  JMDA UDA 训练批次（默认 32）
 #   JMDA_NUM_WORKERS JMDA UDA DataLoader worker 数（默认 0）
 #   JMDA_PROJECTION_DIM  JMDA Tensor/SVD 每模态投影维度（默认 64；匹配监督参考）
-#   JMDA_UDA_SOURCE_WARMUP_EPOCHS  纯源域预热轮数（默认 0；从epoch 1执行Tensor/SVD）
+#   JMDA_UDA_SOURCE_WARMUP_EPOCHS  纯源域预热轮数（默认 10；之后才估计伪对应）
 #   JMDA_SVD_STAT_BATCH_SIZE  JMDA UDA SVD 特征统计批次（默认 128；匹配监督日志）
 #   JMDA_PREFETCH_FACTOR  每个 worker 的预取批次数（默认 2；workers=0 时不启用）
 #   JMDA_PIN_MEMORY  是否为 JMDA UDA DataLoader 启用 pinned memory（0/1，默认 1）
@@ -52,7 +52,7 @@ JMDA_NUM_ITERATIONS="${JMDA_NUM_ITERATIONS:-5}"
 JMDA_BATCH_SIZE="${JMDA_BATCH_SIZE:-32}"
 JMDA_NUM_WORKERS="${JMDA_NUM_WORKERS:-0}"
 JMDA_PROJECTION_DIM="${JMDA_PROJECTION_DIM:-64}"
-JMDA_UDA_SOURCE_WARMUP_EPOCHS="${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-0}"
+JMDA_UDA_SOURCE_WARMUP_EPOCHS="${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-10}"
 JMDA_SVD_STAT_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-128}"
 JMDA_PREFETCH_FACTOR="${JMDA_PREFETCH_FACTOR:-2}"
 JMDA_PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
@@ -60,7 +60,7 @@ JMDA_RUN_INVARIANT_TESTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="8e8e481c4fae1320"
+JMDA_EXPECTED_CODE_FINGERPRINT="94c6a030bec6a792"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 
 require_positive_integer() {
@@ -99,8 +99,8 @@ if [[ "$PROTOCOL" = "jmda_uda" || "$PROTOCOL" = "jmda_oracle_shared_uda" ]]; the
     exit 1
   fi
   if [[ "$PROTOCOL" = "jmda_oracle_shared_uda" ]] \
-      && (( JMDA_UDA_SOURCE_WARMUP_EPOCHS != 0 )); then
-    echo "jmda_oracle_shared_uda 严格复现监督 Tensor/SVD 日程，JMDA_UDA_SOURCE_WARMUP_EPOCHS 必须为 0: $JMDA_UDA_SOURCE_WARMUP_EPOCHS"
+      && (( JMDA_UDA_SOURCE_WARMUP_EPOCHS != 10 )); then
+    echo "jmda_oracle_shared_uda 在建立目标伪对应前固定进行10轮源域预热: $JMDA_UDA_SOURCE_WARMUP_EPOCHS"
     exit 1
   fi
   require_positive_integer "JMDA_SVD_STAT_BATCH_SIZE" "$JMDA_SVD_STAT_BATCH_SIZE"
@@ -112,8 +112,8 @@ if [[ "$PROTOCOL" = "jmda_uda" || "$PROTOCOL" = "jmda_oracle_shared_uda" ]]; the
     echo "可通过 JMDA_NUM_WORKERS/JMDA_PREFETCH_FACTOR/JMDA_PIN_MEMORY 提速，但不要改变优化批次或SVD参考配置。"
     exit 1
   fi
-  if [[ "$PROTOCOL" = "jmda_oracle_shared_uda" ]] && (( EPOCHS < 15 )); then
-    echo "jmda_oracle_shared_uda 至少需要15轮，才能完成10轮Tensor/SVD预热和5轮OT权重爬升: epochs=$EPOCHS"
+  if [[ "$PROTOCOL" = "jmda_oracle_shared_uda" ]] && (( EPOCHS < 25 )); then
+    echo "jmda_oracle_shared_uda 至少需要25轮，才能完成10轮源域预热、10轮Tensor/SVD预热和5轮OT权重爬升: epochs=$EPOCHS"
     exit 1
   fi
   require_positive_integer "JMDA_PREFETCH_FACTOR" "$JMDA_PREFETCH_FACTOR"
@@ -385,7 +385,7 @@ elif [ "$PROTOCOL" = "jmda_uda" ]; then
   done
 
 elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
-  # ---- 共同类别支持 Oracle：读取目标训练类支持，仅作 partial-set 负迁移诊断 ----
+  # ---- 共同类别支持 Oracle：独立预处理清单提供类支持，仅作 partial-set 负迁移诊断 ----
   # 该协议使用独立日志/结果/checkpoint，严禁并入严格 UDA 主表。
   echo "JMDA加载参数: batch=$JMDA_BATCH_SIZE workers=$JMDA_NUM_WORKERS projection_dim=$JMDA_PROJECTION_DIM source_warmup=$JMDA_UDA_SOURCE_WARMUP_EPOCHS SVD_batch=$JMDA_SVD_STAT_BATCH_SIZE prefetch=$JMDA_PREFETCH_FACTOR pin_memory=$JMDA_PIN_MEMORY"
   for t in "${TARGETS[@]}"; do
@@ -395,6 +395,15 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
       foggy)     target_cn="雾天" ;;
       dark)      target_cn="黑天" ;;
     esac
+    if ! oracle_shared_labels="$(
+      "$PYTHON" "$HERE/tools/read_target_class_support.py" \
+        --manifest "$FAIR_LIST_DIR/paired_protocol_manifest.json" \
+        --target "$t"
+    )"; then
+      echo "无法从独立配对清单读取 $t 的目标类别支持；未启动该任务。"
+      exit 1
+    fi
+    echo "目标域 $t 独立类别支持(original ids)=$oracle_shared_labels"
     run "jmda_net_oracle_shared_uda_$t" bash -c \
       "cd '$JMDA_NET_DIR' && '$PYTHON' Ablation/module_ablation.py \
          --source_root '$DATA_ROOT/晴天' --target_root '$DATA_ROOT/$target_cn' \
@@ -414,7 +423,10 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
          --lr_feature 5e-6 --lr_other 2e-4 --weight_decay 5e-4 \
          --class_conditional_ot --balance_svd_classes \
          --target_label_ratio 0 --target_cls_weight 0 \
-         --label_space_mode oracle_shared --uda_pseudo_class_pairing \
+         --label_space_mode oracle_shared \
+         --oracle_shared_labels '$oracle_shared_labels' \
+         --target_train_pair_list '$FAIR_LIST_DIR/${t}_train_pairs.tsv' \
+         --uda_pseudo_class_pairing \
          --visual_finetuning_mode legacy_supervised \
          --no_sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \

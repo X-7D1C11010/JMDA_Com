@@ -76,8 +76,9 @@ def main():
                         help='inv 调度参数 γ（原参考实现 0.001）')
     parser.add_argument('--lr-decay', type=float, default=0.75,
                         help='inv 调度参数 power（原参考实现 0.75）')
-    parser.add_argument('--method', type=str, default='CDAN',
-                        choices=['CDAN', 'CDAN+E'])
+    parser.add_argument('--method', type=str, default='CDAN+E',
+                        choices=['CDAN', 'CDAN+E'],
+                        help='原参考实现 train_image.py:198 默认 CDAN+E（熵条件化，论文最优变体）')
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists'))

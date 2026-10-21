@@ -40,6 +40,12 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--label_space_mode partial_set", strict_block)
         self.assertNotIn("oracle_shared", strict_block)
         self.assertIn("--label_space_mode oracle_shared", oracle_block)
+        self.assertIn("--oracle_shared_labels '$oracle_shared_labels'", oracle_block)
+        self.assertIn(
+            "--target_train_pair_list '$FAIR_LIST_DIR/${t}_train_pairs.tsv'",
+            oracle_block,
+        )
+        self.assertIn("tools/read_target_class_support.py", oracle_block)
         self.assertIn("--uda_pseudo_class_pairing", oracle_block)
         self.assertIn("--visual_finetuning_mode legacy_supervised", oracle_block)
         self.assertIn("--no_sync_discriminator_lr", oracle_block)
@@ -95,6 +101,8 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("source_prototype_pseudo_class", self.module)
         self.assertIn("target_ground_truth_used_for_pairing", self.module)
         self.assertIn("prototype_pseudo_label_assignment", self.module)
+        self.assertIn("parse_original_label_csv", self.module)
+        self.assertIn("LabelFreePairedTargetDataset", self.module)
         self.assertIn("include_label=(protocol != 'UDA')", self.module)
         self.assertIn("leave-one-out-source-prototypes", self.module)
         self.assertIn("pseudo_projection_ready", self.module)
@@ -119,7 +127,7 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         )
         self.assertIn(
             'JMDA_UDA_SOURCE_WARMUP_EPOCHS="'
-            '${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-0}"',
+            '${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-10}"',
             self.launcher,
         )
         self.assertIn(
@@ -130,13 +138,13 @@ class JmdaProtocolWiringTests(unittest.TestCase):
             "JMDA_UDA_SOURCE_WARMUP_EPOCHS >= EPOCHS",
             self.launcher,
         )
-        self.assertIn('EPOCHS < 15', self.launcher)
+        self.assertIn('EPOCHS < 25', self.launcher)
         self.assertIn(
-            'args.epochs < args.ot_warmup_epochs + args.ot_ramp_epochs',
+            'args.uda_source_warmup_epochs',
             self.module,
         )
         self.assertIn(
-            "严格复现监督 Tensor/SVD 日程",
+            "固定进行10轮源域预热",
             self.launcher,
         )
         self.assertIn(

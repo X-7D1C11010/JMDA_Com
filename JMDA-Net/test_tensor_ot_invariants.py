@@ -36,6 +36,7 @@ from Ablation.module_ablation import (
     transport_projected_feature_basis,
 )
 from Ablation.paired_dataset import (
+    LabelFreePairedTargetDataset,
     PairedModalTransform,
     PairedMultiModalDomainDataset,
     filter_samples_by_original_labels,
@@ -339,10 +340,11 @@ class EpochPairingTests(unittest.TestCase):
                 torch.equal(source_batch["label"], target_batch["pseudo_label"])
             )
 
-        # 5 * max_count(13) = 65 balanced observations. A naive ceil split
-        # would be 32/32/1 and crash the OT BatchNorm on the singleton.
-        self.assertEqual(batch_sizes, [32, 33])
+        # Every target sample appears once. The natural pseudo distribution is
+        # not expanded to 5 * max_count(13) = 65 observations.
+        self.assertEqual(batch_sizes, [32, 15])
         self.assertEqual(len(sampler), 2)
+        self.assertEqual(sampler.epoch_sample_count, len(target))
         self.assertEqual(observed_target_indices, set(range(len(target))))
 
     def test_pseudo_svd_pairing_uses_override_not_target_truth(self):
@@ -364,7 +366,7 @@ class EpochPairingTests(unittest.TestCase):
             )
         )
 
-    def test_prototype_assignment_preserves_nearest_distribution_and_repairs_coverage(self):
+    def test_prototype_assignment_preserves_nearest_distribution_without_repairs(self):
         scores = torch.tensor(
             [
                 [9.0, 1.0, 0.0],
@@ -379,16 +381,16 @@ class EpochPairingTests(unittest.TestCase):
         nearest = scores.argmax(dim=1)
         labels, info = prototype_pseudo_label_assignment(scores)
         self.assertEqual(labels.numel(), 7)
-        self.assertEqual(set(labels.tolist()), {0, 1, 2})
-        self.assertEqual(info["repaired_count"], 1)
-        self.assertEqual(int(labels.ne(nearest).sum()), 1)
+        self.assertEqual(set(labels.tolist()), {0, 1})
+        self.assertEqual(info["repaired_count"], 0)
+        self.assertTrue(torch.equal(labels, nearest))
         self.assertTrue(
             torch.equal(
                 torch.bincount(labels, minlength=3),
                 info["class_counts"],
             )
         )
-        self.assertGreater(int(info["class_counts"].max()), 3)
+        self.assertEqual(info["class_counts"].tolist(), [5, 2, 0])
 
     def test_prototype_inference_keeps_natural_counts_and_downweights_weak_modality(self):
         source = _PrototypeDataset(
@@ -496,6 +498,35 @@ class EpochPairingTests(unittest.TestCase):
             )
 
             self.assertIsNone(dataset.labels)
+            self.assertNotIn("label", dataset.samples[0])
+            self.assertNotIn("label", dataset[0])
+
+    def test_oracle_target_training_loader_consumes_only_label_free_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vis_path = root / "sample.png"
+            ir_path = root / "sample_ir.png"
+            # Exact-pair manifests require the same stem, so place modalities
+            # in separate folders as in the real dataset.
+            vis_path = root / "可见光" / "sample.png"
+            ir_path = root / "红外" / "sample.png"
+            vis_path.parent.mkdir(parents=True)
+            ir_path.parent.mkdir(parents=True)
+            image = Image.new("RGB", (32, 32), color=(64, 96, 128))
+            image.save(vis_path)
+            image.save(ir_path)
+            pair_list = root / "target_pairs.tsv"
+            pair_list.write_text(
+                f"{vis_path}\t{ir_path}\n",
+                encoding="utf-8",
+            )
+
+            dataset = LabelFreePairedTargetDataset(
+                pair_list,
+                num_classes=3,
+            )
+            self.assertIsNone(dataset.labels)
+            self.assertEqual(dataset.num_classes, 3)
             self.assertNotIn("label", dataset.samples[0])
             self.assertNotIn("label", dataset[0])
 

@@ -110,6 +110,17 @@ def write_list(path, samples, label_map):
     }
 
 
+def write_unlabeled_pair_list(path, samples):
+    """Write exact target-training pairs without any class field."""
+    lines = [f'{vis}\t{ir}' for vis, ir, _ in samples]
+    payload = ('\n'.join(lines) + '\n').encode('utf-8')
+    path.write_bytes(payload)
+    return {
+        'rows': len(lines),
+        'sha256': hashlib.sha256(payload).hexdigest(),
+    }
+
+
 def write_sda_subset(path, target_train, label_map, shots, seed):
     by_label = defaultdict(list)
     for sample in target_train:
@@ -156,6 +167,8 @@ def main():
         'label_map': label_map,
         'cohort_rule': 'exact VIS/IR stem match over train+val union; stable hash split',
         'lists': {},
+        'unlabeled_pair_lists': {},
+        'target_class_support': {},
         'pairing_stats': {
             'sunny_train': source_train_stats,
             'sunny_val': source_val_stats,
@@ -169,10 +182,36 @@ def main():
         root = data_root / TARGET_DIRS[target]
         target_train, train_stats = exact_paired_split(root, 'target', 'train')
         target_val, val_stats = exact_paired_split(root, 'target', 'val')
+        train_support = sorted({sample[2] for sample in target_train})
+        val_support = sorted({sample[2] for sample in target_val})
+        if train_support != val_support:
+            raise ValueError(
+                f'{target} train/val class support mismatch: '
+                f'train={train_support}, val={val_support}'
+            )
+        unknown = sorted(set(train_support) - set(label_map))
+        if unknown:
+            raise ValueError(
+                f'{target} contains classes absent from source: {unknown}'
+            )
+        manifest['target_class_support'][target] = {
+            'original_labels': train_support,
+            'compact_label_map': {
+                str(label): index for index, label in enumerate(train_support)
+            },
+            'train_samples': len(target_train),
+            'val_samples': len(target_val),
+        }
         manifest['pairing_stats'][f'{target}_train'] = train_stats
         manifest['pairing_stats'][f'{target}_val'] = val_stats
         manifest['lists'][f'{target}_train.txt'] = write_list(
             output_dir / f'{target}_train.txt', target_train, label_map
+        )
+        manifest['unlabeled_pair_lists'][f'{target}_train_pairs.tsv'] = (
+            write_unlabeled_pair_list(
+                output_dir / f'{target}_train_pairs.tsv',
+                target_train,
+            )
         )
         manifest['lists'][f'{target}_val.txt'] = write_list(
             output_dir / f'{target}_val.txt', target_val, label_map
@@ -193,6 +232,11 @@ def main():
     print(f'[OK] prepared exact-paired protocol lists: {output_dir}')
     for name, details in sorted(manifest['lists'].items()):
         print(f"  {name}: rows={details['rows']} sha256={details['sha256'][:12]}")
+    for name, details in sorted(manifest['unlabeled_pair_lists'].items()):
+        print(
+            f"  {name}: rows={details['rows']} "
+            f"sha256={details['sha256'][:12]} (label-free)"
+        )
 
 
 if __name__ == '__main__':

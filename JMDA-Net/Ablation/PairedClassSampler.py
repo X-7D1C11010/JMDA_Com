@@ -131,13 +131,14 @@ class PairedClassSampler:
 
 
 class PseudoPairedClassSampler:
-    """Class-balanced UDA pairing driven only by target pseudo labels.
+    """One-pass UDA pairing driven only by target pseudo labels.
 
     Target ground-truth labels are deliberately never inspected here.  Source
     labels are mapped into the classifier's contiguous label space and paired
     with externally inferred target pseudo labels in that same space.  Every
-    returned source/target row therefore has the same *pseudo* class, which is
-    the label-free analogue of :class:`PairedClassSampler`.
+    returned source/target row therefore has the same *pseudo* class.  Unlike
+    supervised class balancing, uncertain pseudo classes are not oversampled:
+    every target observation appears exactly once per epoch.
     """
 
     def __init__(
@@ -175,10 +176,12 @@ class PseudoPairedClassSampler:
         self.classes = sorted(self.tgt_indices)
         if expected_classes is not None:
             expected = sorted({int(label) for label in expected_classes})
-            if self.classes != expected:
+            unexpected = sorted(set(self.classes) - set(expected))
+            if unexpected:
                 raise ValueError(
-                    "Pseudo-label assignment must cover the complete configured "
-                    f"class space: expected {expected}, found {self.classes}."
+                    "Pseudo-label assignment contains classes outside the "
+                    f"configured space: expected subset of {expected}, found "
+                    f"{unexpected}."
                 )
         missing_source_classes = sorted(set(self.classes) - set(self.src_indices))
         if missing_source_classes:
@@ -187,10 +190,8 @@ class PseudoPairedClassSampler:
                 f"from the source domain: {missing_source_classes}."
             )
 
-        self.samples_per_class = max(
-            len(self.tgt_indices[class_label]) for class_label in self.classes
-        )
-        self.epoch_sample_count = self.samples_per_class * len(self.classes)
+        self.samples_per_class = None
+        self.epoch_sample_count = len(self.tgt_ds)
 
     @staticmethod
     def _build_mapped_source_index(dataset):
@@ -207,12 +208,7 @@ class PseudoPairedClassSampler:
         return indices
 
     def __iter__(self):
-        target_order = []
-        for class_label in self.classes:
-            pool = list(self.tgt_indices[class_label])
-            random.shuffle(pool)
-            repeats, remainder = divmod(self.samples_per_class, len(pool))
-            target_order.extend(pool * repeats + pool[:remainder])
+        target_order = list(range(len(self.tgt_ds)))
         random.shuffle(target_order)
 
         source_pools = {}

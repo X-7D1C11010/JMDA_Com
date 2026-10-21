@@ -19,6 +19,7 @@ from collections import Counter
 
 try:
     from .paired_dataset import (
+        LabelFreePairedTargetDataset,
         PairedMultiModalDomainDataset as MultiModalDomainDataset,
     )
     from .PairedClassSampler import (
@@ -28,6 +29,7 @@ try:
 except ImportError:
     # Direct execution: python Ablation/module_ablation.py
     from paired_dataset import (
+        LabelFreePairedTargetDataset,
         PairedMultiModalDomainDataset as MultiModalDomainDataset,
     )
     from PairedClassSampler import (
@@ -674,6 +676,23 @@ def derive_oracle_shared_labels(source_labels, target_labels):
     return shared_labels
 
 
+def parse_original_label_csv(value):
+    """Parse a preprocessing-supplied original-label support.
+
+    The oracle/shared-label diagnostic must not discover target class support
+    inside the optimization process.  A separate cohort-preparation step owns
+    that operation and passes only the selected original class ids here.
+    """
+    tokens = [token.strip() for token in str(value or "").split(",")]
+    labels = sorted({int(token) for token in tokens if token})
+    if not labels:
+        raise ValueError(
+            "oracle_shared requires a non-empty preprocessing-supplied "
+            "--oracle_shared_labels list."
+        )
+    return labels
+
+
 def build_compact_label_map(original_labels):
     """Map an explicitly selected original label space to contiguous ids."""
     labels = sorted(set(map(int, original_labels)))
@@ -778,72 +797,29 @@ def assert_matching_sample_order(training_dataset, deterministic_dataset, name):
 
 
 def prototype_pseudo_label_assignment(class_scores):
-    """Assign nearest-prototype labels with the smallest possible repair.
+    """Assign the nearest source prototype without inventing class coverage.
 
-    The supervised sampler preserves the observed target class distribution
-    and *then* balances classes by resampling.  Forcing the pseudo labels
-    themselves to an ``N / K`` distribution changes many semantic assignments
-    before that resampling step and can turn weak similarities into hard,
-    self-reinforcing SVD/OT correspondences.  Here every observation first
-    receives its nearest source prototype.  Because ``oracle_shared`` has
-    already established that every configured class occurs in target train,
-    a missing predicted class is repaired with exactly one best-available
-    observation while never emptying another class.  Class balancing remains
-    the sole responsibility of :class:`PseudoPairedClassSampler`.
+    Target class support says which classes may occur; it does not prove that a
+    weak model can identify at least one sample from every class.  Reassigning a
+    low-evidence target sample merely to fill a missing pseudo class creates a
+    false semantic anchor which is then amplified by SVD and OT.  Missing
+    predicted classes are therefore allowed and reported as zero counts.
     """
     if class_scores.ndim != 2:
         raise ValueError("class_scores must have shape [samples, classes].")
     sample_count, class_count = class_scores.shape
-    if class_count < 1 or sample_count < class_count:
-        raise ValueError(
-            "Balanced pseudo pairing requires at least one target sample per "
-            f"configured class: samples={sample_count}, classes={class_count}."
-        )
+    if class_count < 1 or sample_count < 1:
+        raise ValueError("class_scores must contain at least one sample and class.")
     if not torch.isfinite(class_scores).all():
         raise ValueError("class_scores contains non-finite values.")
 
     scores = class_scores.detach().cpu()
-    nearest = scores.argmax(dim=1)
-    assignment = nearest.clone()
+    assignment = scores.argmax(dim=1)
     counts = torch.bincount(assignment, minlength=class_count)
-    repaired_count = 0
-
-    # Repair only absent classes.  The score delta measures how much evidence
-    # is lost by moving a sample away from its current nearest prototype.  A
-    # donor class must retain at least one observation, so repairs cannot create
-    # a new missing class while fixing another one.
-    while bool((counts == 0).any()):
-        missing_classes = torch.nonzero(counts == 0, as_tuple=False).flatten()
-        best_choice = None
-        for missing_class in missing_classes.tolist():
-            donor_counts = counts[assignment]
-            eligible = donor_counts > 1
-            if not bool(eligible.any()):
-                raise RuntimeError(
-                    "Cannot repair pseudo-label class coverage without emptying "
-                    "another configured class."
-                )
-            current_scores = scores.gather(1, assignment.unsqueeze(1)).squeeze(1)
-            deltas = scores[:, missing_class] - current_scores
-            deltas = deltas.masked_fill(~eligible, -float("inf"))
-            sample_index = int(deltas.argmax())
-            choice = (float(deltas[sample_index]), sample_index, missing_class)
-            if best_choice is None or choice > best_choice:
-                best_choice = choice
-
-        _, sample_index, missing_class = best_choice
-        previous_class = int(assignment[sample_index])
-        assignment[sample_index] = missing_class
-        counts[previous_class] -= 1
-        counts[missing_class] += 1
-        repaired_count += 1
-
-    if int(counts.sum()) != sample_count or bool((counts < 1).any()):
-        raise RuntimeError("Pseudo-label coverage repair produced invalid counts.")
     return assignment, {
         "class_counts": counts,
-        "nearest_labels": nearest,
-        "repaired_count": repaired_count,
+        "nearest_labels": assignment.clone(),
+        "repaired_count": 0,
     }
 
 
@@ -1302,6 +1278,8 @@ def run_single_iteration(args, seed, logger):
     protocol = adaptation_protocol(args)
     experiment_protocol = reported_protocol(args)
     oracle_shared_labels = None
+    target_training_data_source = 'filesystem_dataset'
+    target_pair_manifest_sha256 = None
 
     src_train_ds = MultiModalDomainDataset(SOURCE_ROOT, domain_type='source', phase='train')
     source_label_map = dict(src_train_ds.get_label_map())
@@ -1309,17 +1287,14 @@ def run_single_iteration(args, seed, logger):
     source_count_before_filter = len(src_train_ds)
 
     if args.label_space_mode == 'oracle_shared':
-        # Probe only target *training* support.  This deliberately reads target
-        # labels and is therefore isolated as ORACLE_SHARED_UDA rather than
-        # being presented as strict UDA.
-        target_probe = MultiModalDomainDataset(
-            TARGET_ROOT,
-            domain_type='target',
-            phase='train',
+        # Target class support is selected by the independent paired-cohort
+        # preprocessing step.  The optimizer process receives only that class
+        # allow-list; it never constructs a labelled target-support probe.
+        oracle_shared_labels = parse_original_label_csv(
+            args.oracle_shared_labels
         )
-        target_count_before_filter = len(target_probe)
         target_only_labels = sorted(
-            set(map(int, target_probe.labels)) - set(source_label_map)
+            set(oracle_shared_labels) - set(source_label_map)
         )
         if target_only_labels:
             raise ValueError(
@@ -1327,11 +1302,6 @@ def run_single_iteration(args, seed, logger):
                 "subset of the source label space; target-only original "
                 f"labels={target_only_labels}."
             )
-        oracle_shared_labels = derive_oracle_shared_labels(
-            src_train_ds.labels,
-            target_probe.labels,
-        )
-        del target_probe
         # Filtering samples while retaining the original 14-way classifier
         # leaves unsupported logits in the CE denominator and in the target
         # prior.  A shared-label-space diagnostic must use the selected class
@@ -1344,20 +1314,51 @@ def run_single_iteration(args, seed, logger):
             global_label_map=global_map,
             allowed_original_labels=oracle_shared_labels,
         )
-        tgt_train_ds = MultiModalDomainDataset(
-            TARGET_ROOT,
-            domain_type='target',
-            phase='train',
-            global_label_map=global_map,
-            include_label=(protocol != 'UDA'),
+        tgt_train_ds = LabelFreePairedTargetDataset(
+            pair_list_path=args.target_train_pair_list,
+            num_classes=len(global_map),
         )
+        target_training_data_source = 'label_free_pair_manifest'
+        with open(args.target_train_pair_list, 'rb') as pair_manifest_handle:
+            target_pair_manifest_sha256 = hashlib.sha256(
+                pair_manifest_handle.read()
+            ).hexdigest()
+        target_count_before_filter = int(
+            tgt_train_ds.pairing_stats[
+                "selected_phase_pairs_before_filter"
+            ]
+        )
+        expected_support = set(oracle_shared_labels)
+        source_support = set(map(int, src_train_ds.labels))
+        if source_support != expected_support:
+            raise ValueError(
+                "Independent label-space manifest and live paired datasets "
+                "disagree: expected="
+                f"{sorted(expected_support)}, source={sorted(source_support)}."
+            )
+        if (
+            len(tgt_train_ds) != target_count_before_filter
+            or int(tgt_train_ds.pairing_stats["filtered_out_pairs"]) != 0
+        ):
+            raise RuntimeError(
+                "Target samples were unexpectedly removed after the independent "
+                "class-support selection."
+            )
+        if sorted(global_map.values()) != list(range(len(global_map))):
+            raise RuntimeError(
+                "Classifier label map must be contiguous from zero; got "
+                f"{global_map}."
+            )
         logger.warning(
             "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. "
+            "support supplied by independent cohort preprocessing; no labelled "
+            "target-support probe exists in the optimization process. "
             f"reported_protocol={experiment_protocol}; shared original labels="
             f"{oracle_shared_labels}; source samples {source_count_before_filter}->"
             f"{len(src_train_ds)}; target samples retained without filtering="
             f"{len(tgt_train_ds)}/{target_count_before_filter}; classifier classes="
-            f"{len(global_map)}."
+            f"{len(global_map)}; label-free pair manifest sha256="
+            f"{target_pair_manifest_sha256}."
         )
     else:
         tgt_train_ds = MultiModalDomainDataset(
@@ -1383,19 +1384,35 @@ def run_single_iteration(args, seed, logger):
             deterministic_transform=True,
             allowed_original_labels=oracle_shared_labels,
         )
-        tgt_svd_ds = MultiModalDomainDataset(
-            TARGET_ROOT,
-            domain_type='target',
-            phase='train',
-            global_label_map=global_map,
-            deterministic_transform=True,
-            include_label=(protocol != 'UDA'),
-        )
+        if args.label_space_mode == 'oracle_shared':
+            tgt_svd_ds = LabelFreePairedTargetDataset(
+                pair_list_path=args.target_train_pair_list,
+                num_classes=len(global_map),
+                deterministic_transform=True,
+            )
+        else:
+            tgt_svd_ds = MultiModalDomainDataset(
+                TARGET_ROOT,
+                domain_type='target',
+                phase='train',
+                global_label_map=global_map,
+                deterministic_transform=True,
+                include_label=(protocol != 'UDA'),
+            )
         assert_matching_sample_order(src_train_ds, src_svd_ds, "source")
         assert_matching_sample_order(tgt_train_ds, tgt_svd_ds, "target")
 
     tgt_val_ds = MultiModalDomainDataset(TARGET_ROOT, domain_type='target', phase='val',
                                          global_label_map=global_map, val_augment=False)
+    if args.label_space_mode == 'oracle_shared':
+        validation_support = set(map(int, tgt_val_ds.labels))
+        expected_support = set(oracle_shared_labels)
+        if validation_support != expected_support:
+            raise ValueError(
+                "Target train/validation class supports do not use the same "
+                "original-label map: train="
+                f"{sorted(expected_support)}, val={sorted(validation_support)}."
+            )
 
     logger.info(
         "Dataset audit: "
@@ -1427,8 +1444,8 @@ def run_single_iteration(args, seed, logger):
     logger.info(
         "Target training item label exposure: "
         f"include_label={getattr(tgt_train_ds, 'include_label', True)}; "
-        "UDA must be False (the isolated oracle support probe, if enabled, "
-        "is not passed to the optimizer)."
+        "UDA must be False (oracle class support, if enabled, comes from the "
+        "independent preprocessing manifest)."
     )
 
     target_label_ratio = 1.0 if args.use_target_labels else args.target_label_ratio
@@ -1449,11 +1466,22 @@ def run_single_iteration(args, seed, logger):
         # Constructed at every epoch after label-free source-prototype
         # inference. Target ground-truth labels are not read by the sampler.
         paired_loader = None
+        source_warmup_loader = UnpairedDomainSampler(
+            src_train_ds,
+            tgt_train_ds,
+            BATCH_SIZE,
+            num_workers=args.num_workers,
+            prefetch_factor=args.prefetch_factor,
+            pin_memory=pin_memory,
+            seed=seed,
+        )
         logger.info(
             "Training mode: prototype-pseudo-paired UDA; target ground-truth "
-            "labels are excluded from pair construction, SVD, OT and losses."
+            "labels are excluded from pair construction, SVD, OT and losses. "
+            "Pseudo pairing starts only after source-only warm-up."
         )
     else:
+        source_warmup_loader = None
         paired_loader = UnpairedDomainSampler(
             src_train_ds,
             tgt_train_ds,
@@ -1467,8 +1495,8 @@ def run_single_iteration(args, seed, logger):
             if args.label_space_mode == 'oracle_shared':
                 logger.info(
                     "Training mode: ORACLE_SHARED_UDA; target labels are excluded "
-                    "from losses and pair construction, but target-training class "
-                    "support was read once for sample filtering."
+                    "from losses and pair construction; target-training class "
+                    "support was supplied by independent preprocessing."
                 )
             else:
                 logger.info(
@@ -1487,9 +1515,9 @@ def run_single_iteration(args, seed, logger):
             )
     if paired_loader is None:
         logger.info(
-            "Training batches per epoch: determined from balanced target pseudo "
-            f"classes each epoch; batch_size={BATCH_SIZE}; pseudo-pair loader "
-            "matches the supervised in-process sampler."
+            "Training batches per epoch: source loader during warm-up, then one "
+            "natural-distribution pass over all target pseudo-labelled samples; "
+            f"batch_size={BATCH_SIZE}."
         )
     else:
         logger.info(
@@ -1602,9 +1630,10 @@ def run_single_iteration(args, seed, logger):
         if args.use_tensor_module:
             if use_pseudo_class_pairing:
                 logger.info(
-                    "Joint optimization schedule: supervised-reference "
-                    f"Tensor/SVD warm-up for {args.ot_warmup_epochs} epochs "
-                    f"from epoch 1, then OT loss ramp over "
+                    "Joint optimization schedule: source-only warm-up for "
+                    f"{args.uda_source_warmup_epochs} epochs, then "
+                    f"Tensor/SVD-only warm-up for {args.ot_warmup_epochs} "
+                    "epochs, followed by an OT loss ramp over "
                     f"{args.ot_ramp_epochs} epochs."
                 )
             elif protocol == 'UDA':
@@ -1612,7 +1641,8 @@ def run_single_iteration(args, seed, logger):
                     "Joint optimization schedule: source-only warm-up for "
                     f"{args.uda_source_warmup_epochs} epochs (no target forward, "
                     "cross-domain SVD, Tensor loss, adversarial loss, or OT), "
-                    f"then OT ramps over {args.ot_ramp_epochs} epochs."
+                    f"then Tensor/SVD-only warm-up for {args.ot_warmup_epochs} "
+                    f"epochs and OT ramps over {args.ot_ramp_epochs} epochs."
                 )
             else:
                 logger.info(
@@ -1625,8 +1655,8 @@ def run_single_iteration(args, seed, logger):
             statistics_description = "complete class-paired target-training bank"
         elif use_pseudo_class_pairing:
             statistics_description = (
-                "complete class-balanced source/target pseudo-paired bank "
-                "from epoch 1"
+                "complete natural-distribution source/target pseudo-paired "
+                "bank after source-only warm-up"
             )
         elif protocol == 'UDA':
             statistics_description = (
@@ -1719,7 +1749,10 @@ def run_single_iteration(args, seed, logger):
 
         target_pseudo_labels = None
         target_pseudo_original_labels = None
-        if use_pseudo_class_pairing:
+        epoch_loader = paired_loader
+        if use_pseudo_class_pairing and uda_source_warmup_active:
+            epoch_loader = source_warmup_loader
+        elif use_pseudo_class_pairing:
             # Before the first epoch-level SVD update, U/V are merely random
             # orthogonal initializers.  They are valid SVD sweep seeds but not
             # a learned semantic space for deciding the very correspondences
@@ -1756,6 +1789,7 @@ def run_single_iteration(args, seed, logger):
                 BATCH_SIZE,
                 expected_classes=range(len(global_map)),
             )
+            epoch_loader = paired_loader
             original_label_by_index = {
                 int(mapped): int(original)
                 for original, mapped in global_map.items()
@@ -1793,7 +1827,7 @@ def run_single_iteration(args, seed, logger):
                 f"{pseudo_info['modality_reliability_estimator']}, "
                 f"change_rate={pseudo_change_text}, "
                 f"target_samples={len(tgt_train_ds)}, "
-                f"balanced_epoch_samples={paired_loader.epoch_sample_count}, "
+                f"epoch_samples={paired_loader.epoch_sample_count}, "
                 f"training_batches={len(paired_loader)}"
             )
 
@@ -1820,8 +1854,7 @@ def run_single_iteration(args, seed, logger):
                 seed=seed * 1000,
                 class_paired=(args.use_target_labels or use_pseudo_class_pairing),
                 balance_classes=(
-                    (args.use_target_labels or use_pseudo_class_pairing)
-                    and args.balance_svd_classes
+                    args.use_target_labels and args.balance_svd_classes
                 ),
                 target_labels_override=target_pseudo_original_labels,
                 source_class_weights=(
@@ -1942,7 +1975,9 @@ def run_single_iteration(args, seed, logger):
             len(tgt_train_ds), device=DEVICE
         )
 
-        for src_data, tgt_data in paired_loader:
+        if epoch_loader is None:
+            raise RuntimeError("No training loader was configured for this epoch.")
+        for src_data, tgt_data in epoch_loader:
             steps += 1
 
             if use_pseudo_class_pairing and 'label' in tgt_data:
@@ -2437,6 +2472,8 @@ def run_single_iteration(args, seed, logger):
     )
     report_metrics['label_map_original_to_index'] = dict(global_map)
     report_metrics['target_train_samples'] = len(tgt_train_ds)
+    report_metrics['target_training_data_source'] = target_training_data_source
+    report_metrics['target_pair_manifest_sha256'] = target_pair_manifest_sha256
     report_metrics['target_training_item_labels_exposed'] = bool(
         getattr(tgt_train_ds, 'include_label', True)
     )
@@ -2472,6 +2509,8 @@ def run_single_iteration(args, seed, logger):
                     'target_training_item_labels_exposed'
                 ],
                 'target_train_samples': len(tgt_train_ds),
+                'target_training_data_source': target_training_data_source,
+                'target_pair_manifest_sha256': target_pair_manifest_sha256,
                 'visual_finetuning_mode': args.visual_finetuning_mode,
                 'adaptive_sinkhorn': args.adaptive_sinkhorn,
                 'transport_mode': args.transport_mode,
@@ -2566,8 +2605,9 @@ def run_ablation_experiment(args):
     logger.info(f"标签空间模式: {args.label_space_mode}")
     if experiment_protocol == 'ORACLE_SHARED_UDA':
         logger.warning(
-            "ORACLE_SHARED_UDA reads target-training label support for filtering; "
-            "it is a separate diagnostic and must not enter the strict UDA table."
+            "ORACLE_SHARED_UDA receives target-training class support from an "
+            "independent preprocessing manifest; it is a separate diagnostic "
+            "and must not enter the strict UDA table."
         )
     logger.info(f"源域: {SOURCE_ROOT}")
     logger.info(f"目标域: {TARGET_ROOT}")
@@ -2707,6 +2747,16 @@ def run_ablation_experiment(args):
         if all_iteration_results
         else None
     )
+    target_training_data_source = (
+        all_iteration_results[0].get('target_training_data_source')
+        if all_iteration_results
+        else None
+    )
+    target_pair_manifest_sha256 = (
+        all_iteration_results[0].get('target_pair_manifest_sha256')
+        if all_iteration_results
+        else None
+    )
     target_training_item_labels_exposed = (
         all_iteration_results[0].get(
             'target_training_item_labels_exposed',
@@ -2738,6 +2788,8 @@ def run_ablation_experiment(args):
             target_training_item_labels_exposed
         ),
         'target_train_samples': target_train_samples,
+        'target_training_data_source': target_training_data_source,
+        'target_pair_manifest_sha256': target_pair_manifest_sha256,
         'visual_finetuning_mode': args.visual_finetuning_mode,
         'adaptive_sinkhorn': args.adaptive_sinkhorn,
         'transport_mode': args.transport_mode,
@@ -2832,7 +2884,27 @@ def main():
         default='partial_set',
         help=(
             'partial_set keeps the strict UDA source label space; oracle_shared '
-            'reads target-training class support and is a separately reported diagnostic'
+            'uses preprocessing-supplied target class support and is a separately '
+            'reported diagnostic'
+        ),
+    )
+    parser.add_argument(
+        '--oracle_shared_labels',
+        type=str,
+        default='',
+        help=(
+            'comma-separated original target class ids produced by the '
+            'independent cohort-preparation step; required only for '
+            'label_space_mode=oracle_shared'
+        ),
+    )
+    parser.add_argument(
+        '--target_train_pair_list',
+        type=str,
+        default='',
+        help=(
+            'label-free two-column VIS/IR target-training pair manifest; '
+            'required for label_space_mode=oracle_shared'
         ),
     )
     parser.add_argument('--lr_feature', type=float, default=5e-6, help='feature extractor learning rate')
@@ -2904,10 +2976,10 @@ def main():
                        action='store_false', help='use a uniform source marginal in UDA')
     parser.add_argument('--uda_prior_momentum', type=float, default=0.9,
                        help='EMA momentum for the unlabeled target class prior')
-    parser.add_argument('--uda_source_warmup_epochs', type=int, default=0,
+    parser.add_argument('--uda_source_warmup_epochs', type=int, default=10,
                        help=(
-                           'optional source-only epochs before the normal Tensor/SVD '
-                           'warm-up; supervised-parity UDA uses zero'
+                           'source-only epochs before pseudo correspondence and the '
+                           'normal Tensor/SVD warm-up'
                        ))
     parser.add_argument('--uda_pseudo_class_pairing', action='store_true', default=False,
                        help=(
@@ -3005,6 +3077,30 @@ def main():
                 '--label_space_mode oracle_shared requires '
                 '--no_auto_ablation_hparams so it cannot silently become SSDA'
             )
+        try:
+            parse_original_label_csv(args.oracle_shared_labels)
+        except (TypeError, ValueError) as error:
+            parser.error(str(error))
+        if not args.target_train_pair_list:
+            parser.error(
+                '--label_space_mode oracle_shared requires '
+                '--target_train_pair_list'
+            )
+        if not os.path.isfile(args.target_train_pair_list):
+            parser.error(
+                '--target_train_pair_list does not exist: '
+                f'{args.target_train_pair_list}'
+            )
+    elif str(args.oracle_shared_labels).strip():
+        parser.error(
+            '--oracle_shared_labels is only valid with '
+            '--label_space_mode oracle_shared'
+        )
+    elif str(args.target_train_pair_list).strip():
+        parser.error(
+            '--target_train_pair_list is only valid with '
+            '--label_space_mode oracle_shared'
+        )
     if args.uda_pseudo_class_pairing:
         if adaptation_protocol(args) != 'UDA':
             parser.error('--uda_pseudo_class_pairing is only valid for UDA')
@@ -3014,21 +3110,26 @@ def main():
                 '--label_space_mode oracle_shared so every configured class is '
                 'known to occur in the target domain'
             )
-        if args.uda_source_warmup_epochs != 0:
+        if args.uda_source_warmup_epochs < 1:
             parser.error(
-                'supervised-parity pseudo pairing requires '
-                '--uda_source_warmup_epochs 0 so Tensor/SVD starts at epoch 1'
+                '--uda_pseudo_class_pairing requires a positive source-only '
+                'warm-up before target pseudo correspondences are constructed'
             )
         if not args.class_conditional_ot:
             parser.error(
                 '--uda_pseudo_class_pairing requires class-conditional OT; '
                 'do not pass --no_class_conditional_ot'
             )
-        if args.epochs < args.ot_warmup_epochs + args.ot_ramp_epochs:
+        if args.epochs < (
+            args.uda_source_warmup_epochs
+            + args.ot_warmup_epochs
+            + args.ot_ramp_epochs
+        ):
             parser.error(
                 '--uda_pseudo_class_pairing requires epochs >= '
-                'ot_warmup_epochs + ot_ramp_epochs so the declared full model '
-                'reaches the complete OT weight'
+                'uda_source_warmup_epochs + ot_warmup_epochs + '
+                'ot_ramp_epochs so the declared full model reaches the '
+                'complete OT weight'
             )
         # This named protocol is the audited conversion of the actual
         # supervised reference run.  Refuse silent hyperparameter drift: only
@@ -3055,6 +3156,8 @@ def main():
         require_parity('batch_size', args.batch_size, 32)
         require_parity('projection_dim', args.projection_dim, 64)
         require_parity('svd_stat_batch_size', args.svd_stat_batch_size, 128)
+        require_parity('uda_source_warmup_epochs',
+                       args.uda_source_warmup_epochs, 10)
         require_parity('svd_projection_mode', args.svd_projection_mode,
                        'legacy_supervised')
         require_parity('basis_transport_mode', args.basis_transport_mode,

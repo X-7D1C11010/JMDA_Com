@@ -1,0 +1,198 @@
+nohup: 忽略输入
+[OK] JMDA reviewed code fingerprint: 8e8e481c4fae1320
+协议=jmda_oracle_shared_uda 轮数=100 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261021_093606_3280471
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  dark_sda_10shot_seed42.txt: rows=80 sha256=d8c18fcc4f1b
+  dark_train.txt: rows=465 sha256=4db63ec2b49b
+  dark_val.txt: rows=120 sha256=dd26c3f42268
+  foggy_sda_10shot_seed42.txt: rows=89 sha256=fd89bcf70049
+  foggy_train.txt: rows=440 sha256=a6d0f2431e47
+  foggy_val.txt: rows=115 sha256=894af8eeaed4
+  rainy_sda_10shot_seed42.txt: rows=53 sha256=60ed8c297ea8
+  rainy_train.txt: rows=96 sha256=ee98687cc862
+  rainy_val.txt: rows=26 sha256=fb713ee0fe84
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+运行公共配置预检...
+[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261021_093606_3280471/paired_protocol_manifest.json (13 lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=30698/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] rainy_val.txt: 26 rows, checked 26 VIS paths and exact IR mates
+[OK] rainy_train.txt: 96 rows, checked 96 VIS paths and exact IR mates
+[OK] foggy_val.txt: 115 rows, checked 115 VIS paths and exact IR mates
+[OK] foggy_train.txt: 440 rows, checked 440 VIS paths and exact IR mates
+[OK] dark_val.txt: 120 rows, checked 120 VIS paths and exact IR mates
+[OK] dark_train.txt: 465 rows, checked 465 VIS paths and exact IR mates
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11]
+[AUDIT] rainy: partial-set, target classes=6/14, source-only labels=[1, 2, 3, 7, 9, 11, 12, 13]
+[AUDIT] foggy: partial-set, target classes=9/14, source-only labels=[2, 6, 11, 12, 13]
+[AUDIT] dark: partial-set, target classes=8/14, source-only labels=[2, 3, 7, 9, 12, 13]
+[ORACLE] target-training label support will be read to filter source-only classes; this diagnostic is not strict UDA.
+[OK] JMDA-Net entry: /home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py
+[OK] JMDA protocol semantics: ORACLE_SHARED_UDA; target labels are excluded from losses, but target class support is read for filtering
+[OK] server preflight passed
+运行 JMDA 协议接线门禁...
+........................
+----------------------------------------------------------------------
+Ran 24 tests in 0.011s
+
+OK
+运行 JMDA Tensor/OT 数值门禁...
+....................配对采样器已初始化，共 2 个共有类别；每个epoch覆盖全部 4 个目标样本，并按类别平衡扩展为 6 个训练观测。
+.........../home/lixiang/lx/JMDA_Com/JMDA-Net/test_tensor_ot_invariants.py:1502: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  self.assertLess(float(details["marginal_residual"]), 2e-4)
+....................
+----------------------------------------------------------------------
+Ran 51 tests in 1.861s
+
+OK
+JMDA加载参数: batch=32 workers=4 projection_dim=64 source_warmup=0 SVD_batch=128 prefetch=2 pin_memory=1
+>>> [jmda_net_oracle_shared_uda_backlight]
+已终止
+    FAILED: jmda_net_oracle_shared_uda_backlight (见 /home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda/jmda_net_oracle_shared_uda_backlight_20261021_093606_3280471.log)
+    ---- error tail ----
+Epoch [60/100] | SVD update #60: pairs=234, sweeps=4, converged=True, rel_change=5.539e-04, effective_ranks=(112, 20), stabilized_null_dims=(0, 0), rank_thresholds=(0.0006790183251723647, 0.001260334043763578), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.690/0.795, basis_min_cos_src/tgt=0.029/0.011, basis_nonorth=6.129e-01, basis_nonorth_src/tgt=4.621e-01/3.572e-01, transport_nonorth=6.129e-01, basis_domain_gap=9.765e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.617333267262438e-06, 7.626471870025853e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [60/100] | Loss: 1.2420 (Cls: 1.2418 [src/tgt/mid=0.6581/0.0000/0.5836; labeled-target-observations=0], TAL: -0.4069, Adv: 0.6132, D: 0.4329, OT-Reg: 0.001022) | OT scale: 1.00 | OT inner objective: 0.4335 | Marginal residual row/col/max: 1.21e-08/1.19e-08/1.35e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9444 | Val Acc: 0.2222 | Val P/R/F1 (Macro): 0.2478/0.2963/0.2071 | LR feature/other/discriminator: 2.05471e-06/8.21885e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7110/0.9765/9/9
+Epoch [61/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[9, 15, 10, 4, 18, 8, 8, 13, 28], coverage_repairs=0, assigned_confidence=0.1657, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9224433898925781, 0.8933262228965759], modality_weights=[0.5091359615325928, 0.4908640682697296], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0442, target_samples=113, balanced_epoch_samples=252, training_batches=8
+Epoch [61/100] | SVD update #61: pairs=252, sweeps=3, converged=True, rel_change=6.969e-04, effective_ranks=(112, 16), stabilized_null_dims=(0, 0), rank_thresholds=(0.0010790139203891158, 0.0036096852272748947), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.691/0.777, basis_min_cos_src/tgt=0.015/0.011, basis_nonorth=6.053e-01, basis_nonorth_src/tgt=4.597e-01/3.779e-01, transport_nonorth=6.053e-01, basis_domain_gap=9.463e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.609542535647051e-06, 7.620799351570895e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [61/100] | Loss: 1.1794 (Cls: 1.1772 [src/tgt/mid=0.6209/0.0000/0.5563; labeled-target-observations=0], TAL: -0.4034, Adv: 0.6326, D: 0.3868, OT-Reg: 0.001038) | OT scale: 1.00 | OT inner objective: 0.3884 | Marginal residual row/col/max: 1.21e-08/1.14e-08/1.28e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9762 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.2243/0.1852/0.1808 | LR feature/other/discriminator: 1.98784e-06/7.95136e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7366/0.9195/9/9
+Epoch [62/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[12, 16, 10, 4, 18, 8, 8, 12, 25], coverage_repairs=0, assigned_confidence=0.1676, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9092721939086914, 0.8976452946662903], modality_weights=[0.503668487071991, 0.49633148312568665], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0354, target_samples=113, balanced_epoch_samples=225, training_batches=7
+Epoch [62/100] | SVD update #62: pairs=225, sweeps=4, converged=True, rel_change=1.895e-04, effective_ranks=(112, 17), stabilized_null_dims=(0, 0), rank_thresholds=(0.0008499339455738664, 0.0017959189135581255), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.719/0.795, basis_min_cos_src/tgt=0.009/0.004, basis_nonorth=5.811e-01, basis_nonorth_src/tgt=4.387e-01/3.603e-01, transport_nonorth=5.811e-01, basis_domain_gap=9.254e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.614983132953057e-06, 7.626275873917621e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [62/100] | Loss: 1.1408 (Cls: 1.1376 [src/tgt/mid=0.5939/0.0000/0.5437; labeled-target-observations=0], TAL: -0.3940, Adv: 0.6308, D: 0.3535, OT-Reg: 0.000998) | OT scale: 1.00 | OT inner objective: 0.4136 | Marginal residual row/col/max: 1.01e-08/1.12e-08/1.17e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9822 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.2222/0.1759/0.1775 | LR feature/other/discriminator: 1.92172e-06/7.68688e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7229/0.9436/9/9
+Epoch [63/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[12, 16, 10, 4, 19, 8, 9, 11, 24], coverage_repairs=0, assigned_confidence=0.1641, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.91510009765625, 0.8963523507118225], modality_weights=[0.5058983564376831, 0.4941016137599945], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0177, target_samples=113, balanced_epoch_samples=216, training_batches=7
+Epoch [63/100] | SVD update #63: pairs=216, sweeps=3, converged=True, rel_change=7.989e-04, effective_ranks=(112, 17), stabilized_null_dims=(0, 0), rank_thresholds=(0.0009961635805666447, 0.0021327189169824123), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.787/0.820, basis_min_cos_src/tgt=0.004/0.046, basis_nonorth=5.547e-01, basis_nonorth_src/tgt=3.649e-01/3.359e-01, transport_nonorth=5.547e-01, basis_domain_gap=9.619e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.6173205343366135e-06, 7.624388217664091e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [63/100] | Loss: 1.1579 (Cls: 1.1510 [src/tgt/mid=0.6083/0.0000/0.5426; labeled-target-observations=0], TAL: -0.3693, Adv: 0.6405, D: 0.2922, OT-Reg: 0.001028) | OT scale: 1.00 | OT inner objective: 0.4030 | Marginal residual row/col/max: 1.09e-08/9.58e-09/1.14e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9676 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.2519/0.1852/0.1912 | LR feature/other/discriminator: 1.85642e-06/7.42567e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7352/0.8979/9/9
+Epoch [64/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[13, 15, 10, 4, 19, 8, 8, 11, 25], coverage_repairs=0, assigned_confidence=0.1659, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9152004718780518, 0.8957591652870178], modality_weights=[0.5061184763908386, 0.493881493806839], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0354, target_samples=113, balanced_epoch_samples=225, training_batches=7
+Epoch [64/100] | SVD update #64: pairs=225, sweeps=3, converged=True, rel_change=5.500e-04, effective_ranks=(112, 17), stabilized_null_dims=(0, 0), rank_thresholds=(0.0009806168964132667, 0.0023798386100679636), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.765/0.827, basis_min_cos_src/tgt=0.045/0.003, basis_nonorth=5.549e-01, basis_nonorth_src/tgt=3.963e-01/3.282e-01, transport_nonorth=5.549e-01, basis_domain_gap=9.250e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.620175438205479e-06, 7.627325430803467e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [64/100] | Loss: 1.1768 (Cls: 1.1693 [src/tgt/mid=0.6074/0.0000/0.5618; labeled-target-observations=0], TAL: -0.3650, Adv: 0.6415, D: 0.3167, OT-Reg: 0.001012) | OT scale: 1.00 | OT inner objective: 0.3945 | Marginal residual row/col/max: 1.04e-08/9.31e-09/1.12e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9644 | Val Acc: 0.1667 | Val P/R/F1 (Macro): 0.2169/0.1574/0.1675 | LR feature/other/discriminator: 1.792e-06/7.16799e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7493/0.8712/9/9
+Epoch [65/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[13, 12, 11, 4, 19, 9, 6, 12, 27], coverage_repairs=0, assigned_confidence=0.1675, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9203183054924011, 0.8639902472496033], modality_weights=[0.5180297493934631, 0.48197025060653687], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0708, target_samples=113, balanced_epoch_samples=243, training_batches=8
+Epoch [65/100] | SVD update #65: pairs=243, sweeps=4, converged=True, rel_change=1.034e-04, effective_ranks=(112, 20), stabilized_null_dims=(0, 0), rank_thresholds=(0.0006855991668999195, 0.001317021669819951), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.719/0.784, basis_min_cos_src/tgt=0.010/0.028, basis_nonorth=5.876e-01, basis_nonorth_src/tgt=4.378e-01/3.731e-01, transport_nonorth=5.876e-01, basis_domain_gap=9.393e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.618915788043523e-06, 7.624396403116407e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [65/100] | Loss: 1.1693 (Cls: 1.1635 [src/tgt/mid=0.6207/0.0000/0.5428; labeled-target-observations=0], TAL: -0.3679, Adv: 0.6244, D: 0.3317, OT-Reg: 0.000996) | OT scale: 1.00 | OT inner objective: 0.3769 | Marginal residual row/col/max: 1.05e-08/1.07e-08/1.19e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9630 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.1810/0.1759/0.1760 | LR feature/other/discriminator: 1.72852e-06/6.91409e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7231/0.9410/9/9
+Epoch [66/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[12, 10, 11, 4, 18, 9, 7, 12, 30], coverage_repairs=0, assigned_confidence=0.1683, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9147866368293762, 0.8954609036445618], modality_weights=[0.5060848593711853, 0.4939151704311371], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0442, target_samples=113, balanced_epoch_samples=270, training_batches=9
+Epoch [66/100] | SVD update #66: pairs=270, sweeps=4, converged=True, rel_change=5.402e-04, effective_ranks=(112, 16), stabilized_null_dims=(0, 0), rank_thresholds=(0.0011091346386820078, 0.002392818219959736), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.710/0.764, basis_min_cos_src/tgt=0.002/0.014, basis_nonorth=6.020e-01, basis_nonorth_src/tgt=4.429e-01/3.920e-01, transport_nonorth=6.020e-01, basis_domain_gap=9.630e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.605199243698735e-06, 7.61963747208938e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [66/100] | Loss: 1.1573 (Cls: 1.1566 [src/tgt/mid=0.6124/0.0000/0.5442; labeled-target-observations=0], TAL: -0.4221, Adv: 0.6422, D: 0.4093, OT-Reg: 0.001051) | OT scale: 1.00 | OT inner objective: 0.3288 | Marginal residual row/col/max: 1.10e-08/1.10e-08/1.20e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9778 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.1889/0.1759/0.1802 | LR feature/other/discriminator: 1.66605e-06/6.66422e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7604/0.8549/9/9
+Epoch [67/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[14, 12, 10, 4, 18, 9, 7, 11, 28], coverage_repairs=0, assigned_confidence=0.1669, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9118054509162903, 0.8975412845611572], modality_weights=[0.5044937133789062, 0.49550625681877136], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0442, target_samples=113, balanced_epoch_samples=252, training_batches=8
+Epoch [67/100] | SVD update #67: pairs=252, sweeps=3, converged=True, rel_change=7.551e-04, effective_ranks=(112, 18), stabilized_null_dims=(0, 0), rank_thresholds=(0.0010485490784049034, 0.0021175125148147345), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.760/0.816, basis_min_cos_src/tgt=0.016/0.007, basis_nonorth=5.335e-01, basis_nonorth_src/tgt=3.954e-01/3.365e-01, transport_nonorth=5.335e-01, basis_domain_gap=8.677e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.618774816364748e-06, 7.626633760082768e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [67/100] | Loss: 1.1554 (Cls: 1.1581 [src/tgt/mid=0.6125/0.0000/0.5456; labeled-target-observations=0], TAL: -0.4472, Adv: 0.6376, D: 0.3637, OT-Reg: 0.001036) | OT scale: 1.00 | OT inner objective: 0.3329 | Marginal residual row/col/max: 1.07e-08/1.00e-08/1.14e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9643 | Val Acc: 0.2222 | Val P/R/F1 (Macro): 0.1340/0.1759/0.1512 | LR feature/other/discriminator: 1.60466e-06/6.41863e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7545/0.8527/9/9
+Epoch [68/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[13, 14, 10, 4, 18, 9, 5, 11, 29], coverage_repairs=0, assigned_confidence=0.1669, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9135568737983704, 0.872340977191925], modality_weights=[0.5131791830062866, 0.4868208169937134], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0265, target_samples=113, balanced_epoch_samples=261, training_batches=9
+Epoch [68/100] | SVD update #68: pairs=261, sweeps=3, converged=True, rel_change=3.814e-04, effective_ranks=(112, 18), stabilized_null_dims=(0, 0), rank_thresholds=(0.0010283833835273981, 0.001892589032649994), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.776/0.814, basis_min_cos_src/tgt=0.014/0.019, basis_nonorth=5.196e-01, basis_nonorth_src/tgt=3.800e-01/3.374e-01, transport_nonorth=5.196e-01, basis_domain_gap=8.412e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.621224995091325e-06, 7.62626541472855e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [68/100] | Loss: 1.1760 (Cls: 1.1730 [src/tgt/mid=0.6053/0.0000/0.5677; labeled-target-observations=0], TAL: -0.4236, Adv: 0.6733, D: 0.4050, OT-Reg: 0.000973) | OT scale: 1.00 | OT inner objective: 0.3820 | Marginal residual row/col/max: 3.46e-08/1.30e-08/3.48e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9693 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.2469/0.1852/0.1897 | LR feature/other/discriminator: 1.54439e-06/6.17756e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7523/0.8602/9/9
+Epoch [69/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[12, 17, 11, 4, 17, 9, 5, 9, 29], coverage_repairs=0, assigned_confidence=0.1689, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9169688820838928, 0.8831863403320312], modality_weights=[0.5107046365737915, 0.4892953038215637], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0354, target_samples=113, balanced_epoch_samples=261, training_batches=9
+Epoch [69/100] | SVD update #69: pairs=261, sweeps=3, converged=True, rel_change=6.310e-04, effective_ranks=(112, 21), stabilized_null_dims=(0, 0), rank_thresholds=(0.0007205235888250172, 0.0011273527052253485), class_paired=True, class_balanced=True, target_labels_source=pseudo, basis_overlap_src/tgt=0.694/0.765, basis_min_cos_src/tgt=0.004/0.037, basis_nonorth=6.031e-01, basis_nonorth_src/tgt=4.543e-01/3.810e-01, transport_nonorth=6.031e-01, basis_domain_gap=9.497e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(7.5735224527306855e-06, 7.6231044658925384e-06), classifier_basis=shared, basis_transport=legacy_supervised
+Epoch [69/100] | Loss: 1.1577 (Cls: 1.1487 [src/tgt/mid=0.5953/0.0000/0.5535; labeled-target-observations=0], TAL: -0.3746, Adv: 0.6739, D: 0.3421, OT-Reg: 0.001024) | OT scale: 1.00 | OT inner objective: 0.4050 | Marginal residual row/col/max: 9.73e-09/8.49e-09/1.01e-08 | Sinkhorn iters(avg): 50.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9617 | Val Acc: 0.1944 | Val P/R/F1 (Macro): 0.2130/0.1852/0.1869 | LR feature/other/discriminator: 1.48531e-06/5.94125e-05/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.7668/0.8351/9/9
+Epoch [70/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=aligned-svd, class_counts=[11, 12, 9, 4, 18, 9, 10, 11, 29], coverage_repairs=0, assigned_confidence=0.1625, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.9242072701454163, 0.9091442823410034], modality_weights=[0.5046746730804443, 0.49532535672187805], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=0.0885, target_samples=113, balanced_epoch_samples=261, training_batches=9
+    --------------------
+>>> [jmda_net_oracle_shared_uda_rainy]
+已终止
+    FAILED: jmda_net_oracle_shared_uda_rainy (见 /home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda/jmda_net_oracle_shared_uda_rainy_20261021_093606_3280471.log)
+    ---- error tail ----
+VIS训练/BN模式: legacy_supervised; Sinkhorn自适应迭代=False
+判别器学习率调度: 固定学习率
+报告策略: last, 窗口: 10
+UDA无标签对应: source-prototype pseudo-class paired Tensor/SVD + class-conditional OT; target ground-truth labels are excluded from pair construction and optimization; source_only_warmup=0
+================================================================================
+
+================================================================================
+迭代 1/5
+随机种子: 42
+================================================================================
+TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. reported_protocol=ORACLE_SHARED_UDA; shared original labels=[1, 5, 6, 7, 9, 11]; source samples 760->401; target samples retained without filtering=96/96; classifier classes=6.
+Dataset audit: source_train=401, target_train=96, target_val=26
+Class counts (original labels): source={1: 120, 5: 53, 6: 53, 7: 83, 9: 45, 11: 47}; target_train=<class support inspected once; per-class counts withheld>; target_val={1: 2, 5: 8, 6: 4, 7: 2, 9: 5, 11: 5}
+Classifier label map (original->index): {1: 0, 5: 1, 6: 2, 7: 3, 9: 4, 11: 5}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 401, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 359, 'retained_original_labels': [1, 5, 6, 7, 9, 11]}; target_train={'union_vis_files': 122, 'union_ir_files': 122, 'matched_pairs_all': 122, 'selected_phase_pairs': 96, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 0, 'selected_phase_pairs_before_filter': 96, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 5, 6, 7, 9, 11]}; target_val={'union_vis_files': 122, 'union_ir_files': 122, 'matched_pairs_all': 122, 'selected_phase_pairs': 26, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 0, 'selected_phase_pairs_before_filter': 26, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 5, 6, 7, 9, 11]}
+Target training item label exposure: include_label=False; UDA must be False (the isolated oracle support probe, if enabled, is not passed to the optimizer).
+Training mode: prototype-pseudo-paired UDA; target ground-truth labels are excluded from pair construction, SVD, OT and losses.
+Training batches per epoch: determined from balanced target pseudo classes each epoch; batch_size=32; pseudo-pair loader matches the supervised in-process sampler.
+Trainable parameters: VIS=262,656/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=projection only (actual supervised-reference behavior).
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: Neural OT generator with 3-domain discriminator
+Loss weights: tensor=0.12, adv=0.08
+Transport: mode=sinkhorn, epsilon=0.1, Sinkhorn iterations(min/max)=50/50, tolerance=0.0001, correction scale=0.1, correction regularization weight=0.001, class conditional=True
+Joint optimization schedule: supervised-reference Tensor/SVD warm-up for 10 epochs from epoch 1, then OT loss ramp over 5 epochs.
+Tensor projection update: once per epoch from the complete class-balanced source/target pseudo-paired bank from epoch 1; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001, projection_mode=legacy_supervised, basis_transport=legacy_supervised
+
+[Batch 1/1] Full: Tensor+OT, target=雨天
+Epoch [1/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=native-pre-svd, class_counts=[7, 20, 1, 10, 55, 3], coverage_repairs=1, assigned_confidence=0.1725, repaired-vs-nearest agreement=0.9896, modality_source_bal_acc=[0.9014560580253601, 0.5678807497024536], modality_weights=[0.6468196511268616, 0.35318031907081604], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=n/a, target_samples=96, balanced_epoch_samples=330, training_batches=11
+Epoch [1/100] | SVD update #1: pairs=330, sweeps=3, converged=True, rel_change=2.828e-05, effective_ranks=(85, 43), stabilized_null_dims=(0, 0), rank_thresholds=(0.0006238739006221294, 3.224407069471469e-12), class_paired=True, class_balanced=True, target_labels_source=pseudo
+VIS BatchNorm behavior: supervised-reference train mode (running statistics update even in the frozen backbone).
+    --------------------
+>>> [jmda_net_oracle_shared_uda_foggy]
+已终止
+    FAILED: jmda_net_oracle_shared_uda_foggy (见 /home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda/jmda_net_oracle_shared_uda_foggy_20261021_093606_3280471.log)
+    ---- error tail ----
+VIS训练/BN模式: legacy_supervised; Sinkhorn自适应迭代=False
+判别器学习率调度: 固定学习率
+报告策略: last, 窗口: 10
+UDA无标签对应: source-prototype pseudo-class paired Tensor/SVD + class-conditional OT; target ground-truth labels are excluded from pair construction and optimization; source_only_warmup=0
+================================================================================
+
+================================================================================
+迭代 1/5
+随机种子: 42
+================================================================================
+TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. reported_protocol=ORACLE_SHARED_UDA; shared original labels=[1, 2, 4, 5, 6, 8, 9, 10, 11]; source samples 760->515; target samples retained without filtering=440/440; classifier classes=9.
+Dataset audit: source_train=515, target_train=440, target_val=115
+Class counts (original labels): source={1: 120, 2: 52, 4: 58, 5: 53, 6: 53, 8: 44, 9: 45, 10: 43, 11: 47}; target_train=<class support inspected once; per-class counts withheld>; target_val={1: 9, 2: 28, 4: 7, 5: 13, 6: 13, 8: 3, 9: 18, 10: 5, 11: 19}
+Classifier label map (original->index): {1: 0, 2: 1, 4: 2, 5: 3, 6: 4, 8: 5, 9: 6, 10: 7, 11: 8}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 515, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 245, 'retained_original_labels': [1, 2, 4, 5, 6, 8, 9, 10, 11]}; target_train={'union_vis_files': 555, 'union_ir_files': 639, 'matched_pairs_all': 555, 'selected_phase_pairs': 440, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 84, 'selected_phase_pairs_before_filter': 440, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 4, 5, 6, 8, 9, 10, 11]}; target_val={'union_vis_files': 555, 'union_ir_files': 639, 'matched_pairs_all': 555, 'selected_phase_pairs': 115, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 84, 'selected_phase_pairs_before_filter': 115, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 4, 5, 6, 8, 9, 10, 11]}
+Target training item label exposure: include_label=False; UDA must be False (the isolated oracle support probe, if enabled, is not passed to the optimizer).
+Training mode: prototype-pseudo-paired UDA; target ground-truth labels are excluded from pair construction, SVD, OT and losses.
+Training batches per epoch: determined from balanced target pseudo classes each epoch; batch_size=32; pseudo-pair loader matches the supervised in-process sampler.
+Trainable parameters: VIS=262,656/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=projection only (actual supervised-reference behavior).
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: Neural OT generator with 3-domain discriminator
+Loss weights: tensor=0.12, adv=0.08
+Transport: mode=sinkhorn, epsilon=0.1, Sinkhorn iterations(min/max)=50/50, tolerance=0.0001, correction scale=0.1, correction regularization weight=0.001, class conditional=True
+Joint optimization schedule: supervised-reference Tensor/SVD warm-up for 10 epochs from epoch 1, then OT loss ramp over 5 epochs.
+Tensor projection update: once per epoch from the complete class-balanced source/target pseudo-paired bank from epoch 1; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001, projection_mode=legacy_supervised, basis_transport=legacy_supervised
+
+[Batch 1/1] Full: Tensor+OT, target=雾天
+Epoch [1/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=native-pre-svd, class_counts=[20, 74, 102, 56, 20, 9, 83, 26, 50], coverage_repairs=0, assigned_confidence=0.1155, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.8516712188720703, 0.5324136018753052], modality_weights=[0.6373904347419739, 0.3626095652580261], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=n/a, target_samples=440, balanced_epoch_samples=918, training_batches=29
+Epoch [1/100] | SVD update #1: pairs=918, sweeps=2, converged=True, rel_change=2.939e-04, effective_ranks=(304, 58), stabilized_null_dims=(0, 0), rank_thresholds=(0.0003870389482472092, 4.920640284122868e-12), class_paired=True, class_balanced=True, target_labels_source=pseudo
+VIS BatchNorm behavior: supervised-reference train mode (running statistics update even in the frozen backbone).
+    --------------------
+>>> [jmda_net_oracle_shared_uda_dark]
+已终止
+    FAILED: jmda_net_oracle_shared_uda_dark (见 /home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda/jmda_net_oracle_shared_uda_dark_20261021_093606_3280471.log)
+    ---- error tail ----
+Tensor投影维度/更新: 64/每epoch一次; SVD统计批次=128; SVD投影模式=legacy_supervised; 基变换模式=legacy_supervised
+学习率: feature=5e-06, other=0.0002, weight_decay=0.0005
+VIS训练/BN模式: legacy_supervised; Sinkhorn自适应迭代=False
+判别器学习率调度: 固定学习率
+报告策略: last, 窗口: 10
+UDA无标签对应: source-prototype pseudo-class paired Tensor/SVD + class-conditional OT; target ground-truth labels are excluded from pair construction and optimization; source_only_warmup=0
+================================================================================
+
+================================================================================
+迭代 1/5
+随机种子: 42
+================================================================================
+TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. reported_protocol=ORACLE_SHARED_UDA; shared original labels=[1, 2, 5, 6, 7, 9, 11, 12]; source samples 760->493; target samples retained without filtering=465/465; classifier classes=8.
+Dataset audit: source_train=493, target_train=465, target_val=120
+Class counts (original labels): source={1: 120, 2: 52, 5: 53, 6: 53, 7: 83, 9: 45, 11: 47, 12: 40}; target_train=<class support inspected once; per-class counts withheld>; target_val={1: 26, 2: 23, 5: 41, 6: 3, 7: 11, 9: 8, 11: 3, 12: 5}
+Classifier label map (original->index): {1: 0, 2: 1, 5: 2, 6: 3, 7: 4, 9: 5, 11: 6, 12: 7}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 493, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 267, 'retained_original_labels': [1, 2, 5, 6, 7, 9, 11, 12]}; target_train={'union_vis_files': 585, 'union_ir_files': 585, 'matched_pairs_all': 585, 'selected_phase_pairs': 465, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 0, 'selected_phase_pairs_before_filter': 465, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 5, 6, 7, 9, 11, 12]}; target_val={'union_vis_files': 585, 'union_ir_files': 585, 'matched_pairs_all': 585, 'selected_phase_pairs': 120, 'dropped_unpaired_vis': 0, 'dropped_unpaired_ir': 0, 'selected_phase_pairs_before_filter': 120, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 2, 5, 6, 7, 9, 11, 12]}
+Target training item label exposure: include_label=False; UDA must be False (the isolated oracle support probe, if enabled, is not passed to the optimizer).
+Training mode: prototype-pseudo-paired UDA; target ground-truth labels are excluded from pair construction, SVD, OT and losses.
+Training batches per epoch: determined from balanced target pseudo classes each epoch; batch_size=32; pseudo-pair loader matches the supervised in-process sampler.
+Trainable parameters: VIS=262,656/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=projection only (actual supervised-reference behavior).
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: Neural OT generator with 3-domain discriminator
+Loss weights: tensor=0.12, adv=0.08
+Transport: mode=sinkhorn, epsilon=0.1, Sinkhorn iterations(min/max)=50/50, tolerance=0.0001, correction scale=0.1, correction regularization weight=0.001, class conditional=True
+Joint optimization schedule: supervised-reference Tensor/SVD warm-up for 10 epochs from epoch 1, then OT loss ramp over 5 epochs.
+Tensor projection update: once per epoch from the complete class-balanced source/target pseudo-paired bank from epoch 1; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001, projection_mode=legacy_supervised, basis_transport=legacy_supervised
+
+[Batch 1/1] Full: Tensor+OT, target=黑天
+Epoch [1/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=native-pre-svd, class_counts=[17, 14, 62, 1, 16, 36, 1, 318], coverage_repairs=2, assigned_confidence=0.1310, repaired-vs-nearest agreement=0.9957, modality_source_bal_acc=[0.9082028269767761, 0.5386161208152771], modality_weights=[0.6544037461280823, 0.34559622406959534], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=n/a, target_samples=465, balanced_epoch_samples=2544, training_batches=80
+    --------------------
+阶段结束（jmda_oracle_shared_uda）：失败任务数=4。

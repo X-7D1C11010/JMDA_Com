@@ -71,25 +71,31 @@ def validate_manifest(list_dir, data_root):
             f'{manifest.get("data_root")!r} != {str(data_root)!r}'
         )
     entries = manifest.get('lists')
+    pair_entries = manifest.get('unlabeled_pair_lists')
     if not isinstance(entries, dict) or not entries:
         fail(f'No list fingerprints in paired-cohort manifest: {manifest_path}')
-    for name, expected in entries.items():
-        path = list_dir / name
-        if not path.is_file():
-            fail(f'Manifest list is missing: {path}')
-        raw = path.read_bytes()
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != expected.get('sha256'):
-            fail(f'List fingerprint mismatch (possibly stale/edited): {path}')
-        row_count = sum(1 for line in raw.splitlines() if line.strip())
-        if row_count != expected.get('rows'):
-            fail(
-                f'List row count differs from manifest for {path}: '
-                f'{row_count} != {expected.get("rows")}'
-            )
+    if not isinstance(pair_entries, dict) or not pair_entries:
+        fail(
+            f'No label-free target pair fingerprints in manifest: {manifest_path}'
+        )
+    for group in (entries, pair_entries):
+        for name, expected in group.items():
+            path = list_dir / name
+            if not path.is_file():
+                fail(f'Manifest list is missing: {path}')
+            raw = path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest != expected.get('sha256'):
+                fail(f'List fingerprint mismatch (possibly stale/edited): {path}')
+            row_count = sum(1 for line in raw.splitlines() if line.strip())
+            if row_count != expected.get('rows'):
+                fail(
+                    f'List row count differs from manifest for {path}: '
+                    f'{row_count} != {expected.get("rows")}'
+                )
     print(
         f'[OK] exact-paired cohort manifest: {manifest_path} '
-        f'({len(entries)} lists)'
+        f'({len(entries)} labelled lists, {len(pair_entries)} label-free pair lists)'
     )
     return manifest
 
@@ -157,6 +163,55 @@ def validate_list(path, data_root, check_all):
     return rows
 
 
+def validate_unlabeled_pair_list(path, data_root, check_all):
+    if not path.is_file():
+        fail(f'Required label-free target pair list is missing: {path}')
+    rows = []
+    with path.open('r', encoding='utf-8') as handle:
+        for line_number, raw in enumerate(handle, 1):
+            line = raw.rstrip('\r\n')
+            if not line:
+                continue
+            fields = line.split('\t')
+            if len(fields) != 2 or not all(fields):
+                fail(
+                    f'Invalid label-free pair row {line_number} in {path}: '
+                    f'{line!r}'
+                )
+            rows.append(tuple(fields))
+    if not rows:
+        fail(f'Label-free target pair list is empty: {path}')
+    selected = rows if check_all else representative_rows(rows)
+    root = os.path.realpath(str(data_root))
+    for stored_vis, stored_ir in selected:
+        vis = os.path.realpath(remap_data_path(stored_vis))
+        ir = os.path.realpath(remap_data_path(stored_ir))
+        try:
+            inside = (
+                os.path.commonpath([root, vis]) == root
+                and os.path.commonpath([root, ir]) == root
+            )
+        except ValueError:
+            inside = False
+        if not inside:
+            fail(
+                f'Label-free pair escaped JMDA_DATA_ROOT in {path}: '
+                f'{stored_vis!r}, {stored_ir!r}'
+            )
+        if not os.path.isfile(vis) or not os.path.isfile(ir):
+            fail(f'Label-free pair contains a missing file: {vis!r}, {ir!r}')
+        exact_ir = exact_ir_partner(vis)
+        if exact_ir is None or os.path.realpath(exact_ir) != ir:
+            fail(
+                f'Label-free pair is not an exact VIS/IR mate: {vis!r}, {ir!r}'
+            )
+    print(
+        f'[OK] {path.name}: {len(rows)} label-free rows, checked '
+        f'{len(selected)} exact pairs'
+    )
+    return rows
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -197,7 +252,7 @@ def main():
             'JMDA_DATA_ROOT and --data-root disagree: '
             f'{os.environ.get("JMDA_DATA_ROOT")!r} != {str(data_root)!r}'
         )
-    validate_manifest(list_dir, data_root)
+    manifest = validate_manifest(list_dir, data_root)
 
     sunny = data_root / '晴天'
     if not sunny.is_dir():
@@ -255,6 +310,24 @@ def main():
         validated[path.name] = validate_list(
             path, data_root, args.check_all_paths
         )
+    validated_pairs = {}
+    if args.protocol == 'jmda_oracle_shared_uda':
+        for target in args.targets:
+            pair_path = list_dir / f'{target}_train_pairs.tsv'
+            pair_rows = validate_unlabeled_pair_list(
+                pair_path,
+                data_root,
+                args.check_all_paths,
+            )
+            labelled_rows = validated[f'{target}_train.txt']
+            labelled_vis = [row[0] for row in labelled_rows]
+            pair_vis = [row[0] for row in pair_rows]
+            if pair_vis != labelled_vis:
+                fail(
+                    f'{pair_path.name} does not preserve every target-training '
+                    'sample and order from the audited paired cohort'
+                )
+            validated_pairs[target] = pair_rows
 
     source_labels = {
         label for _, label in validated['sunny_train.txt']
@@ -274,6 +347,55 @@ def main():
         if training_name not in validated:
             continue
         target_labels = {label for _, label in validated[training_name]}
+        val_labels = {
+            label for _, label in validated[f'{target}_val.txt']
+        }
+        support_record = manifest.get('target_class_support', {}).get(target)
+        if not isinstance(support_record, dict):
+            fail(
+                f'Manifest is missing target_class_support for {target}'
+            )
+        original_support = support_record.get('original_labels')
+        if not isinstance(original_support, list) or not original_support:
+            fail(
+                f'Manifest has invalid original-label support for {target}: '
+                f'{original_support!r}'
+            )
+        global_label_map = {
+            int(original): int(mapped)
+            for original, mapped in manifest.get('label_map', {}).items()
+        }
+        try:
+            mapped_support = {
+                global_label_map[int(label)] for label in original_support
+            }
+        except KeyError as exc:
+            fail(
+                f'{target} support contains an original class absent from the '
+                f'source label map: {exc}'
+            )
+        if target_labels != mapped_support or val_labels != mapped_support:
+            fail(
+                f'{target} train/val lists and manifest support disagree: '
+                f'manifest={sorted(mapped_support)}, '
+                f'train={sorted(target_labels)}, val={sorted(val_labels)}'
+            )
+        if args.protocol == 'jmda_oracle_shared_uda':
+            pair_rows = validated_pairs.get(target, [])
+            if len(pair_rows) != len(validated[training_name]):
+                fail(
+                    f'{target} label-free pair list dropped target samples: '
+                    f'{len(pair_rows)} != {len(validated[training_name])}'
+                )
+        expected_compact_map = {
+            str(label): index
+            for index, label in enumerate(sorted(map(int, original_support)))
+        }
+        if support_record.get('compact_label_map') != expected_compact_map:
+            fail(
+                f'{target} compact label map is invalid: '
+                f'{support_record.get("compact_label_map")!r}'
+            )
         unknown = sorted(target_labels - source_labels)
         if unknown:
             fail(
@@ -283,7 +405,9 @@ def main():
         relation = 'partial-set' if absent else 'closed-set'
         print(
             f'[AUDIT] {target}: {relation}, target classes='
-            f'{len(target_labels)}/14, source-only labels={absent}'
+            f'{len(target_labels)}/14, source-only labels={absent}, '
+            f'original support={sorted(map(int, original_support))}, '
+            f'compact map={expected_compact_map}'
         )
 
     if args.protocol in ('uda', 'vlm'):
@@ -296,8 +420,9 @@ def main():
 
     if args.protocol == 'jmda_oracle_shared_uda':
         print(
-            '[ORACLE] target-training label support will be read to filter '
-            'source-only classes; this diagnostic is not strict UDA.'
+            '[ORACLE] target-training class support was isolated in the '
+            'preprocessing manifest; training receives only the selected '
+            'original class ids. This diagnostic is not strict UDA.'
         )
 
     if args.protocol in ('sda', 'jmda_uda', 'jmda_oracle_shared_uda'):
@@ -317,7 +442,8 @@ def main():
             ),
             'jmda_oracle_shared_uda': (
                 'ORACLE_SHARED_UDA; target labels are excluded from losses, '
-                'but target class support is read for filtering'
+                'and an independently prepared class-support manifest filters '
+                'the source label space'
             ),
         }[args.protocol]
         print(f'[OK] JMDA protocol semantics: {protocol_explanation}')
