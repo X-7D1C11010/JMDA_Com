@@ -40,7 +40,12 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--label_space_mode partial_set", strict_block)
         self.assertNotIn("oracle_shared", strict_block)
         self.assertIn("--label_space_mode oracle_shared", oracle_block)
-        self.assertIn("--no_uda_source_reweighting", oracle_block)
+        self.assertIn("--uda_pseudo_class_pairing", oracle_block)
+        self.assertIn("--visual_finetuning_mode legacy_supervised", oracle_block)
+        self.assertIn("--no_sync_discriminator_lr", oracle_block)
+        self.assertIn("--no_adaptive_sinkhorn", oracle_block)
+        self.assertIn("--svd_projection_mode legacy_supervised", oracle_block)
+        self.assertIn("--basis_transport_mode legacy_supervised", oracle_block)
         self.assertIn("jmda_net_oracle_shared_uda_", oracle_block)
 
     def test_oracle_results_cannot_be_recorded_as_uda(self):
@@ -70,6 +75,8 @@ class JmdaProtocolWiringTests(unittest.TestCase):
             self.assertIn("--batch_size '$JMDA_BATCH_SIZE'", block)
             self.assertIn("--num_workers '$JMDA_NUM_WORKERS'", block)
             self.assertIn("--projection_dim '$JMDA_PROJECTION_DIM'", block)
+            self.assertIn("--svd_projection_mode legacy_supervised", block)
+            self.assertIn("--basis_transport_mode legacy_supervised", block)
             self.assertIn(
                 "--uda_source_warmup_epochs "
                 "'$JMDA_UDA_SOURCE_WARMUP_EPOCHS'",
@@ -84,18 +91,52 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--num_workers", self.module)
         self.assertIn("--prefetch_factor", self.module)
         self.assertIn("--no_pin_memory", self.module)
-        self.assertIn("16 if adaptation_protocol(args) == 'UDA' else 64", self.module)
+        self.assertIn("--uda_pseudo_class_pairing", self.module)
+        self.assertIn("source_prototype_pseudo_class", self.module)
+        self.assertIn("target_ground_truth_used_for_pairing", self.module)
+        self.assertIn("prototype_pseudo_label_assignment", self.module)
+        self.assertIn("include_label=(protocol != 'UDA')", self.module)
+        self.assertIn("leave-one-out-source-prototypes", self.module)
+        self.assertIn("pseudo_projection_ready", self.module)
+        self.assertIn("native-pre-svd", self.module)
         self.assertIn(
-            'JMDA_PROJECTION_DIM="${JMDA_PROJECTION_DIM:-16}"',
+            "--class_conditional_ot --balance_svd_classes",
+            self.launcher,
+        )
+        self.assertIn(
+            '--expected-batch-size "$JMDA_BATCH_SIZE"',
+            self.launcher,
+        )
+        self.assertIn(
+            '--expected-svd-stat-batch-size "$JMDA_SVD_STAT_BATCH_SIZE"',
+            self.launcher,
+        )
+        self.assertIn("svd_projection_mode", self.module)
+        self.assertIn("basis_transport_mode", self.module)
+        self.assertIn(
+            'JMDA_PROJECTION_DIM="${JMDA_PROJECTION_DIM:-64}"',
             self.launcher,
         )
         self.assertIn(
             'JMDA_UDA_SOURCE_WARMUP_EPOCHS="'
-            '${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-10}"',
+            '${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-0}"',
+            self.launcher,
+        )
+        self.assertIn(
+            'JMDA_SVD_STAT_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-128}"',
             self.launcher,
         )
         self.assertIn(
             "JMDA_UDA_SOURCE_WARMUP_EPOCHS >= EPOCHS",
+            self.launcher,
+        )
+        self.assertIn('EPOCHS < 15', self.launcher)
+        self.assertIn(
+            'args.epochs < args.ot_warmup_epochs + args.ot_ramp_epochs',
+            self.module,
+        )
+        self.assertIn(
+            "严格复现监督 Tensor/SVD 日程",
             self.launcher,
         )
         self.assertIn(

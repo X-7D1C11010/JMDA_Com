@@ -75,6 +75,7 @@ class NeuralOptimalTransportGenerator(nn.Module):
         epsilon: float = 0.1,
         sinkhorn_iterations: int = 50,
         sinkhorn_tolerance: float = 1e-4,
+        adaptive_sinkhorn: bool = False,
         correction_scale: float = 0.1,
         numerical_eps: float = 1e-8,
     ):
@@ -97,9 +98,14 @@ class NeuralOptimalTransportGenerator(nn.Module):
         self.epsilon = float(epsilon)
         self.sinkhorn_iterations = int(sinkhorn_iterations)
         self.sinkhorn_tolerance = float(sinkhorn_tolerance)
-        self.sinkhorn_max_iterations = max(
-            self.sinkhorn_iterations + 100,
-            self.sinkhorn_iterations * 4,
+        self.adaptive_sinkhorn = bool(adaptive_sinkhorn)
+        self.sinkhorn_max_iterations = (
+            max(
+                self.sinkhorn_iterations + 100,
+                self.sinkhorn_iterations * 4,
+            )
+            if self.adaptive_sinkhorn
+            else self.sinkhorn_iterations
         )
         self.correction_scale = float(correction_scale)
         self.numerical_eps = float(numerical_eps)
@@ -122,12 +128,10 @@ class NeuralOptimalTransportGenerator(nn.Module):
     ) -> Tuple[torch.Tensor, int]:
         """Log-domain scaling with bounded convergence refinement.
 
-        ``sinkhorn_iterations`` is the minimum number of differentiable
-        updates.  Sharply non-uniform marginals can require more iterations
-        than a uniform plan, so continue in deterministic blocks of ten until
-        both residuals meet ``sinkhorn_tolerance``.  The bounded refinement
-        keeps the same entropic-OT problem while preventing a silently invalid
-        one-sided marginal plan.
+        By default ``sinkhorn_iterations`` is also the fixed maximum, matching
+        the supervised reference.  ``adaptive_sinkhorn=True`` instead treats
+        it as the minimum and continues in deterministic blocks of ten until
+        both residuals meet ``sinkhorn_tolerance`` or the bounded maximum.
         """
         log_source = torch.log(source_marginal.clamp_min(self.numerical_eps))
         log_target = torch.log(target_marginal.clamp_min(self.numerical_eps))

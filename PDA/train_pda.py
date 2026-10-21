@@ -47,9 +47,12 @@ Faithfulness notes -- every deviation is listed:
     the downloader falls back to ``certifi``'s CA bundle.  The SHA-256 check is
     kept.
   * Class names: this project's dataset only exposes numeric class folders, so
-    prompts use numbered placeholder names (``class_1`` ... ``class_14``) unless
-    a real mapping is supplied via ``--class-names-file`` / ``JMDA_CLASS_NAMES_FILE``.
-    The efficiency record stores which of the two was used.
+    prompts use numbered placeholder names (``class_1`` ... ``class_{|T|}``)
+    unless a real mapping is supplied via ``--class-names-file`` /
+    ``JMDA_CLASS_NAMES_FILE``.  The efficiency record stores which of the two was
+    used.  2026-10-20: the count follows the target-driven label space
+    (``tools/uda_data.py``), i.e. the number of classes that actually exist in
+    the target domain, not the dataset-wide 14.
   * Precision: the release defaults to fp16 (``TRAINER.PDA.PREC = "fp16"``);
     fp16 is kept, and ``fp32`` is forced when CUDA is unavailable.
 
@@ -74,15 +77,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
-from data_paths import remap_data_path
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
+# UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
+from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
 
 import clip
 from clip.clip import _MODELS, _download
@@ -91,7 +94,6 @@ from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 _tokenizer = _Tokenizer()
 
-NUM_CLASSES = 14
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 TEMPLATE = 'a photo of a {}.'
@@ -142,30 +144,6 @@ def get_clones(module, n):
 
 
 # ── data ────────────────────────────────────────────────────────────────────
-class ImageListDataset(Dataset):
-    def __init__(self, list_path, transform=None, with_label=True):
-        self.samples = []
-        with open(list_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                self.samples.append((remap_data_path(parts[0]), int(parts[1])) if with_label
-                                    else (remap_data_path(parts[0]), -1))
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        path, label = self.samples[idx]
-        img = Image.open(path).convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        return img, label
-
-
 def build_transforms():
     """INPUT.TRANSFORMS from the released Office-31 config: random_resized_crop,
     random_flip, normalize (CLIP statistics)."""
@@ -184,16 +162,16 @@ def build_transforms():
     return train_tf, test_tf
 
 
-def load_classnames(args):
+def load_classnames(args, num_classes):
     """Real names from --class-names-file / JMDA_CLASS_NAMES_FILE, else numbered
     placeholders (recorded so results can never be mistaken for a real run)."""
     path = args.class_names_file or os.environ.get('JMDA_CLASS_NAMES_FILE', '')
     if path:
         from class_names import load_class_names
-        return load_class_names(path, expected_count=NUM_CLASSES), 'file'
+        return load_class_names(path, expected_count=num_classes), 'file'
     print('WARNING: no class-name mapping supplied; using numbered placeholder '
           'prompts (not scientifically valid, recorded as prompt_source=placeholder).')
-    return [f'class_{i + 1}' for i in range(NUM_CLASSES)], 'placeholder'
+    return [f'class_{i + 1}' for i in range(num_classes)], 'placeholder'
 
 
 # ── CLIP sub-modules (ported) ───────────────────────────────────────────────
@@ -643,16 +621,24 @@ def main():
         args.precision = 'fp32'
     print(f'Device: {device} | precision: {args.precision}')
 
-    classnames, prompt_source = load_classnames(args)
-    print(f'Class names ({prompt_source}): {classnames}')
-
     train_tf, test_tf = build_transforms()
-    src_ds = ImageListDataset(os.path.join(args.data_dir, 'sunny_train.txt'), train_tf)
-    tgt_u_ds = ImageListDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'), train_tf)
-    tgt_val_ds = ImageListDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'), test_tf)
+    # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
+    class_ids, label_map = uda_label_space(args.data_dir, args.target)
+    num_classes = len(class_ids)
+    src_ds = UdaImageListDataset(os.path.join(args.data_dir, 'sunny_train.txt'),
+                                 train_tf, label_map)
+    tgt_u_ds = UdaImageListDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'),
+                                   train_tf, label_map)
+    tgt_val_ds = UdaImageListDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'),
+                                     test_tf, label_map)
+    print(format_class_space(class_ids, num_classes))
     print(f'Source train (sunny):            {len(src_ds)} images')
     print(f'Target unlabeled ({args.target}): {len(tgt_u_ds)} images')
     print(f'Target val ({args.target}):       {len(tgt_val_ds)} images')
+    print(format_dropped('source train', src_ds))
+
+    classnames, prompt_source = load_classnames(args, num_classes)
+    print(f'Class names ({prompt_source}): {classnames}')
 
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=True)
     tgt_u_loader = DataLoader(tgt_u_ds, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=True)
@@ -779,7 +765,7 @@ def main():
                 logits = model(images.to(device))
                 all_labels.extend(labels.tolist())
                 all_predictions.extend(logits.argmax(1).cpu().tolist())
-        final_metrics = classification_metrics(all_labels, all_predictions)
+        final_metrics = classification_metrics(all_labels, all_predictions, num_classes=num_classes)
         print(f'Epoch [{epoch+1}/{args.epochs}] target val accuracy: {final_metrics["accuracy"]:.4f}')
         print(f'  {format_classification_metrics(final_metrics)}')
         if eff:

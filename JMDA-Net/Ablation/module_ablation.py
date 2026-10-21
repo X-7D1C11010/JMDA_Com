@@ -21,13 +21,19 @@ try:
     from .paired_dataset import (
         PairedMultiModalDomainDataset as MultiModalDomainDataset,
     )
-    from .PairedClassSampler import PairedClassSampler
+    from .PairedClassSampler import (
+        PairedClassSampler,
+        PseudoPairedClassSampler,
+    )
 except ImportError:
     # Direct execution: python Ablation/module_ablation.py
     from paired_dataset import (
         PairedMultiModalDomainDataset as MultiModalDomainDataset,
     )
-    from PairedClassSampler import PairedClassSampler
+    from PairedClassSampler import (
+        PairedClassSampler,
+        PseudoPairedClassSampler,
+    )
 from Models import VisualFeatureExtractor, IRFeatureExtractor, Classifier
 from Tensor import TensorBasedAlignmentStable
 from epoch_svd import format_svd_update, update_epoch_projections
@@ -61,23 +67,27 @@ def set_requires_grad(model, requires_grad=False):
         param.requires_grad = requires_grad
 
 
-def configure_visual_finetuning(net_vis):
-    """Fine-tune the intended ResNet layer2--4 blocks and projection head.
+def configure_visual_finetuning(net_vis, mode="legacy_supervised"):
+    """Configure VIS training to match a declared reference behavior.
 
     ``VisualFeatureExtractor`` stores the ResNet children in an anonymous
     ``nn.Sequential``.  Its parameter names are therefore ``features.5``--
     ``features.7`` rather than ``layer2``--``layer4``.  The historical string
-    match silently left the complete backbone frozen.  Keep the checkpoint
-    layout unchanged and select the actual stage modules explicitly.
+    match in the supervised reference left the backbone frozen and trained
+    only ``proj``.  ``legacy_supervised`` deliberately reproduces that *actual*
+    run for a controlled comparison; ``layer2_4`` retains the corrected mode.
     """
+    if mode not in {"legacy_supervised", "layer2_4"}:
+        raise ValueError(f"Unsupported visual_finetuning_mode={mode!r}.")
     if not hasattr(net_vis, 'features') or not isinstance(net_vis.features, nn.Sequential):
         raise TypeError("VisualFeatureExtractor must expose a sequential 'features' module.")
     if len(net_vis.features) < 8 or not hasattr(net_vis, 'proj'):
         raise ValueError("Unexpected ResNet feature layout; cannot select layer2--4 safely.")
 
     set_requires_grad(net_vis, False)
-    for stage_index in (5, 6, 7):
-        set_requires_grad(net_vis.features[stage_index], True)
+    if mode == "layer2_4":
+        for stage_index in (5, 6, 7):
+            set_requires_grad(net_vis.features[stage_index], True)
     set_requires_grad(net_vis.proj, True)
 
 
@@ -219,6 +229,7 @@ def transport_projected_feature_basis(
     optimizer_g=None,
     optimizer_d=None,
     classifier_basis_mode="shared",
+    shared_transport_mode="orthogonal_stable",
 ):
     """Keep learned downstream functions consistent after an SVD basis update.
 
@@ -255,6 +266,11 @@ def transport_projected_feature_basis(
         raise ValueError(
             "classifier_basis_mode must be either 'shared' or 'source'."
         )
+    if shared_transport_mode not in {"legacy_supervised", "orthogonal_stable"}:
+        raise ValueError(
+            "shared_transport_mode must be 'legacy_supervised' or "
+            "'orthogonal_stable'."
+        )
 
     source_blocks = []
     target_blocks = []
@@ -279,7 +295,11 @@ def transport_projected_feature_basis(
             _least_changing_orthogonal_factor(shared_average)
         )
         shared_average_blocks.append(shared_average)
-        shared_transport_blocks.append(shared_transport)
+        shared_transport_blocks.append(
+            shared_average
+            if shared_transport_mode == "legacy_supervised"
+            else shared_transport
+        )
         shared_effective_ranks.append(shared_rank)
         shared_rank_thresholds.append(shared_rank_threshold)
         rank = max(source_map.shape[0], 1)
@@ -337,12 +357,22 @@ def transport_projected_feature_basis(
         residual_input = generator.mlp[0]
         if residual_input.in_features != 2 * feature_dim + 1:
             raise ValueError("Neural-OT residual input width is incompatible.")
+        residual_source_map = (
+            shared_basis_map
+            if shared_transport_mode == "legacy_supervised"
+            else source_basis_map
+        )
+        residual_target_map = (
+            shared_basis_map
+            if shared_transport_mode == "legacy_supervised"
+            else target_basis_map
+        )
         residual_input.weight[:, :feature_dim].copy_(
-            residual_input.weight[:, :feature_dim].matmul(source_basis_map)
+            residual_input.weight[:, :feature_dim].matmul(residual_source_map)
         )
         residual_input.weight[:, feature_dim:2 * feature_dim].copy_(
             residual_input.weight[:, feature_dim:2 * feature_dim].matmul(
-                target_basis_map
+                residual_target_map
             )
         )
         transformed_parameters.append(residual_input.weight)
@@ -421,6 +451,7 @@ def transport_projected_feature_basis(
         "shared_transport_effective_ranks": tuple(shared_effective_ranks),
         "shared_transport_rank_thresholds": tuple(shared_rank_thresholds),
         "classifier_basis_mode": classifier_basis_mode,
+        "basis_transport_mode": shared_transport_mode,
     }
 
 
@@ -724,6 +755,295 @@ def class_prior_to_sample_marginal(labels, class_prior):
     return sample_mass / sample_mass.sum().clamp_min(1e-8)
 
 
+def assert_matching_sample_order(training_dataset, deterministic_dataset, name):
+    """Prove that pseudo labels inferred on deterministic views keep their index."""
+    if len(training_dataset) != len(deterministic_dataset):
+        raise ValueError(
+            f"{name} training/deterministic datasets differ in length: "
+            f"{len(training_dataset)} != {len(deterministic_dataset)}."
+        )
+    training_keys = [
+        (sample.get("vis"), sample.get("ir"))
+        for sample in training_dataset.samples
+    ]
+    deterministic_keys = [
+        (sample.get("vis"), sample.get("ir"))
+        for sample in deterministic_dataset.samples
+    ]
+    if training_keys != deterministic_keys:
+        raise ValueError(
+            f"{name} training/deterministic datasets do not share an exact "
+            "VIS/IR sample order; refusing to attach pseudo labels by index."
+        )
+
+
+def prototype_pseudo_label_assignment(class_scores):
+    """Assign nearest-prototype labels with the smallest possible repair.
+
+    The supervised sampler preserves the observed target class distribution
+    and *then* balances classes by resampling.  Forcing the pseudo labels
+    themselves to an ``N / K`` distribution changes many semantic assignments
+    before that resampling step and can turn weak similarities into hard,
+    self-reinforcing SVD/OT correspondences.  Here every observation first
+    receives its nearest source prototype.  Because ``oracle_shared`` has
+    already established that every configured class occurs in target train,
+    a missing predicted class is repaired with exactly one best-available
+    observation while never emptying another class.  Class balancing remains
+    the sole responsibility of :class:`PseudoPairedClassSampler`.
+    """
+    if class_scores.ndim != 2:
+        raise ValueError("class_scores must have shape [samples, classes].")
+    sample_count, class_count = class_scores.shape
+    if class_count < 1 or sample_count < class_count:
+        raise ValueError(
+            "Balanced pseudo pairing requires at least one target sample per "
+            f"configured class: samples={sample_count}, classes={class_count}."
+        )
+    if not torch.isfinite(class_scores).all():
+        raise ValueError("class_scores contains non-finite values.")
+
+    scores = class_scores.detach().cpu()
+    nearest = scores.argmax(dim=1)
+    assignment = nearest.clone()
+    counts = torch.bincount(assignment, minlength=class_count)
+    repaired_count = 0
+
+    # Repair only absent classes.  The score delta measures how much evidence
+    # is lost by moving a sample away from its current nearest prototype.  A
+    # donor class must retain at least one observation, so repairs cannot create
+    # a new missing class while fixing another one.
+    while bool((counts == 0).any()):
+        missing_classes = torch.nonzero(counts == 0, as_tuple=False).flatten()
+        best_choice = None
+        for missing_class in missing_classes.tolist():
+            donor_counts = counts[assignment]
+            eligible = donor_counts > 1
+            if not bool(eligible.any()):
+                raise RuntimeError(
+                    "Cannot repair pseudo-label class coverage without emptying "
+                    "another configured class."
+                )
+            current_scores = scores.gather(1, assignment.unsqueeze(1)).squeeze(1)
+            deltas = scores[:, missing_class] - current_scores
+            deltas = deltas.masked_fill(~eligible, -float("inf"))
+            sample_index = int(deltas.argmax())
+            choice = (float(deltas[sample_index]), sample_index, missing_class)
+            if best_choice is None or choice > best_choice:
+                best_choice = choice
+
+        _, sample_index, missing_class = best_choice
+        previous_class = int(assignment[sample_index])
+        assignment[sample_index] = missing_class
+        counts[previous_class] -= 1
+        counts[missing_class] += 1
+        repaired_count += 1
+
+    if int(counts.sum()) != sample_count or bool((counts < 1).any()):
+        raise RuntimeError("Pseudo-label coverage repair produced invalid counts.")
+    return assignment, {
+        "class_counts": counts,
+        "nearest_labels": nearest,
+        "repaired_count": repaired_count,
+    }
+
+
+class _TargetFeatureOnlyDataset(Dataset):
+    """Hide target ground-truth labels from pseudo-label inference workers."""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        sample = self.dataset[index]
+        return {
+            "vis": sample["vis"],
+            "ir": sample["ir"],
+        }
+
+
+@torch.no_grad()
+def infer_prototype_pseudo_labels(
+    net_vis,
+    net_ir,
+    tal_module,
+    source_dataset,
+    target_dataset,
+    num_classes,
+    batch_size,
+    device,
+    use_tensor_module,
+    num_workers=0,
+    prefetch_factor=2,
+    pin_memory=False,
+):
+    """Infer target pseudo classes from source-labelled feature prototypes.
+
+    Only source labels are read.  Target batches contribute VIS/IR tensors but
+    their ``label`` field is deliberately ignored.  Each modality receives a
+    source-label-only reliability weight from leave-one-out, class-balanced
+    prototype accuracy.  Leave-one-out is essential: scoring a source sample
+    against a prototype that contains the same sample makes random features
+    appear almost perfectly reliable in high dimensions.  This prevents an
+    untrained IR branch from dominating the pretrained VIS branch at the first
+    pseudo-label update; later updates use the current aligned coordinates and
+    can increase the IR contribution.
+    """
+    if num_classes < 1:
+        raise ValueError("num_classes must be positive.")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive.")
+
+    non_blocking = bool(pin_memory and device.type == "cuda")
+    previous_states = (
+        net_vis.training,
+        net_ir.training,
+        tal_module.training,
+    )
+    net_vis.eval()
+    net_ir.eval()
+    tal_module.eval()
+
+    def loader_for(dataset, seed):
+        options = {
+            "batch_size": batch_size,
+            "shuffle": False,
+            "drop_last": False,
+            "num_workers": num_workers,
+            "pin_memory": pin_memory,
+            "worker_init_fn": seed_data_worker,
+            "generator": torch.Generator().manual_seed(int(seed)),
+        }
+        if num_workers > 0:
+            options.update({
+                "persistent_workers": False,
+                "prefetch_factor": prefetch_factor,
+            })
+        return DataLoader(dataset, **options)
+
+    source_features = [[], []]
+    source_labels = []
+    target_features = [[], []]
+    try:
+        for batch in loader_for(source_dataset, 17_001):
+            vis = net_vis(batch["vis"].to(device, non_blocking=non_blocking))
+            ir = net_ir(batch["ir"].to(device, non_blocking=non_blocking))
+            if use_tensor_module:
+                vis = vis.matmul(tal_module.U_matrices[0])
+                ir = ir.matmul(tal_module.U_matrices[1])
+            source_features[0].append(F.normalize(vis, dim=1).float())
+            source_features[1].append(F.normalize(ir, dim=1).float())
+            source_labels.append(
+                batch["label"].to(device, non_blocking=non_blocking).long()
+            )
+
+        for batch in loader_for(
+            _TargetFeatureOnlyDataset(target_dataset),
+            17_002,
+        ):
+            vis = net_vis(batch["vis"].to(device, non_blocking=non_blocking))
+            ir = net_ir(batch["ir"].to(device, non_blocking=non_blocking))
+            if use_tensor_module:
+                vis = vis.matmul(tal_module.V_matrices[0])
+                ir = ir.matmul(tal_module.V_matrices[1])
+            target_features[0].append(F.normalize(vis, dim=1).float())
+            target_features[1].append(F.normalize(ir, dim=1).float())
+    finally:
+        net_vis.train(previous_states[0])
+        net_ir.train(previous_states[1])
+        tal_module.train(previous_states[2])
+
+    source_features = [torch.cat(chunks, dim=0) for chunks in source_features]
+    source_labels = torch.cat(source_labels, dim=0)
+    target_features = [torch.cat(chunks, dim=0) for chunks in target_features]
+
+    modality_target_scores = []
+    modality_balanced_accuracy = []
+    for source_modality, target_modality in zip(
+        source_features,
+        target_features,
+    ):
+        prototypes = []
+        for class_index in range(num_classes):
+            class_mask = source_labels.eq(class_index)
+            if not bool(class_mask.any()):
+                raise ValueError(
+                    "Source domain is missing a configured pseudo-pairing class: "
+                    f"{class_index}."
+                )
+            prototypes.append(
+                F.normalize(
+                    source_modality[class_mask].mean(dim=0),
+                    dim=0,
+                )
+            )
+        prototypes = torch.stack(prototypes, dim=0)
+        source_scores = source_modality.matmul(prototypes.transpose(0, 1))
+        per_class_accuracy = []
+        for class_index in range(num_classes):
+            class_mask = source_labels.eq(class_index)
+            class_count = int(class_mask.sum().item())
+            if class_count < 2:
+                raise ValueError(
+                    "Leave-one-out modality reliability requires at least two "
+                    "source samples per configured class; "
+                    f"class={class_index}, count={class_count}."
+                )
+            class_features = source_modality[class_mask]
+            leave_one_out_prototypes = F.normalize(
+                class_features.sum(dim=0, keepdim=True) - class_features,
+                dim=1,
+            )
+            source_scores[class_mask, class_index] = (
+                class_features * leave_one_out_prototypes
+            ).sum(dim=1)
+            source_predictions = source_scores[class_mask].argmax(dim=1)
+            per_class_accuracy.append(
+                source_predictions.eq(class_index).float().mean()
+            )
+        modality_balanced_accuracy.append(
+            torch.stack(per_class_accuracy).mean()
+        )
+        modality_target_scores.append(
+            target_modality.matmul(prototypes.transpose(0, 1))
+        )
+
+    modality_balanced_accuracy = torch.stack(modality_balanced_accuracy)
+    chance_accuracy = 1.0 / num_classes
+    reliability = (modality_balanced_accuracy - chance_accuracy).clamp_min(1e-3)
+    modality_weights = reliability / reliability.sum()
+    class_scores = sum(
+        weight * scores
+        for weight, scores in zip(modality_weights, modality_target_scores)
+    )
+    pseudo_labels, assignment_info = prototype_pseudo_label_assignment(
+        class_scores
+    )
+    pseudo_labels_device = pseudo_labels.to(class_scores.device)
+    probabilities = F.softmax(class_scores, dim=1)
+    assigned_confidence = probabilities.gather(
+        1,
+        pseudo_labels_device.unsqueeze(1),
+    ).squeeze(1)
+    nearest_labels = assignment_info["nearest_labels"].to(class_scores.device)
+    agreement = nearest_labels.eq(pseudo_labels_device).float().mean()
+    return pseudo_labels.cpu(), {
+        "class_counts": assignment_info["class_counts"].tolist(),
+        "coverage_repairs": int(assignment_info["repaired_count"]),
+        "mean_assigned_confidence": float(assigned_confidence.mean()),
+        "repaired_vs_nearest_agreement": float(agreement),
+        "modality_balanced_accuracy": [
+            float(value) for value in modality_balanced_accuracy
+        ],
+        "modality_weights": [float(value) for value in modality_weights],
+        "modality_reliability_estimator": (
+            "leave-one-out-source-prototypes"
+        ),
+    }
+
+
 def seed_data_worker(worker_id):
     """Seed Python and NumPy from PyTorch's deterministic worker seed."""
     del worker_id  # The worker-specific value is already folded into initial_seed().
@@ -1011,6 +1331,7 @@ def run_single_iteration(args, seed, logger):
             src_train_ds.labels,
             target_probe.labels,
         )
+        del target_probe
         # Filtering samples while retaining the original 14-way classifier
         # leaves unsupported logits in the CE denominator and in the target
         # prior.  A shared-label-space diagnostic must use the selected class
@@ -1028,6 +1349,7 @@ def run_single_iteration(args, seed, logger):
             domain_type='target',
             phase='train',
             global_label_map=global_map,
+            include_label=(protocol != 'UDA'),
         )
         logger.warning(
             "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. "
@@ -1043,11 +1365,14 @@ def run_single_iteration(args, seed, logger):
             domain_type='target',
             phase='train',
             global_label_map=global_map,
+            include_label=(protocol != 'UDA'),
         )
 
     src_svd_ds = None
     tgt_svd_ds = None
-    if args.use_tensor_module:
+    if args.use_tensor_module or (
+        protocol == 'UDA' and args.uda_pseudo_class_pairing
+    ):
         # SVD statistics use the same training samples without stochastic crop
         # or flip. Validation samples are never involved in projection updates.
         src_svd_ds = MultiModalDomainDataset(
@@ -1064,7 +1389,10 @@ def run_single_iteration(args, seed, logger):
             phase='train',
             global_label_map=global_map,
             deterministic_transform=True,
+            include_label=(protocol != 'UDA'),
         )
+        assert_matching_sample_order(src_train_ds, src_svd_ds, "source")
+        assert_matching_sample_order(tgt_train_ds, tgt_svd_ds, "target")
 
     tgt_val_ds = MultiModalDomainDataset(TARGET_ROOT, domain_type='target', phase='val',
                                          global_label_map=global_map, val_augment=False)
@@ -1076,8 +1404,12 @@ def run_single_iteration(args, seed, logger):
     )
     target_train_counts = (
         dict(sorted(Counter(tgt_train_ds.labels).items()))
-        if protocol != 'UDA' or args.label_space_mode == 'oracle_shared'
-        else '<not inspected in strict UDA>'
+        if protocol != 'UDA'
+        else (
+            '<class support inspected once; per-class counts withheld>'
+            if args.label_space_mode == 'oracle_shared'
+            else '<not inspected in strict UDA>'
+        )
     )
     logger.info(
         "Class counts (original labels): "
@@ -1092,6 +1424,12 @@ def run_single_iteration(args, seed, logger):
         f"target_train={tgt_train_ds.pairing_stats}; "
         f"target_val={tgt_val_ds.pairing_stats}"
     )
+    logger.info(
+        "Target training item label exposure: "
+        f"include_label={getattr(tgt_train_ds, 'include_label', True)}; "
+        "UDA must be False (the isolated oracle support probe, if enabled, "
+        "is not passed to the optimizer)."
+    )
 
     target_label_ratio = 1.0 if args.use_target_labels else args.target_label_ratio
     target_cls_weight = 1.0 if args.use_target_labels else args.target_cls_weight
@@ -1101,9 +1439,20 @@ def run_single_iteration(args, seed, logger):
     if not args.use_target_labels and target_label_ratio > 0.0 and target_cls_weight > 0.0:
         target_labeled_indices = build_target_labeled_indices(tgt_train_ds, target_label_ratio, seed)
 
+    use_pseudo_class_pairing = bool(
+        protocol == 'UDA' and args.uda_pseudo_class_pairing
+    )
     if protocol == 'SDA':
         paired_loader = PairedClassSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
         logger.info("Training mode: full target-label supervision (class-paired batches).")
+    elif use_pseudo_class_pairing:
+        # Constructed at every epoch after label-free source-prototype
+        # inference. Target ground-truth labels are not read by the sampler.
+        paired_loader = None
+        logger.info(
+            "Training mode: prototype-pseudo-paired UDA; target ground-truth "
+            "labels are excluded from pair construction, SVD, OT and losses."
+        )
     else:
         paired_loader = UnpairedDomainSampler(
             src_train_ds,
@@ -1136,11 +1485,18 @@ def run_single_iteration(args, seed, logger):
             logger.info(
                 f"Fixed labeled target subset: {len(target_labeled_indices)}/{len(tgt_train_ds)} samples."
             )
-    logger.info(
-        f"Training batches per epoch: {len(paired_loader)}; "
-        f"batch_size={BATCH_SIZE}; num_workers={args.num_workers}; "
-        f"prefetch_factor={args.prefetch_factor}; pin_memory={pin_memory}"
-    )
+    if paired_loader is None:
+        logger.info(
+            "Training batches per epoch: determined from balanced target pseudo "
+            f"classes each epoch; batch_size={BATCH_SIZE}; pseudo-pair loader "
+            "matches the supervised in-process sampler."
+        )
+    else:
+        logger.info(
+            f"Training batches per epoch: {len(paired_loader)}; "
+            f"batch_size={BATCH_SIZE}; num_workers={args.num_workers}; "
+            f"prefetch_factor={args.prefetch_factor}; pin_memory={pin_memory}"
+        )
     val_loader_options = {
         'batch_size': BATCH_SIZE,
         'shuffle': False,
@@ -1165,7 +1521,7 @@ def run_single_iteration(args, seed, logger):
     DISCRIMINATOR_UPDATE_INTERVAL = 2
     use_class_conditional_ot = (
         args.use_ot_module
-        and args.use_target_labels
+        and (args.use_target_labels or use_pseudo_class_pairing)
         and args.class_conditional_ot
         and args.transport_mode != 'legacy_row_softmax'
     )
@@ -1181,14 +1537,19 @@ def run_single_iteration(args, seed, logger):
     net_ir = IRFeatureExtractor(output_dim=IR_DIM).to(DEVICE)
 
     set_requires_grad(net_ir, True)
-    configure_visual_finetuning(net_vis)
+    configure_visual_finetuning(net_vis, args.visual_finetuning_mode)
+    visual_stage_description = (
+        "projection only (actual supervised-reference behavior)"
+        if args.visual_finetuning_mode == "legacy_supervised"
+        else "ResNet layer2--4 + projection"
+    )
     logger.info(
         "Trainable parameters: "
         f"VIS={count_trainable_parameters(net_vis):,}/"
         f"{sum(parameter.numel() for parameter in net_vis.parameters()):,}, "
         f"IR={count_trainable_parameters(net_ir):,}/"
         f"{sum(parameter.numel() for parameter in net_ir.parameters()):,}. "
-        "VIS fine-tuning stages=ResNet layer2--4 + projection."
+        f"VIS fine-tuning stages={visual_stage_description}."
     )
 
     if args.use_tensor_module:
@@ -1200,6 +1561,9 @@ def run_single_iteration(args, seed, logger):
             svd_tolerance=args.svd_tolerance,
             unpaired_ot_epsilon=args.ot_epsilon,
             unpaired_sinkhorn_iterations=args.ot_sinkhorn_iterations,
+            stabilize_rank_deficient=(
+                args.svd_projection_mode != 'legacy_supervised'
+            ),
         ).to(DEVICE)
     else:
         tal_module = ChannelConcatenation(expected_dims=[VIS_DIM, IR_DIM]).to(DEVICE)
@@ -1210,6 +1574,7 @@ def run_single_iteration(args, seed, logger):
             transport_mode=args.transport_mode,
             epsilon=args.ot_epsilon,
             sinkhorn_iterations=args.ot_sinkhorn_iterations,
+            adaptive_sinkhorn=args.adaptive_sinkhorn,
             correction_scale=args.ot_correction_scale,
         ).to(DEVICE)
         discriminator = DomainDiscriminator(feature_dim=fused_dim).to(DEVICE)
@@ -1235,7 +1600,14 @@ def run_single_iteration(args, seed, logger):
             f"class conditional={use_class_conditional_ot}"
         )
         if args.use_tensor_module:
-            if protocol == 'UDA':
+            if use_pseudo_class_pairing:
+                logger.info(
+                    "Joint optimization schedule: supervised-reference "
+                    f"Tensor/SVD warm-up for {args.ot_warmup_epochs} epochs "
+                    f"from epoch 1, then OT loss ramp over "
+                    f"{args.ot_ramp_epochs} epochs."
+                )
+            elif protocol == 'UDA':
                 logger.info(
                     "Joint optimization schedule: source-only warm-up for "
                     f"{args.uda_source_warmup_epochs} epochs (no target forward, "
@@ -1251,6 +1623,11 @@ def run_single_iteration(args, seed, logger):
     if args.use_tensor_module:
         if protocol == 'SDA':
             statistics_description = "complete class-paired target-training bank"
+        elif use_pseudo_class_pairing:
+            statistics_description = (
+                "complete class-balanced source/target pseudo-paired bank "
+                "from epoch 1"
+            )
         elif protocol == 'UDA':
             statistics_description = (
                 "complete independent source/target training banks after warm-up"
@@ -1261,7 +1638,9 @@ def run_single_iteration(args, seed, logger):
             f"Tensor projection update: once per epoch from the "
             f"{statistics_description}; projection_dim={PROJ_DIM}, "
             f"max_sweeps={args.svd_max_sweeps}, relative singular-value "
-            f"tolerance={args.svd_tolerance:g}"
+            f"tolerance={args.svd_tolerance:g}, "
+            f"projection_mode={args.svd_projection_mode}, "
+            f"basis_transport={args.basis_transport_mode}"
         )
 
     classifier = Classifier(input_dim=fused_dim, num_classes=len(global_map)).to(DEVICE)
@@ -1316,6 +1695,7 @@ def run_single_iteration(args, seed, logger):
     best_metrics = None
     best_epoch = None
     metric_history = []
+    previous_target_pseudo_labels = None
 
     for epoch in range(EPOCHS):
         uda_source_warmup_active = is_uda_source_warmup(
@@ -1324,7 +1704,7 @@ def run_single_iteration(args, seed, logger):
             args.uda_source_warmup_epochs,
         )
         effective_ot_warmup = (
-            max(args.ot_warmup_epochs, args.uda_source_warmup_epochs)
+            args.ot_warmup_epochs + args.uda_source_warmup_epochs
             if protocol == 'UDA'
             else args.ot_warmup_epochs
         )
@@ -1336,6 +1716,86 @@ def run_single_iteration(args, seed, logger):
         )
         if uda_source_warmup_active:
             joint_ot_scale = 0.0
+
+        target_pseudo_labels = None
+        target_pseudo_original_labels = None
+        if use_pseudo_class_pairing:
+            # Before the first epoch-level SVD update, U/V are merely random
+            # orthogonal initializers.  They are valid SVD sweep seeds but not
+            # a learned semantic space for deciding the very correspondences
+            # used by that first SVD.  Infer epoch-1 pseudo classes in the
+            # native encoder space; after update #1, use the learned paired
+            # source/target SVD coordinates on every later epoch.
+            pseudo_projection_ready = bool(
+                args.use_tensor_module
+                and int(tal_module.projection_update_count.item()) > 0
+            )
+            pseudo_feature_space = (
+                'aligned-svd'
+                if pseudo_projection_ready
+                else 'native-pre-svd'
+            )
+            target_pseudo_labels, pseudo_info = infer_prototype_pseudo_labels(
+                net_vis=net_vis,
+                net_ir=net_ir,
+                tal_module=tal_module,
+                source_dataset=src_svd_ds,
+                target_dataset=tgt_svd_ds,
+                num_classes=len(global_map),
+                batch_size=args.svd_stat_batch_size,
+                device=DEVICE,
+                use_tensor_module=pseudo_projection_ready,
+                num_workers=args.num_workers,
+                prefetch_factor=args.prefetch_factor,
+                pin_memory=pin_memory,
+            )
+            paired_loader = PseudoPairedClassSampler(
+                src_train_ds,
+                tgt_train_ds,
+                target_pseudo_labels,
+                BATCH_SIZE,
+                expected_classes=range(len(global_map)),
+            )
+            original_label_by_index = {
+                int(mapped): int(original)
+                for original, mapped in global_map.items()
+            }
+            target_pseudo_original_labels = [
+                original_label_by_index[int(label)]
+                for label in target_pseudo_labels.tolist()
+            ]
+            pseudo_change_rate = (
+                float(
+                    target_pseudo_labels.ne(
+                        previous_target_pseudo_labels
+                    ).float().mean()
+                )
+                if previous_target_pseudo_labels is not None
+                else float('nan')
+            )
+            previous_target_pseudo_labels = target_pseudo_labels.clone()
+            pseudo_change_text = (
+                'n/a' if math.isnan(pseudo_change_rate)
+                else f'{pseudo_change_rate:.4f}'
+            )
+            logger.info(
+                f"Epoch [{epoch + 1}/{EPOCHS}] | UDA pseudo-class pairing: "
+                "target_label_source=source-prototype (no target ground truth), "
+                f"pseudo_feature_space={pseudo_feature_space}, "
+                f"class_counts={pseudo_info['class_counts']}, "
+                f"coverage_repairs={pseudo_info['coverage_repairs']}, "
+                f"assigned_confidence={pseudo_info['mean_assigned_confidence']:.4f}, "
+                "repaired-vs-nearest agreement="
+                f"{pseudo_info['repaired_vs_nearest_agreement']:.4f}, "
+                f"modality_source_bal_acc={pseudo_info['modality_balanced_accuracy']}, "
+                f"modality_weights={pseudo_info['modality_weights']}, "
+                "modality_reliability_estimator="
+                f"{pseudo_info['modality_reliability_estimator']}, "
+                f"change_rate={pseudo_change_text}, "
+                f"target_samples={len(tgt_train_ds)}, "
+                f"balanced_epoch_samples={paired_loader.epoch_sample_count}, "
+                f"training_batches={len(paired_loader)}"
+            )
 
         if args.use_tensor_module and not uda_source_warmup_active:
             old_source_projections = [
@@ -1354,17 +1814,21 @@ def run_single_iteration(args, seed, logger):
                 target_dataset=tgt_svd_ds,
                 batch_size=args.svd_stat_batch_size,
                 device=DEVICE,
-                # SDA keeps its same-class pairing fixed; UDA/SSDA collect
-                # independent full-domain banks and infer a soft matching.
+                # SDA uses target labels. Pseudo-paired UDA uses only
+                # source-prototype pseudo labels; the remaining UDA/SSDA path
+                # collects independent banks and infers a soft matching.
                 seed=seed * 1000,
-                class_paired=args.use_target_labels,
+                class_paired=(args.use_target_labels or use_pseudo_class_pairing),
                 balance_classes=(
-                    args.use_target_labels and args.balance_svd_classes
+                    (args.use_target_labels or use_pseudo_class_pairing)
+                    and args.balance_svd_classes
                 ),
+                target_labels_override=target_pseudo_original_labels,
                 source_class_weights=(
                     stabilized_target_prior()
                     if (
                         protocol != 'SDA'
+                        and not use_pseudo_class_pairing
                         and args.uda_source_reweighting
                         and target_prior_updates > 0
                     )
@@ -1388,12 +1852,15 @@ def run_single_iteration(args, seed, logger):
                     new_target_projections=tal_module.V_matrices,
                     optimizer_g=optimizer_g,
                     optimizer_d=optimizer_d,
-                    # Only source logits carry supervised CE in pure UDA.
-                    # SDA has labels on both domains and retains a shared
-                    # orthogonal compromise for the common classifier.
+                    # Pseudo-paired UDA follows the supervised shared-coordinate
+                    # transport because both domains are row-wise paired by the
+                    # inferred class. Unpaired UDA remains source-anchored.
                     classifier_basis_mode=(
-                        "source" if protocol == "UDA" else "shared"
+                        "source"
+                        if protocol == "UDA" and not use_pseudo_class_pairing
+                        else "shared"
                     ),
+                    shared_transport_mode=args.basis_transport_mode,
                 )
                 svd_info.update(basis_info)
             logger.info(f"Epoch [{epoch + 1}/{EPOCHS}] | {format_svd_update(svd_info)}")
@@ -1412,7 +1879,9 @@ def run_single_iteration(args, seed, logger):
             epoch_projection_update_count = None
 
         net_vis.train()
-        frozen_vis_bn_count = set_frozen_batchnorm_eval(net_vis)
+        frozen_vis_bn_count = 0
+        if args.visual_finetuning_mode != "legacy_supervised":
+            frozen_vis_bn_count = set_frozen_batchnorm_eval(net_vis)
         net_ir.train()
         tal_module.train()
         if generator is not None:
@@ -1420,9 +1889,16 @@ def run_single_iteration(args, seed, logger):
         classifier.train()
         discriminator.train()
         if epoch == 0:
-            logger.info(
-                f"Frozen VIS BatchNorm layers kept in eval mode: {frozen_vis_bn_count}."
-            )
+            if args.visual_finetuning_mode == "legacy_supervised":
+                logger.info(
+                    "VIS BatchNorm behavior: supervised-reference train mode "
+                    "(running statistics update even in the frozen backbone)."
+                )
+            else:
+                logger.info(
+                    "Frozen VIS BatchNorm layers kept in eval mode: "
+                    f"{frozen_vis_bn_count}."
+                )
 
         loss_accum = 0.0
         loss_cls_accum = 0.0
@@ -1452,6 +1928,7 @@ def run_single_iteration(args, seed, logger):
         steps = 0
         collect_target_prior = (
             protocol != 'SDA'
+            and not use_pseudo_class_pairing
             and args.uda_source_reweighting
             and epoch >= max(
                 args.uda_prior_warmup_epochs,
@@ -1468,6 +1945,11 @@ def run_single_iteration(args, seed, logger):
         for src_data, tgt_data in paired_loader:
             steps += 1
 
+            if use_pseudo_class_pairing and 'label' in tgt_data:
+                raise RuntimeError(
+                    "Pseudo-paired UDA received a target ground-truth label in "
+                    "the optimization batch."
+                )
             if protocol == 'UDA':
                 tgt_data = {
                     key: value for key, value in tgt_data.items()
@@ -1517,6 +1999,21 @@ def run_single_iteration(args, seed, logger):
                 tgt_data['label'].to(DEVICE, non_blocking=non_blocking)
                 if protocol != 'UDA' else None
             )
+            t_pseudo_label = (
+                tgt_data['pseudo_label'].to(
+                    DEVICE,
+                    non_blocking=non_blocking,
+                ).long()
+                if use_pseudo_class_pairing
+                else None
+            )
+            if use_pseudo_class_pairing and not torch.equal(
+                s_label,
+                t_pseudo_label,
+            ):
+                raise RuntimeError(
+                    "Pseudo-paired UDA batch contains a cross-class row pair."
+                )
 
             f_s_vis, f_s_ir = net_vis(s_vis), net_ir(s_ir)
             f_t_vis, f_t_ir = net_vis(t_vis), net_ir(t_ir)
@@ -1528,9 +2025,12 @@ def run_single_iteration(args, seed, logger):
                 (p_s_vis, p_s_ir), (p_t_vis, p_t_ir), loss_tal = tal_module(
                     [f_s_vis, f_s_ir],
                     [f_t_vis, f_t_ir],
-                    # Strict UDA has no semantic row-wise pairing. Its Tensor
-                    # loss is computed below from an all-pairs soft plan.
-                    compute_alignment=args.use_target_labels,
+                    # Pseudo-paired UDA has an explicit label-free row-wise
+                    # class correspondence. Unpaired UDA still computes its
+                    # Tensor loss below from an all-pairs soft plan.
+                    compute_alignment=(
+                        args.use_target_labels or use_pseudo_class_pairing
+                    ),
                 )
             else:
                 (p_s_vis, p_s_ir), (p_t_vis, p_t_ir), loss_tal = tal_module(
@@ -1586,14 +2086,22 @@ def run_single_iteration(args, seed, logger):
                     feat_tgt,
                     return_details=True,
                     source_labels=s_label if use_class_conditional_ot else None,
-                    target_labels=t_label if use_class_conditional_ot else None,
+                    target_labels=(
+                        t_label
+                        if args.use_target_labels
+                        else t_pseudo_label
+                    ) if use_class_conditional_ot else None,
                     source_marginal=source_marginal,
                 )
             else:
                 feat_mid = None
                 transport_details = None
 
-            if args.use_tensor_module and not args.use_target_labels:
+            if (
+                args.use_tensor_module
+                and not args.use_target_labels
+                and not use_pseudo_class_pairing
+            ):
                 if transport_details is not None:
                     tensor_plan = transport_details['mass_plan'].detach()
                 else:
@@ -1655,6 +2163,20 @@ def run_single_iteration(args, seed, logger):
                 intermediate_logits=pred_mid,
                 intermediate_scale=joint_ot_scale,
             )
+            if (
+                use_pseudo_class_pairing
+                and pred_mid is not None
+                and feat_mid is not None
+            ):
+                # This is the supervised method's intermediate-domain source
+                # CE.  The paired target row was selected by a pseudo class;
+                # no target ground-truth label enters this loss.
+                pseudo_intermediate_loss = criterion_cls(pred_mid, s_label)
+                loss_cls_total = (
+                    loss_cls_total
+                    + joint_ot_scale * pseudo_intermediate_loss
+                )
+                classification_terms['intermediate'] = pseudo_intermediate_loss
 
             alpha = min(2.0 / (1.0 + np.exp(-10 * epoch / EPOCHS)) - 1.0, 1.0)
 
@@ -1905,10 +2427,21 @@ def run_single_iteration(args, seed, logger):
     report_metrics = dict(report_metrics)
     report_metrics['protocol'] = experiment_protocol
     report_metrics['label_space_mode'] = args.label_space_mode
+    report_metrics['uda_pairing_mode'] = (
+        'source_prototype_pseudo_class'
+        if use_pseudo_class_pairing
+        else 'all_pairs'
+    )
     report_metrics['oracle_shared_labels'] = (
         list(oracle_shared_labels) if oracle_shared_labels is not None else []
     )
     report_metrics['label_map_original_to_index'] = dict(global_map)
+    report_metrics['target_train_samples'] = len(tgt_train_ds)
+    report_metrics['target_training_item_labels_exposed'] = bool(
+        getattr(tgt_train_ds, 'include_label', True)
+    )
+    report_metrics['svd_projection_mode'] = args.svd_projection_mode
+    report_metrics['basis_transport_mode'] = args.basis_transport_mode
     report_metrics['code_fingerprint'] = getattr(
         args,
         'code_fingerprint',
@@ -1931,6 +2464,32 @@ def run_single_iteration(args, seed, logger):
                 'label_map_original_to_index': dict(global_map),
                 'report_strategy': args.report_strategy,
                 'projection_dim': args.projection_dim,
+                'svd_projection_mode': args.svd_projection_mode,
+                'basis_transport_mode': args.basis_transport_mode,
+                'uda_pairing_mode': report_metrics['uda_pairing_mode'],
+                'target_ground_truth_used_for_pairing': bool(args.use_target_labels),
+                'target_training_item_labels_exposed': report_metrics[
+                    'target_training_item_labels_exposed'
+                ],
+                'target_train_samples': len(tgt_train_ds),
+                'visual_finetuning_mode': args.visual_finetuning_mode,
+                'adaptive_sinkhorn': args.adaptive_sinkhorn,
+                'transport_mode': args.transport_mode,
+                'ot_sinkhorn_iterations': args.ot_sinkhorn_iterations,
+                'ot_warmup_epochs': args.ot_warmup_epochs,
+                'ot_ramp_epochs': args.ot_ramp_epochs,
+                'class_conditional_ot': args.class_conditional_ot,
+                'balance_svd_classes': args.balance_svd_classes,
+                'sync_discriminator_lr': args.sync_discriminator_lr,
+                'tensor_loss_weight': args.tensor_loss_weight,
+                'adv_loss_weight': args.adv_loss_weight,
+                'lr_feature': args.lr_feature,
+                'lr_other': args.lr_other,
+                'weight_decay': args.weight_decay,
+                'modality_reliability_estimator': (
+                    'leave-one-out-source-prototypes'
+                    if use_pseudo_class_pairing else None
+                ),
                 'code_fingerprint': getattr(args, 'code_fingerprint', None),
                 'uda_source_warmup_epochs': args.uda_source_warmup_epochs,
                 'data_loading': {
@@ -2038,23 +2597,37 @@ def run_ablation_experiment(args):
     if args.use_tensor_module:
         logger.info(
             f"Tensor投影维度/更新: {args.projection_dim}/每epoch一次; "
-            f"SVD统计批次={args.svd_stat_batch_size}"
+            f"SVD统计批次={args.svd_stat_batch_size}; "
+            f"SVD投影模式={args.svd_projection_mode}; "
+            f"基变换模式={args.basis_transport_mode}"
         )
     logger.info(f"学习率: feature={args.lr_feature}, other={args.lr_other}, weight_decay={args.weight_decay}")
+    logger.info(
+        f"VIS训练/BN模式: {args.visual_finetuning_mode}; "
+        f"Sinkhorn自适应迭代={args.adaptive_sinkhorn}"
+    )
     logger.info(
         "判别器学习率调度: "
         + ("与生成侧同步余弦衰减" if args.sync_discriminator_lr else "固定学习率")
     )
     logger.info(f"报告策略: {args.report_strategy}, 窗口: {args.report_window}")
     if protocol == 'UDA':
-        logger.info(
-            "UDA无标签对应: all-pairs Sinkhorn Tensor/SVD; "
-            f"source-prior reweighting={args.uda_source_reweighting}, "
-            f"source_only_warmup={args.uda_source_warmup_epochs}, "
-            f"prior_warmup={args.uda_prior_warmup_epochs}, "
-            f"momentum={args.uda_prior_momentum}, "
-            f"uniform_mix={args.uda_prior_uniform_mix}"
-        )
+        if args.uda_pseudo_class_pairing:
+            logger.info(
+                "UDA无标签对应: source-prototype pseudo-class paired "
+                "Tensor/SVD + class-conditional OT; target ground-truth labels "
+                "are excluded from pair construction and optimization; "
+                f"source_only_warmup={args.uda_source_warmup_epochs}"
+            )
+        else:
+            logger.info(
+                "UDA无标签对应: all-pairs Sinkhorn Tensor/SVD; "
+                f"source-prior reweighting={args.uda_source_reweighting}, "
+                f"source_only_warmup={args.uda_source_warmup_epochs}, "
+                f"prior_warmup={args.uda_prior_warmup_epochs}, "
+                f"momentum={args.uda_prior_momentum}, "
+                f"uniform_mix={args.uda_prior_uniform_mix}"
+            )
     elif protocol == 'SSDA':
         logger.info(
             "SSDA: only the fixed labeled target subset contributes target "
@@ -2129,6 +2702,19 @@ def run_ablation_experiment(args):
         if all_iteration_results
         else {}
     )
+    target_train_samples = (
+        all_iteration_results[0].get('target_train_samples')
+        if all_iteration_results
+        else None
+    )
+    target_training_item_labels_exposed = (
+        all_iteration_results[0].get(
+            'target_training_item_labels_exposed',
+            True,
+        )
+        if all_iteration_results
+        else True
+    )
     machine_summary = {
         'protocol': experiment_protocol,
         'adaptation_protocol': protocol,
@@ -2140,6 +2726,36 @@ def run_ablation_experiment(args):
         'label_map_original_to_index': label_map_original_to_index,
         'report_strategy': args.report_strategy,
         'projection_dim': args.projection_dim,
+        'svd_projection_mode': args.svd_projection_mode,
+        'basis_transport_mode': args.basis_transport_mode,
+        'uda_pairing_mode': (
+            'source_prototype_pseudo_class'
+            if args.uda_pseudo_class_pairing
+            else 'all_pairs'
+        ),
+        'target_ground_truth_used_for_pairing': bool(args.use_target_labels),
+        'target_training_item_labels_exposed': bool(
+            target_training_item_labels_exposed
+        ),
+        'target_train_samples': target_train_samples,
+        'visual_finetuning_mode': args.visual_finetuning_mode,
+        'adaptive_sinkhorn': args.adaptive_sinkhorn,
+        'transport_mode': args.transport_mode,
+        'ot_sinkhorn_iterations': args.ot_sinkhorn_iterations,
+        'ot_warmup_epochs': args.ot_warmup_epochs,
+        'ot_ramp_epochs': args.ot_ramp_epochs,
+        'class_conditional_ot': args.class_conditional_ot,
+        'balance_svd_classes': args.balance_svd_classes,
+        'sync_discriminator_lr': args.sync_discriminator_lr,
+        'tensor_loss_weight': args.tensor_loss_weight,
+        'adv_loss_weight': args.adv_loss_weight,
+        'lr_feature': args.lr_feature,
+        'lr_other': args.lr_other,
+        'weight_decay': args.weight_decay,
+        'modality_reliability_estimator': (
+            'leave-one-out-source-prototypes'
+            if args.uda_pseudo_class_pairing else None
+        ),
         'code_fingerprint': code_fingerprint,
         'uda_source_warmup_epochs': args.uda_source_warmup_epochs,
         'data_loading': {
@@ -2221,18 +2837,48 @@ def main():
     )
     parser.add_argument('--lr_feature', type=float, default=5e-6, help='feature extractor learning rate')
     parser.add_argument('--lr_other', type=float, default=2e-4, help='other module learning rate')
-    parser.add_argument('--sync_discriminator_lr', action='store_true', default=True,
+    parser.add_argument('--sync_discriminator_lr', action='store_true', default=False,
                        help='apply the same cosine multiplier to generator and discriminator optimizers')
     parser.add_argument('--no_sync_discriminator_lr', dest='sync_discriminator_lr',
                        action='store_false', help='keep the discriminator learning rate fixed')
     parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
     parser.add_argument('--adv_loss_weight', type=float, default=0.08, help='domain adversarial loss weight')
     parser.add_argument('--tensor_loss_weight', type=float, default=0.12, help='Tensor alignment loss weight')
-    parser.add_argument('--projection_dim', type=int, default=None,
+    parser.add_argument('--projection_dim', type=int, default=64,
                        help=(
                            'rank retained by each epoch-level modal SVD projection; '
-                           'defaults to 16 for pure UDA and 64 for SDA/SSDA'
+                           '64 reproduces the supervised-reference configuration'
                        ))
+    parser.add_argument(
+        '--svd_projection_mode',
+        choices=['legacy_supervised', 'rank_stable'],
+        default='legacy_supervised',
+        help=(
+            'legacy_supervised keeps every requested paired-SVD singular-vector '
+            'column exactly as the supervised reference; rank_stable preserves '
+            'the previous basis in numerically unidentified null directions'
+        ),
+    )
+    parser.add_argument(
+        '--basis_transport_mode',
+        choices=['legacy_supervised', 'orthogonal_stable'],
+        default='legacy_supervised',
+        help=(
+            'legacy_supervised applies the raw average source/target basis map '
+            'to every downstream consumer; orthogonal_stable uses the repaired '
+            'polar transport'
+        ),
+    )
+    parser.add_argument(
+        '--visual_finetuning_mode',
+        choices=['legacy_supervised', 'layer2_4'],
+        default='legacy_supervised',
+        help=(
+            'legacy_supervised reproduces the actual reference run (VIS projection '
+            'head trainable, frozen-backbone BN statistics in train mode); layer2_4 '
+            'uses the corrected broader fine-tuning behavior'
+        ),
+    )
     parser.add_argument('--transport_mode', type=str, default='sinkhorn',
                        choices=['legacy_row_softmax', 'row_softmax', 'sinkhorn'],
                        help='transport-plan construction; legacy mode reproduces the original implementation')
@@ -2240,6 +2886,10 @@ def main():
                        help='entropic transport temperature')
     parser.add_argument('--ot_sinkhorn_iterations', type=int, default=50,
                        help='number of differentiable Sinkhorn scaling iterations')
+    parser.add_argument('--adaptive_sinkhorn', action='store_true', default=False,
+                       help='allow Sinkhorn to refine beyond the configured fixed iteration count')
+    parser.add_argument('--no_adaptive_sinkhorn', dest='adaptive_sinkhorn',
+                       action='store_false', help='use the supervised-reference fixed Sinkhorn count')
     parser.add_argument('--ot_correction_scale', type=float, default=0.1,
                        help='maximum magnitude scale of the bounded TransNet cost correction')
     parser.add_argument('--ot_correction_reg_weight', type=float, default=1e-3,
@@ -2254,11 +2904,19 @@ def main():
                        action='store_false', help='use a uniform source marginal in UDA')
     parser.add_argument('--uda_prior_momentum', type=float, default=0.9,
                        help='EMA momentum for the unlabeled target class prior')
-    parser.add_argument('--uda_source_warmup_epochs', type=int, default=10,
+    parser.add_argument('--uda_source_warmup_epochs', type=int, default=0,
                        help=(
-                           'pure UDA source-only epochs before cross-domain '
-                           'SVD, Tensor alignment, adversarial loss, or OT'
+                           'optional source-only epochs before the normal Tensor/SVD '
+                           'warm-up; supervised-parity UDA uses zero'
                        ))
+    parser.add_argument('--uda_pseudo_class_pairing', action='store_true', default=False,
+                       help=(
+                           'pair source rows with target source-prototype pseudo classes; '
+                           'never uses target ground-truth labels in optimization'
+                       ))
+    parser.add_argument('--no_uda_pseudo_class_pairing',
+                       dest='uda_pseudo_class_pairing', action='store_false',
+                       help='use the unpaired all-pairs UDA path')
     parser.add_argument('--uda_prior_warmup_epochs', type=int, default=10,
                        help='source-only warm-up before estimating the unlabeled target class prior')
     parser.add_argument('--uda_prior_uniform_mix', type=float, default=0.10,
@@ -2271,7 +2929,7 @@ def main():
                        help='maximum alternating modal SVD sweeps per epoch update')
     parser.add_argument('--svd_tolerance', type=float, default=1e-3,
                        help='relative singular-value convergence tolerance')
-    parser.add_argument('--svd_stat_batch_size', type=int, default=32,
+    parser.add_argument('--svd_stat_batch_size', type=int, default=128,
                        help='inference batch size used to build the epoch SVD feature bank')
     parser.add_argument('--balance_svd_classes', action='store_true', default=True,
                        help='class-balance supervised epoch-level SVD statistics')
@@ -2300,13 +2958,6 @@ def main():
                        help='消融模式')
 
     args = parser.parse_args()
-    if args.projection_dim is None:
-        # Preserve the historical supervised setting while preventing direct
-        # UDA invocations from silently falling back to the unstable 64-D
-        # configuration diagnosed in the four-weather server run.
-        args.projection_dim = (
-            16 if adaptation_protocol(args) == 'UDA' else 64
-        )
     if args.batch_size < 1:
         parser.error('--batch_size must be at least 1')
     if args.svd_stat_batch_size < 1:
@@ -2353,6 +3004,93 @@ def main():
             parser.error(
                 '--label_space_mode oracle_shared requires '
                 '--no_auto_ablation_hparams so it cannot silently become SSDA'
+            )
+    if args.uda_pseudo_class_pairing:
+        if adaptation_protocol(args) != 'UDA':
+            parser.error('--uda_pseudo_class_pairing is only valid for UDA')
+        if args.label_space_mode != 'oracle_shared':
+            parser.error(
+                '--uda_pseudo_class_pairing currently requires '
+                '--label_space_mode oracle_shared so every configured class is '
+                'known to occur in the target domain'
+            )
+        if args.uda_source_warmup_epochs != 0:
+            parser.error(
+                'supervised-parity pseudo pairing requires '
+                '--uda_source_warmup_epochs 0 so Tensor/SVD starts at epoch 1'
+            )
+        if not args.class_conditional_ot:
+            parser.error(
+                '--uda_pseudo_class_pairing requires class-conditional OT; '
+                'do not pass --no_class_conditional_ot'
+            )
+        if args.epochs < args.ot_warmup_epochs + args.ot_ramp_epochs:
+            parser.error(
+                '--uda_pseudo_class_pairing requires epochs >= '
+                'ot_warmup_epochs + ot_ramp_epochs so the declared full model '
+                'reaches the complete OT weight'
+            )
+        # This named protocol is the audited conversion of the actual
+        # supervised reference run.  Refuse silent hyperparameter drift: only
+        # target CE/model selection and true-vs-pseudo correspondence are
+        # intentionally different.  Worker/prefetch/pin-memory settings and
+        # epoch/seed counts remain performance/repetition controls.
+        parity_mismatches = []
+
+        def require_parity(name, observed, expected):
+            if isinstance(expected, float):
+                matches = math.isclose(
+                    float(observed),
+                    expected,
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+            else:
+                matches = observed == expected
+            if not matches:
+                parity_mismatches.append(
+                    f"{name}={observed!r} (expected {expected!r})"
+                )
+
+        require_parity('batch_size', args.batch_size, 32)
+        require_parity('projection_dim', args.projection_dim, 64)
+        require_parity('svd_stat_batch_size', args.svd_stat_batch_size, 128)
+        require_parity('svd_projection_mode', args.svd_projection_mode,
+                       'legacy_supervised')
+        require_parity('basis_transport_mode', args.basis_transport_mode,
+                       'legacy_supervised')
+        require_parity('svd_max_sweeps', args.svd_max_sweeps, 10)
+        require_parity('svd_tolerance', args.svd_tolerance, 1e-3)
+        require_parity('visual_finetuning_mode', args.visual_finetuning_mode,
+                       'legacy_supervised')
+        require_parity('transport_mode', args.transport_mode, 'sinkhorn')
+        require_parity('ot_epsilon', args.ot_epsilon, 0.1)
+        require_parity('ot_sinkhorn_iterations',
+                       args.ot_sinkhorn_iterations, 50)
+        require_parity('adaptive_sinkhorn', args.adaptive_sinkhorn, False)
+        require_parity('ot_correction_scale', args.ot_correction_scale, 0.1)
+        require_parity('ot_correction_reg_weight',
+                       args.ot_correction_reg_weight, 1e-3)
+        require_parity('ot_warmup_epochs', args.ot_warmup_epochs, 10)
+        require_parity('ot_ramp_epochs', args.ot_ramp_epochs, 5)
+        require_parity('balance_svd_classes', args.balance_svd_classes, True)
+        require_parity('sync_discriminator_lr',
+                       args.sync_discriminator_lr, False)
+        require_parity('tensor_loss_weight', args.tensor_loss_weight, 0.12)
+        require_parity('adv_loss_weight', args.adv_loss_weight, 0.08)
+        require_parity('lr_feature', args.lr_feature, 5e-6)
+        require_parity('lr_other', args.lr_other, 2e-4)
+        require_parity('weight_decay', args.weight_decay, 5e-4)
+        require_parity('report_strategy', args.report_strategy, 'last')
+        if args.ablation_mode not in ('full', 'with_tensor_with_ot'):
+            parity_mismatches.append(
+                f"ablation_mode={args.ablation_mode!r} "
+                "(expected 'full' or 'with_tensor_with_ot')"
+            )
+        if parity_mismatches:
+            parser.error(
+                'supervised-parity pseudo UDA configuration drift: '
+                + '; '.join(parity_mismatches)
             )
 
     if args.ablation_mode == 'all':

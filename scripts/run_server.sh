@@ -17,9 +17,9 @@
 #   JMDA_NUM_ITERATIONS  每个目标域的连续随机种子数（默认 5）
 #   JMDA_BATCH_SIZE  JMDA UDA 训练批次（默认 32）
 #   JMDA_NUM_WORKERS JMDA UDA DataLoader worker 数（默认 0）
-#   JMDA_PROJECTION_DIM  JMDA Tensor/SVD 每模态投影维度（默认 16；与已验证配置一致）
-#   JMDA_UDA_SOURCE_WARMUP_EPOCHS  启动无标签对齐前的纯源域训练轮数（默认 10）
-#   JMDA_SVD_STAT_BATCH_SIZE  JMDA UDA SVD 特征统计批次（默认 32）
+#   JMDA_PROJECTION_DIM  JMDA Tensor/SVD 每模态投影维度（默认 64；匹配监督参考）
+#   JMDA_UDA_SOURCE_WARMUP_EPOCHS  纯源域预热轮数（默认 0；从epoch 1执行Tensor/SVD）
+#   JMDA_SVD_STAT_BATCH_SIZE  JMDA UDA SVD 特征统计批次（默认 128；匹配监督日志）
 #   JMDA_PREFETCH_FACTOR  每个 worker 的预取批次数（默认 2；workers=0 时不启用）
 #   JMDA_PIN_MEMORY  是否为 JMDA UDA DataLoader 启用 pinned memory（0/1，默认 1）
 #   JMDA_RUN_INVARIANT_TESTS  JMDA 训练前运行 Tensor/OT 数值门禁（0/1，默认 1）
@@ -51,16 +51,16 @@ SEED="${JMDA_SEED:-42}"
 JMDA_NUM_ITERATIONS="${JMDA_NUM_ITERATIONS:-5}"
 JMDA_BATCH_SIZE="${JMDA_BATCH_SIZE:-32}"
 JMDA_NUM_WORKERS="${JMDA_NUM_WORKERS:-0}"
-JMDA_PROJECTION_DIM="${JMDA_PROJECTION_DIM:-16}"
-JMDA_UDA_SOURCE_WARMUP_EPOCHS="${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-10}"
-JMDA_SVD_STAT_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-32}"
+JMDA_PROJECTION_DIM="${JMDA_PROJECTION_DIM:-64}"
+JMDA_UDA_SOURCE_WARMUP_EPOCHS="${JMDA_UDA_SOURCE_WARMUP_EPOCHS:-0}"
+JMDA_SVD_STAT_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-128}"
 JMDA_PREFETCH_FACTOR="${JMDA_PREFETCH_FACTOR:-2}"
 JMDA_PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
 JMDA_RUN_INVARIANT_TESTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="7d95307f51fd4d5d"
+JMDA_EXPECTED_CODE_FINGERPRINT="8e8e481c4fae1320"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 
 require_positive_integer() {
@@ -98,7 +98,24 @@ if [[ "$PROTOCOL" = "jmda_uda" || "$PROTOCOL" = "jmda_oracle_shared_uda" ]]; the
     echo "JMDA_UDA_SOURCE_WARMUP_EPOCHS 必须小于总训练轮数 EPOCHS；否则该任务全程只有源域训练，不能标记为 UDA: warmup=$JMDA_UDA_SOURCE_WARMUP_EPOCHS epochs=$EPOCHS"
     exit 1
   fi
+  if [[ "$PROTOCOL" = "jmda_oracle_shared_uda" ]] \
+      && (( JMDA_UDA_SOURCE_WARMUP_EPOCHS != 0 )); then
+    echo "jmda_oracle_shared_uda 严格复现监督 Tensor/SVD 日程，JMDA_UDA_SOURCE_WARMUP_EPOCHS 必须为 0: $JMDA_UDA_SOURCE_WARMUP_EPOCHS"
+    exit 1
+  fi
   require_positive_integer "JMDA_SVD_STAT_BATCH_SIZE" "$JMDA_SVD_STAT_BATCH_SIZE"
+  if [[ "$PROTOCOL" = "jmda_oracle_shared_uda" ]] \
+      && (( JMDA_BATCH_SIZE != 32 \
+            || JMDA_PROJECTION_DIM != 64 \
+            || JMDA_SVD_STAT_BATCH_SIZE != 128 )); then
+    echo "jmda_oracle_shared_uda 锁定监督参考配置: batch=32 projection_dim=64 SVD_batch=128；当前为 batch=$JMDA_BATCH_SIZE projection_dim=$JMDA_PROJECTION_DIM SVD_batch=$JMDA_SVD_STAT_BATCH_SIZE"
+    echo "可通过 JMDA_NUM_WORKERS/JMDA_PREFETCH_FACTOR/JMDA_PIN_MEMORY 提速，但不要改变优化批次或SVD参考配置。"
+    exit 1
+  fi
+  if [[ "$PROTOCOL" = "jmda_oracle_shared_uda" ]] && (( EPOCHS < 15 )); then
+    echo "jmda_oracle_shared_uda 至少需要15轮，才能完成10轮Tensor/SVD预热和5轮OT权重爬升: epochs=$EPOCHS"
+    exit 1
+  fi
   require_positive_integer "JMDA_PREFETCH_FACTOR" "$JMDA_PREFETCH_FACTOR"
   case "$JMDA_PIN_MEMORY" in
     0) JMDA_PIN_MEMORY_ARG="--no_pin_memory" ;;
@@ -253,6 +270,8 @@ run() {  # run "<log-tag>" <cmd...>
       --expected-code-fingerprint "$JMDA_EXPECTED_CODE_FINGERPRINT" \
       --expected-num-iterations "$JMDA_NUM_ITERATIONS" \
       --expected-base-seed "$SEED" \
+      --expected-batch-size "$JMDA_BATCH_SIZE" \
+      --expected-svd-stat-batch-size "$JMDA_SVD_STAT_BATCH_SIZE" \
       >> "$log_path" 2>&1; then
       audit_status="$(grep -E 'JMDA log audit status:' "$log_path" | tail -n 1 || true)"
       echo "    protocol audit completed: $tag (${audit_status:-status unavailable})"
@@ -346,13 +365,21 @@ elif [ "$PROTOCOL" = "jmda_uda" ]; then
          --batch_size '$JMDA_BATCH_SIZE' \
          --num_workers '$JMDA_NUM_WORKERS' \
          --projection_dim '$JMDA_PROJECTION_DIM' \
+         --svd_projection_mode legacy_supervised \
+         --basis_transport_mode legacy_supervised \
          --uda_source_warmup_epochs '$JMDA_UDA_SOURCE_WARMUP_EPOCHS' \
          --svd_stat_batch_size '$JMDA_SVD_STAT_BATCH_SIZE' \
          --prefetch_factor '$JMDA_PREFETCH_FACTOR' $JMDA_PIN_MEMORY_ARG \
          --ablation_mode full --no_auto_ablation_hparams \
-         --transport_mode sinkhorn \
+         --transport_mode sinkhorn --no_adaptive_sinkhorn \
+         --ot_sinkhorn_iterations 50 --ot_warmup_epochs 10 --ot_ramp_epochs 5 \
+         --tensor_loss_weight 0.12 --adv_loss_weight 0.08 \
+         --lr_feature 5e-6 --lr_other 2e-4 --weight_decay 5e-4 \
+         --class_conditional_ot --balance_svd_classes \
          --target_label_ratio 0 --target_cls_weight 0 \
-         --label_space_mode partial_set --sync_discriminator_lr \
+         --label_space_mode partial_set \
+         --visual_finetuning_mode legacy_supervised \
+         --no_sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_uda_$t'"
   done
@@ -375,14 +402,21 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
          --batch_size '$JMDA_BATCH_SIZE' \
          --num_workers '$JMDA_NUM_WORKERS' \
          --projection_dim '$JMDA_PROJECTION_DIM' \
+         --svd_projection_mode legacy_supervised \
+         --basis_transport_mode legacy_supervised \
          --uda_source_warmup_epochs '$JMDA_UDA_SOURCE_WARMUP_EPOCHS' \
          --svd_stat_batch_size '$JMDA_SVD_STAT_BATCH_SIZE' \
          --prefetch_factor '$JMDA_PREFETCH_FACTOR' $JMDA_PIN_MEMORY_ARG \
          --ablation_mode full --no_auto_ablation_hparams \
-         --transport_mode sinkhorn \
+         --transport_mode sinkhorn --no_adaptive_sinkhorn \
+         --ot_sinkhorn_iterations 50 --ot_warmup_epochs 10 --ot_ramp_epochs 5 \
+         --tensor_loss_weight 0.12 --adv_loss_weight 0.08 \
+         --lr_feature 5e-6 --lr_other 2e-4 --weight_decay 5e-4 \
+         --class_conditional_ot --balance_svd_classes \
          --target_label_ratio 0 --target_cls_weight 0 \
-         --label_space_mode oracle_shared --no_uda_source_reweighting \
-         --sync_discriminator_lr \
+         --label_space_mode oracle_shared --uda_pseudo_class_pairing \
+         --visual_finetuning_mode legacy_supervised \
+         --no_sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_oracle_shared_uda_$t'"
   done

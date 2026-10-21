@@ -6,11 +6,14 @@ using the modern PyTorch implementation from thuml/Transfer-Learning-Library
 Source domain: 晴天 (Sunny); Target domains: 逆光/雨天/雾天/黑天.
 
 Adaptations (documented in REPRODUCTION_RECORD.md):
-  * dataset replaced by our ImageList-based loader (same protocol as the other
-    reproduced methods);
+  * dataset replaced by the shared target-driven UDA loader
+    (tools/uda_data.py: only target-domain classes are kept, labels remapped
+    to 0..|T|-1, so the classifier head width equals that target's class count);
   * iters_per_epoch = max(len(src_loader), len(tgt_loader)) instead of 1000;
   * ResizeImage implemented locally (tllib.vision.transforms not downloaded);
   * Windows: DataLoader num_workers=0.
+
+优化器/调度/超参保持与 tllib 官方示例 mcc.py 完全一致（未做任何改动）。
 
 Usage:
     python train_mcc.py --target backlight --epochs 3
@@ -35,34 +38,12 @@ from tllib.vision.models import resnet18
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
-from data_paths import remap_data_path
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
+# UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
+from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-class ImageListDataset(torch.utils.data.Dataset):
-    def __init__(self, list_path, transform=None):
-        self.samples = []
-        with open(list_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                self.samples.append((remap_data_path(parts[0]), int(parts[1])))
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        path, label = self.samples[idx]
-        img = Image.open(path).convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        return img, label
 
 
 class ResizeImage:
@@ -94,7 +75,7 @@ def get_val_transform():
     ])
 
 
-def validate(val_loader, classifier):
+def validate(val_loader, classifier, num_classes):
     classifier.eval()
     all_labels, all_predictions = [], []
     with torch.no_grad():
@@ -105,7 +86,7 @@ def validate(val_loader, classifier):
             all_labels.extend(target.cpu().tolist())
             all_predictions.extend(pred.cpu().tolist())
     classifier.train()
-    return classification_metrics(all_labels, all_predictions)
+    return classification_metrics(all_labels, all_predictions, num_classes=num_classes)
 
 
 def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
@@ -171,10 +152,18 @@ def main():
     print(args)
 
     train_tf, val_tf = get_train_transform(), get_val_transform()
-    src_ds = ImageListDataset(os.path.join(args.data_dir, 'sunny_train.txt'), train_tf)
-    tgt_ds = ImageListDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'), train_tf)
-    tgt_val_ds = ImageListDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'), val_tf)
+    # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
+    class_ids, label_map = uda_label_space(args.data_dir, args.target)
+    num_classes = len(class_ids)
+    src_ds = UdaImageListDataset(os.path.join(args.data_dir, 'sunny_train.txt'),
+                                 train_tf, label_map)
+    tgt_ds = UdaImageListDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'),
+                                 train_tf, label_map)
+    tgt_val_ds = UdaImageListDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'),
+                                     val_tf, label_map)
+    print(format_class_space(class_ids, num_classes))
     print(f'Source train: {len(src_ds)}, target train: {len(tgt_ds)}, target val: {len(tgt_val_ds)}')
+    print(format_dropped('source train', src_ds))
 
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
                             num_workers=0, drop_last=True)
@@ -187,7 +176,7 @@ def main():
     args.iters_per_epoch = max(len(src_loader), len(tgt_loader))
 
     backbone = resnet18(pretrained=True)
-    classifier = ImageClassifier(backbone, 14, bottleneck_dim=args.bottleneck_dim).to(device)
+    classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim).to(device)
     mcc = MinimumClassConfusionLoss(temperature=args.temperature)
     optimizer = SGD(classifier.get_parameters(), args.lr, momentum=args.momentum,
                     weight_decay=args.wd, nesterov=True)
@@ -209,7 +198,7 @@ def main():
             eff.epoch_start(epoch)
         train_epoch(train_source_iter, train_target_iter, classifier, mcc,
                     optimizer, lr_scheduler, epoch, args, eff=eff)
-        val_metrics = validate(tgt_val_loader, classifier)
+        val_metrics = validate(tgt_val_loader, classifier, num_classes)
         acc = val_metrics['accuracy']
         final_acc = acc
         best_acc = max(best_acc, acc)

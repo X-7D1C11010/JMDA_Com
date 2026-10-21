@@ -50,9 +50,14 @@ def _loader_options(batch_size, num_workers, prefetch_factor, pin_memory, seed):
     return options
 
 
-def _indices_by_class(dataset) -> Dict[int, List[int]]:
+def _indices_by_class(dataset, labels_override=None) -> Dict[int, List[int]]:
+    labels = dataset.labels if labels_override is None else labels_override
+    if len(labels) != len(dataset):
+        raise ValueError(
+            "labels_override must contain exactly one class per dataset sample."
+        )
     indices: Dict[int, List[int]] = defaultdict(list)
-    for index, label in enumerate(dataset.labels):
+    for index, label in enumerate(labels):
         indices[int(label)].append(index)
     return indices
 
@@ -63,6 +68,7 @@ def build_epoch_pairs(
     seed: int,
     class_paired: bool,
     balance_classes: bool = False,
+    target_labels_override=None,
 ) -> List[Tuple[int, int]]:
     """Return deterministic pairs while covering each target sample once.
 
@@ -85,7 +91,10 @@ def build_epoch_pairs(
         ]
 
     source_by_class = _indices_by_class(source_dataset)
-    target_by_class = _indices_by_class(target_dataset)
+    target_by_class = _indices_by_class(
+        target_dataset,
+        labels_override=target_labels_override,
+    )
     target_classes = set(target_by_class)
     missing_classes = sorted(target_classes - set(source_by_class))
     if missing_classes:
@@ -136,6 +145,7 @@ def update_epoch_projections(
     seed: int,
     class_paired: bool = True,
     balance_classes: bool = False,
+    target_labels_override=None,
     source_class_weights: torch.Tensor = None,
     num_workers: int = 0,
     prefetch_factor: int = 2,
@@ -178,6 +188,7 @@ def update_epoch_projections(
                 seed=seed,
                 class_paired=True,
                 balance_classes=balance_classes,
+                target_labels_override=target_labels_override,
             )
             paired_loader = DataLoader(
                 _PairedFeatureDataset(source_dataset, target_dataset, pairs),
@@ -263,6 +274,9 @@ def update_epoch_projections(
         )
     update_info["class_paired"] = bool(class_paired)
     update_info["class_balanced"] = bool(class_paired and balance_classes)
+    update_info["target_labels_source"] = (
+        "pseudo" if target_labels_override is not None else "ground_truth"
+    ) if class_paired else "none"
     return update_info
 
 
@@ -291,7 +305,8 @@ def format_svd_update(update_info: Dict[str, object]) -> str:
             f"{update_info.get('shared_transport_effective_ranks', ())}, "
             f"shared_transport_rank_thresholds="
             f"{update_info.get('shared_transport_rank_thresholds', ())}, "
-            f"classifier_basis={update_info.get('classifier_basis_mode', 'shared')}"
+            f"classifier_basis={update_info.get('classifier_basis_mode', 'shared')}, "
+            f"basis_transport={update_info.get('basis_transport_mode', 'unknown')}"
         )
     plan_text = ""
     if "unlabeled_plan_marginal_residual" in update_info:
@@ -309,7 +324,8 @@ def format_svd_update(update_info: Dict[str, object]) -> str:
         f"stabilized_null_dims={update_info.get('stabilized_null_dims', ())}, "
         f"rank_thresholds={update_info.get('rank_thresholds', ())}, "
         f"class_paired={update_info['class_paired']}, "
-        f"class_balanced={update_info.get('class_balanced', False)}"
+        f"class_balanced={update_info.get('class_balanced', False)}, "
+        f"target_labels_source={update_info.get('target_labels_source', 'unknown')}"
         f"{basis_text}{plan_text}"
     )
 

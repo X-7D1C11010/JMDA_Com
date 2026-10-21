@@ -32,6 +32,11 @@ from efficiency_common import (
     run_profiler_summary,
 )
 
+# Classifier width used by the UDA adapters. UDA training now uses a
+# target-driven label space (tools/uda_data.py), so +/- one linear layer vs the
+# dataset-wide 14 classes; set from --num_classes to match the target domain.
+NUM_CLASSES = 14
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ADAPTER REGISTRY
@@ -69,13 +74,13 @@ def _load_module_from_file(module_name, path):
 def adapter_dann():
     from DANN.train_dann import DANN
     def build():
-        return DANN(num_classes=14)
+        return DANN(num_classes=NUM_CLASSES)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         x = inp
         cls_out, dom_out = model(x, alpha=0.5)
-        labels = torch.randint(0, 14, (x.size(0),), device=x.device)
+        labels = torch.randint(0, NUM_CLASSES, (x.size(0),), device=x.device)
         dom_labels = torch.randint(0, 2, (x.size(0),), device=x.device)
         return nn.CrossEntropyLoss()(cls_out, labels) + nn.CrossEntropyLoss()(dom_out, dom_labels)
     return {'name':'DANN','group':'visual_vlm','modalities':'VIS',
@@ -87,14 +92,14 @@ def adapter_deepcoral():
     from DeepCORAL.train_deepcoral import DeepCORAL
     from DeepCORAL.models import CORAL
     def build():
-        return DeepCORAL(num_classes=14)
+        return DeepCORAL(num_classes=NUM_CLASSES)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         src = inp
         tgt = _make_vis_input(src.size(0), src.device)
         s_out, t_out, s_feat, t_feat = model(src, tgt)
-        labels = torch.randint(0, 14, (src.size(0),), device=src.device)
+        labels = torch.randint(0, NUM_CLASSES, (src.size(0),), device=src.device)
         loss = nn.CrossEntropyLoss()(s_out, labels) + CORAL(s_feat, t_feat)
         return loss
     return {'name':'DeepCORAL','group':'visual_vlm','modalities':'VIS',
@@ -110,8 +115,8 @@ def adapter_cdan():
     class CDANWrapper(nn.Module):
         def __init__(self):
             super().__init__()
-            self.backbone = ResNetFc('ResNet18', True, 256, True, 14)
-            self.random_layer = RandomLayer([256, 14], 1024)
+            self.backbone = ResNetFc('ResNet18', True, 256, True, NUM_CLASSES)
+            self.random_layer = RandomLayer([256, NUM_CLASSES], 1024)
             self.ad_net = AdversarialNetwork(1024, 1024)
         def forward(self, x):
             feat, out = self.backbone(x)
@@ -122,7 +127,7 @@ def adapter_cdan():
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         feat, out = model.backbone(inp)
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
         loss_cls = nn.CrossEntropyLoss()(out, labels)
         # AdversarialNetwork outputs 1 value (sigmoid); use BCEWithLogitsLoss
         dom_labels = torch.randint(0, 2, (inp.size(0),), device=inp.device).float().unsqueeze(1)
@@ -142,12 +147,12 @@ def adapter_mdd():
     from tllib.alignment.mdd import ImageClassifier
     from tllib.vision.models import resnet18
     def build():
-        return ImageClassifier(resnet18(), 14, 256, 256)
+        return ImageClassifier(resnet18(), NUM_CLASSES, 256, 256)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         out, out_adv = model(inp)
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
         return nn.CrossEntropyLoss()(out, labels)
     return {'name':'MDD','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
@@ -159,13 +164,13 @@ def adapter_mcc():
     from tllib.self_training.mcc import ImageClassifier, MinimumClassConfusionLoss
     def build():
         from tllib.vision.models import resnet18
-        return ImageClassifier(resnet18(), 14, 256)
+        return ImageClassifier(resnet18(), NUM_CLASSES, 256)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         # In train mode, ImageClassifier returns (predictions, features)
         preds, feats = model(inp)
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
         loss = nn.CrossEntropyLoss()(preds, labels)
         loss = loss + MinimumClassConfusionLoss(temperature=2.5)(preds)
         return loss
@@ -243,7 +248,7 @@ def adapter_mcft():
 def adapter_pda():
     import copy
     from PDA.train_pda import CustomCLIP, load_clip_to_cpu
-    classnames = [f'class_{i + 1}' for i in range(14)]  # same placeholder prompts as training
+    classnames = [f'class_{i + 1}' for i in range(NUM_CLASSES)]  # same placeholder prompts as training
     clip_model = load_clip_to_cpu('ViT-B/16')
     def build():
         # CustomCLIP holds the CLIP submodules by reference, so the caller's
@@ -266,7 +271,7 @@ def adapter_pda():
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
-        labels = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
         _, loss = model(inp, label=labels, epoch=0, train=True)
         return loss
     return {'name':'PDA','group':'visual_vlm','modalities':'VIS',
@@ -569,6 +574,7 @@ def run_benchmark(adapter, args, device, output_dir):
         f.write(f"Time: {row['timestamp']}\n")
         f.write(f"Device: {device}  GPU: {env['gpu_name']}\n")
         f.write(f"Precision: {args.benchmark_precision}\n\n")
+        f.write(f"num_classes: {NUM_CLASSES}\n")
         f.write(f"total_params: {total_params}\n")
         f.write(f"trainable_params: {trainable_params}\n")
         f.write(f"buffer_mb: {buffer_mb:.4f}\n")
@@ -725,7 +731,14 @@ def main():
                         help='SDA label budget per class (recorded when --protocol SDA).')
     parser.add_argument('--smoke', action='store_true',
                         help='Quick smoke test (reduced warmup/iters)')
+    parser.add_argument('--num-classes', type=int, default=14,
+                        help='Classifier width for the UDA adapters. UDA training '
+                             'uses a target-driven label space (tools/uda_data.py), '
+                             'so pass the class count of the target domain.')
     args = parser.parse_args()
+
+    global NUM_CLASSES
+    NUM_CLASSES = args.num_classes
 
     if args.smoke:
         args.benchmark_warmup = 5

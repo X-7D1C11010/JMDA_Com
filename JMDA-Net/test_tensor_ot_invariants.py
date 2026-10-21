@@ -1,5 +1,7 @@
 import unittest
 import random
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -10,18 +12,23 @@ from PIL import Image
 from Generator import NeuralOptimalTransportGenerator
 from Tensor import TensorBasedAlignmentStable
 from Ablation.Models import Classifier
-from Ablation.PairedClassSampler import PairedClassSampler
+from Ablation.PairedClassSampler import (
+    PairedClassSampler,
+    PseudoPairedClassSampler,
+)
 from Ablation.module_ablation import (
     BinaryDomainDiscriminator,
     UnpairedDomainSampler,
     _least_changing_orthogonal_factor,
     adaptation_protocol,
+    prototype_pseudo_label_assignment,
     class_prior_to_sample_marginal,
     compute_protocol_classification_loss,
     compute_joint_ot_scale,
     configure_visual_finetuning,
     build_compact_label_map,
     derive_oracle_shared_labels,
+    infer_prototype_pseudo_labels,
     is_uda_source_warmup,
     reported_protocol,
     select_report_metrics,
@@ -30,6 +37,7 @@ from Ablation.module_ablation import (
 )
 from Ablation.paired_dataset import (
     PairedModalTransform,
+    PairedMultiModalDomainDataset,
     filter_samples_by_original_labels,
 )
 from epoch_svd import build_epoch_pairs, update_epoch_projections
@@ -68,6 +76,41 @@ class _FeatureDataset:
         return {
             "vis": base,
             "ir": torch.flip(base, dims=(0,)),
+            "label": torch.tensor(self.labels[index], dtype=torch.long),
+        }
+
+
+class _FeatureOnlyTargetDataset(_FeatureDataset):
+    """Target feature bank with no accessible per-sample ground truth."""
+
+    def __init__(self, count, offset=0.0):
+        super().__init__(count, offset=offset)
+        self.labels = None
+
+    def __getitem__(self, index):
+        base = torch.tensor(
+            [index + self.offset, index + 1.0, index * 0.5 + 2.0],
+            dtype=torch.float32,
+        )
+        return {
+            "vis": base,
+            "ir": torch.flip(base, dims=(0,)),
+        }
+
+
+class _PrototypeDataset:
+    def __init__(self, vis, ir, labels):
+        self.vis = [torch.tensor(row, dtype=torch.float32) for row in vis]
+        self.ir = [torch.tensor(row, dtype=torch.float32) for row in ir]
+        self.labels = list(labels)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, index):
+        return {
+            "vis": self.vis[index],
+            "ir": self.ir[index],
             "label": torch.tensor(self.labels[index], dtype=torch.long),
         }
 
@@ -168,6 +211,39 @@ class EpochPairingTests(unittest.TestCase):
         self.assertEqual(update_info["sample_count"], (5, 3))
         self.assertEqual(int(module.projection_update_count.item()), 1)
 
+    def test_pseudo_paired_svd_never_requires_target_ground_truth(self):
+        source = _FeatureDataset(6, offset=0.0)
+        target = _FeatureOnlyTargetDataset(4, offset=0.25)
+        module = TensorBasedAlignmentStable(
+            input_dims=[3, 3],
+            output_dims=[2, 2],
+            num_modalities=2,
+            max_svd_sweeps=1,
+            stabilize_rank_deficient=False,
+        )
+
+        update_info = update_epoch_projections(
+            tal_module=module,
+            encoders=[nn.Identity(), nn.Identity()],
+            modality_keys=["vis", "ir"],
+            source_dataset=source,
+            target_dataset=target,
+            target_labels_override=[0, 1, 0, 1],
+            batch_size=2,
+            device=torch.device("cpu"),
+            seed=29,
+            class_paired=True,
+            balance_classes=True,
+            num_workers=0,
+            prefetch_factor=1,
+            pin_memory=False,
+        )
+
+        self.assertTrue(update_info["class_paired"])
+        self.assertTrue(update_info["class_balanced"])
+        self.assertEqual(update_info["target_labels_source"], "pseudo")
+        self.assertEqual(int(module.projection_update_count.item()), 1)
+
     def test_class_prior_is_not_multiplied_by_source_class_frequency(self):
         labels = torch.tensor([0, 0, 0, 1])
         desired = torch.tensor([0.25, 0.75])
@@ -210,6 +286,183 @@ class EpochPairingTests(unittest.TestCase):
         self.assertEqual(observed_target_labels.count(1), 3)
         self.assertEqual(observed_target_labels.count(2), 3)
 
+    def test_pseudo_sampler_ignores_target_truth_and_matches_pseudo_classes(self):
+        source = _LabelOnlyDataset([0, 0, 1, 1, 1])
+        source.label_map = {0: 0, 1: 1}
+        # Deliberately incompatible ground truth: the sampler must never use it.
+        target = _LabelOnlyDataset([99, 99, 99, 99])
+        pseudo = torch.tensor([0, 1, 1, 0])
+        sampler = PseudoPairedClassSampler(
+            source,
+            target,
+            pseudo,
+            batch_size=3,
+            expected_classes=[0, 1],
+        )
+
+        target_indices = []
+        pseudo_observed = []
+        for source_batch, target_batch in sampler:
+            self.assertNotIn("label", target_batch)
+            self.assertTrue(
+                torch.equal(source_batch["label"], target_batch["pseudo_label"])
+            )
+            target_indices.extend(target_batch["sample_index"].tolist())
+            pseudo_observed.extend(target_batch["pseudo_label"].tolist())
+
+        self.assertEqual(set(target_indices), set(range(len(target))))
+        self.assertEqual(pseudo_observed.count(0), pseudo_observed.count(1))
+
+    def test_pseudo_sampler_merges_singleton_tail_without_dropping_samples(self):
+        source = _LabelOnlyDataset(
+            [class_index for class_index in range(5) for _ in range(3)]
+        )
+        source.label_map = {class_index: class_index for class_index in range(5)}
+        pseudo = torch.tensor(
+            [0] * 13 + [1] * 10 + [2] * 9 + [3] * 8 + [4] * 7
+        )
+        target = _LabelOnlyDataset([99] * pseudo.numel())
+        sampler = PseudoPairedClassSampler(
+            source,
+            target,
+            pseudo,
+            batch_size=32,
+            expected_classes=range(5),
+        )
+
+        batch_sizes = []
+        observed_target_indices = set()
+        for source_batch, target_batch in sampler:
+            batch_sizes.append(int(source_batch["label"].numel()))
+            observed_target_indices.update(target_batch["sample_index"].tolist())
+            self.assertTrue(
+                torch.equal(source_batch["label"], target_batch["pseudo_label"])
+            )
+
+        # 5 * max_count(13) = 65 balanced observations. A naive ceil split
+        # would be 32/32/1 and crash the OT BatchNorm on the singleton.
+        self.assertEqual(batch_sizes, [32, 33])
+        self.assertEqual(len(sampler), 2)
+        self.assertEqual(observed_target_indices, set(range(len(target))))
+
+    def test_pseudo_svd_pairing_uses_override_not_target_truth(self):
+        source = _LabelOnlyDataset([10, 10, 20, 20])
+        target = _LabelOnlyDataset([99, 99, 99, 99])
+        pseudo_original = [10, 20, 20, 10]
+        pairs = build_epoch_pairs(
+            source,
+            target,
+            seed=29,
+            class_paired=True,
+            balance_classes=True,
+            target_labels_override=pseudo_original,
+        )
+        self.assertTrue(
+            all(
+                source.labels[source_index] == pseudo_original[target_index]
+                for source_index, target_index in pairs
+            )
+        )
+
+    def test_prototype_assignment_preserves_nearest_distribution_and_repairs_coverage(self):
+        scores = torch.tensor(
+            [
+                [9.0, 1.0, 0.0],
+                [8.0, 2.0, 0.0],
+                [7.0, 3.0, 0.0],
+                [6.0, 4.0, 0.0],
+                [5.0, 5.0, 0.0],
+                [4.0, 6.0, 0.0],
+                [3.0, 7.0, 0.0],
+            ]
+        )
+        nearest = scores.argmax(dim=1)
+        labels, info = prototype_pseudo_label_assignment(scores)
+        self.assertEqual(labels.numel(), 7)
+        self.assertEqual(set(labels.tolist()), {0, 1, 2})
+        self.assertEqual(info["repaired_count"], 1)
+        self.assertEqual(int(labels.ne(nearest).sum()), 1)
+        self.assertTrue(
+            torch.equal(
+                torch.bincount(labels, minlength=3),
+                info["class_counts"],
+            )
+        )
+        self.assertGreater(int(info["class_counts"].max()), 3)
+
+    def test_prototype_inference_keeps_natural_counts_and_downweights_weak_modality(self):
+        source = _PrototypeDataset(
+            vis=[[1, 0], [0.9, 0.1], [0, 1], [0.1, 0.9]],
+            ir=[[1, 1], [1, 1], [1, 1], [1, 1]],
+            labels=[0, 0, 1, 1],
+        )
+        target = _PrototypeDataset(
+            vis=[[1, 0], [0.9, 0.1], [0.8, 0.2], [1, 0], [0, 1]],
+            ir=[[1, 1]] * 5,
+            # Deliberately invalid target truth; inference must not consume it.
+            labels=[99] * 5,
+        )
+
+        labels, info = infer_prototype_pseudo_labels(
+            net_vis=nn.Identity(),
+            net_ir=nn.Identity(),
+            tal_module=nn.Identity(),
+            source_dataset=source,
+            target_dataset=target,
+            num_classes=2,
+            batch_size=3,
+            device=torch.device("cpu"),
+            use_tensor_module=False,
+        )
+
+        self.assertEqual(labels.tolist(), [0, 0, 0, 0, 1])
+        self.assertEqual(info["class_counts"], [4, 1])
+        self.assertEqual(info["coverage_repairs"], 0)
+        self.assertGreater(info["modality_weights"][0], 0.99)
+        self.assertLess(info["modality_weights"][1], 0.01)
+        self.assertEqual(
+            info["modality_reliability_estimator"],
+            "leave-one-out-source-prototypes",
+        )
+
+    def test_random_features_do_not_get_in_sample_prototype_reliability(self):
+        torch.manual_seed(20261021)
+        num_classes = 9
+        samples_per_class = 29
+        source_features = torch.randn(
+            num_classes * samples_per_class,
+            512,
+        )
+        target_features = torch.randn(18, 512)
+        source = _PrototypeDataset(
+            vis=source_features.tolist(),
+            ir=source_features.tolist(),
+            labels=torch.arange(num_classes).repeat_interleave(
+                samples_per_class
+            ).tolist(),
+        )
+        target = _PrototypeDataset(
+            vis=target_features.tolist(),
+            ir=target_features.tolist(),
+            labels=[99] * len(target_features),
+        )
+
+        _, info = infer_prototype_pseudo_labels(
+            net_vis=nn.Identity(),
+            net_ir=nn.Identity(),
+            tal_module=nn.Identity(),
+            source_dataset=source,
+            target_dataset=target,
+            num_classes=num_classes,
+            batch_size=64,
+            device=torch.device("cpu"),
+            use_tensor_module=False,
+        )
+
+        # With the old self-containing prototypes this synthetic random bank
+        # scored near 1.0.  Leave-one-out must stay close to chance (1/9).
+        self.assertLess(max(info["modality_balanced_accuracy"]), 0.30)
+
     def test_paired_transform_uses_identical_random_geometry(self):
         grid = np.arange(256 * 256, dtype=np.uint8).reshape(256, 256)
         image = Image.fromarray(grid, mode="L").convert("RGB")
@@ -222,6 +475,29 @@ class EpochPairingTests(unittest.TestCase):
         ir_raw = ir * 0.5 + 0.5
 
         self.assertTrue(torch.allclose(vis_raw, ir_raw, atol=1e-6))
+
+    def test_uda_target_dataset_redacts_internal_and_returned_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vis_dir = root / "train" / "1" / "可见光"
+            ir_dir = root / "train" / "1" / "红外"
+            vis_dir.mkdir(parents=True)
+            ir_dir.mkdir(parents=True)
+            image = Image.new("RGB", (32, 32), color=(64, 96, 128))
+            image.save(vis_dir / "sample.png")
+            image.save(ir_dir / "sample.png")
+
+            dataset = PairedMultiModalDomainDataset(
+                str(root),
+                domain_type="target",
+                phase="train",
+                global_label_map={1: 0},
+                include_label=False,
+            )
+
+            self.assertIsNone(dataset.labels)
+            self.assertNotIn("label", dataset.samples[0])
+            self.assertNotIn("label", dataset[0])
 
 
 class ResultReportingTests(unittest.TestCase):
@@ -457,7 +733,7 @@ class VisualFineTuningTests(unittest.TestCase):
 
     def test_resnet_stage_indices_and_frozen_bn_modes(self):
         model = self._DummyVisual()
-        configure_visual_finetuning(model)
+        configure_visual_finetuning(model, mode="layer2_4")
 
         for stage_index in range(5):
             self.assertFalse(
@@ -476,6 +752,26 @@ class VisualFineTuningTests(unittest.TestCase):
             self.assertFalse(model.features[stage_index][1].training)
         for stage_index in (5, 6, 7):
             self.assertTrue(model.features[stage_index][1].training)
+
+    def test_legacy_supervised_mode_trains_only_projection_and_keeps_bn_train(self):
+        model = self._DummyVisual()
+        configure_visual_finetuning(model, mode="legacy_supervised")
+        self.assertTrue(
+            all(
+                not parameter.requires_grad
+                for parameter in model.features.parameters()
+            )
+        )
+        self.assertTrue(
+            all(parameter.requires_grad for parameter in model.proj.parameters())
+        )
+        model.train()
+        self.assertTrue(
+            all(
+                child[1].training
+                for child in model.features
+            )
+        )
 
 
 class TensorEpochUpdateTests(unittest.TestCase):
@@ -631,6 +927,84 @@ class TensorEpochUpdateTests(unittest.TestCase):
                 torch.eye(3),
                 atol=1e-6,
             )
+        )
+
+    def test_legacy_supervised_basis_transport_uses_raw_average_everywhere(self):
+        feature_dim = 2
+        old_source = [torch.eye(4)[:, :2]]
+        old_target = [torch.eye(4)[:, :2]]
+        new_source = [torch.eye(4)[:, [0, 2]]]
+        new_target = [torch.eye(4)[:, [2, 1]]]
+        expected_map = 0.5 * torch.eye(feature_dim)
+
+        classifier = Classifier(input_dim=feature_dim, num_classes=3)
+        discriminator = BinaryDomainDiscriminator(feature_dim=feature_dim)
+        generator = NeuralOptimalTransportGenerator(
+            feature_dim=feature_dim,
+            hidden_dim=5,
+            transport_mode="sinkhorn",
+        )
+        originals = {
+            "classifier": classifier.fc[0].weight.detach().clone(),
+            "discriminator": discriminator.discriminator[0].weight.detach().clone(),
+            "cost": generator.cost_net.proj[0].weight.detach().clone(),
+            "residual_input": generator.mlp[0].weight.detach().clone(),
+            "residual_output": generator.mlp[2].weight.detach().clone(),
+            "residual_bias": generator.mlp[2].bias.detach().clone(),
+        }
+
+        diagnostics = transport_projected_feature_basis(
+            classifier,
+            discriminator,
+            generator,
+            old_source,
+            old_target,
+            new_source,
+            new_target,
+            classifier_basis_mode="shared",
+            shared_transport_mode="legacy_supervised",
+        )
+
+        self.assertTrue(torch.allclose(
+            classifier.fc[0].weight,
+            originals["classifier"].matmul(expected_map),
+        ))
+        self.assertTrue(torch.allclose(
+            discriminator.discriminator[0].weight,
+            originals["discriminator"].matmul(expected_map),
+        ))
+        self.assertTrue(torch.allclose(
+            generator.cost_net.proj[0].weight,
+            originals["cost"].matmul(expected_map),
+        ))
+        expected_residual_input = originals["residual_input"].clone()
+        expected_residual_input[:, :feature_dim] = (
+            expected_residual_input[:, :feature_dim].matmul(expected_map)
+        )
+        expected_residual_input[:, feature_dim:2 * feature_dim] = (
+            expected_residual_input[:, feature_dim:2 * feature_dim].matmul(
+                expected_map
+            )
+        )
+        self.assertTrue(torch.allclose(
+            generator.mlp[0].weight,
+            expected_residual_input,
+        ))
+        self.assertTrue(torch.allclose(
+            generator.mlp[2].weight,
+            expected_map.transpose(0, 1).matmul(originals["residual_output"]),
+        ))
+        self.assertTrue(torch.allclose(
+            generator.mlp[2].bias,
+            expected_map.transpose(0, 1).matmul(originals["residual_bias"]),
+        ))
+        self.assertEqual(
+            diagnostics["basis_transport_mode"],
+            "legacy_supervised",
+        )
+        self.assertGreater(
+            diagnostics["shared_transport_non_orthogonality"],
+            0.1,
         )
 
     def test_uda_classifier_transport_is_anchored_to_source_basis(self):
@@ -940,6 +1314,39 @@ class TensorEpochUpdateTests(unittest.TestCase):
                 )
             )
 
+    def test_legacy_supervised_paired_svd_does_not_replace_null_directions(self):
+        torch.manual_seed(44)
+        module = TensorBasedAlignmentStable(
+            input_dims=[8, 6],
+            output_dims=[4, 4],
+            num_modalities=2,
+            max_svd_sweeps=1,
+            stabilize_rank_deficient=False,
+        )
+        latent = torch.randn(12, 1)
+        source = [
+            latent.matmul(torch.randn(1, 8)),
+            latent.matmul(torch.randn(1, 6)),
+        ]
+        target = [
+            latent.matmul(torch.randn(1, 8)),
+            latent.matmul(torch.randn(1, 6)),
+        ]
+
+        info = module.update_projections(source, target)
+
+        self.assertEqual(info["stabilized_null_dims"], (0, 0))
+        self.assertTrue(any(rank < 4 for rank in info["effective_ranks"]))
+        for projection in (*module.U_matrices, *module.V_matrices):
+            self.assertTrue(
+                torch.allclose(
+                    projection.transpose(0, 1).matmul(projection),
+                    torch.eye(4),
+                    atol=1e-5,
+                    rtol=1e-5,
+                )
+            )
+
     def test_epoch_update_is_orthogonal_and_forward_is_read_only(self):
         torch.manual_seed(7)
         module = TensorBasedAlignmentStable(
@@ -999,6 +1406,19 @@ class TensorEpochUpdateTests(unittest.TestCase):
 
 
 class SinkhornTransportTests(unittest.TestCase):
+    def test_sinkhorn_is_fixed_iteration_by_default(self):
+        generator = NeuralOptimalTransportGenerator(
+            feature_dim=6,
+            hidden_dim=8,
+            transport_mode="sinkhorn",
+            sinkhorn_iterations=50,
+        )
+        source = torch.randn(5, 6)
+        target = torch.randn(5, 6)
+        _, details = generator(source, target, return_details=True)
+        self.assertEqual(int(details["sinkhorn_iterations_used"]), 50)
+        self.assertEqual(generator.sinkhorn_max_iterations, 50)
+
     def test_sinkhorn_accepts_unlabeled_nonuniform_source_marginal(self):
         torch.manual_seed(23)
         generator = NeuralOptimalTransportGenerator(
@@ -1006,6 +1426,7 @@ class SinkhornTransportTests(unittest.TestCase):
             hidden_dim=10,
             transport_mode='sinkhorn',
             sinkhorn_iterations=100,
+            adaptive_sinkhorn=True,
         )
         source = torch.randn(4, 8, requires_grad=True)
         target = torch.randn(3, 8, requires_grad=True)
@@ -1029,7 +1450,7 @@ class SinkhornTransportTests(unittest.TestCase):
             )
         )
         self.assertGreater(int(details['sinkhorn_iterations_used'].item()), 100)
-        self.assertLess(float(details['marginal_residual']), 2e-4)
+        self.assertLess(float(details['marginal_residual'].detach()), 2e-4)
         intermediate.square().mean().backward()
         self.assertIsNotNone(source.grad)
         self.assertIsNotNone(target.grad)

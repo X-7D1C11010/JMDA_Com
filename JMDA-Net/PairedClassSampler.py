@@ -19,5 +19,6 @@ if _MODULE is None:
     _SPEC.loader.exec_module(_MODULE)
 
 PairedClassSampler = _MODULE.PairedClassSampler
+PseudoPairedClassSampler = _MODULE.PseudoPairedClassSampler
 
-__all__ = ["PairedClassSampler"]
+__all__ = ["PairedClassSampler", "PseudoPairedClassSampler"]

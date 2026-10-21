@@ -139,6 +139,12 @@ def parse_metrics(text):
                     metrics[std_name] = float(values['std'])
 
             apply_summary('accuracy', 'final_acc', 'final_acc_std')
+            accuracy_values = summary_metrics.get('accuracy', {}).get('values')
+            if isinstance(accuracy_values, list):
+                # Completed JMDA logs contain every per-epoch Val Acc plus one
+                # reported_acc per seed.  The result-table count must describe
+                # independent repeated runs, not those 100x duplicated traces.
+                metrics['accuracy_values_count'] = len(accuracy_values)
             apply_summary(
                 'precision_macro', 'precision_macro', 'precision_macro_std'
             )

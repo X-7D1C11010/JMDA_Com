@@ -61,7 +61,13 @@ class PairedModalTransform:
 class PairedMultiModalDomainDataset(MultiModalDomainDataset):
     """Match modalities by filename stem and apply paired transformations."""
 
-    def __init__(self, *args, allowed_original_labels=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        allowed_original_labels=None,
+        include_label=True,
+        **kwargs,
+    ):
         root_dir = args[0] if args else kwargs["root_dir"]
         domain_type = kwargs.get(
             "domain_type",
@@ -101,10 +107,28 @@ class PairedMultiModalDomainDataset(MultiModalDomainDataset):
                 f"{unknown_labels}"
             )
         self.num_classes = len(self.label_map)
+        self.include_label = bool(include_label)
         self.pairing_stats["selected_phase_pairs_before_filter"] = selected_before_filter
         self.pairing_stats["filtered_out_pairs"] = selected_before_filter - len(self.samples)
         self.pairing_stats["selected_phase_pairs"] = len(self.samples)
         self.pairing_stats["retained_original_labels"] = list(map(int, self.unique_labels))
+        if not self.include_label:
+            # A UDA optimizer only needs paired image paths. Remove per-sample
+            # target truth from the live dataset object after initialization,
+            # rather than merely omitting it from the collated batch. The
+            # separately constructed oracle-support probe (when explicitly
+            # requested) is the only training-domain object allowed to retain
+            # target labels.
+            self.samples = [
+                {
+                    key: value
+                    for key, value in sample.items()
+                    if key != "label"
+                }
+                for sample in self.samples
+            ]
+            self.labels = None
+            self.unique_labels = []
         transform_phase = "val" if self.deterministic_transform else self.phase
         transform_val_augment = (
             False if self.deterministic_transform else self.val_augment
@@ -223,25 +247,31 @@ class PairedMultiModalDomainDataset(MultiModalDomainDataset):
         try:
             vis_img = Image.open(sample["vis"]).convert("RGB")
             ir_img = Image.open(sample["ir"]).convert("L").convert("RGB")
-        except (OSError, ValueError):
-            if len(self) <= 1:
-                raise
-            return self.__getitem__((idx + 1) % len(self))
+        except (OSError, ValueError) as error:
+            # Never replace a failed observation with the next dataset row.
+            # That silently changes its class and invalidates the sample index,
+            # pseudo label, VIS/IR pairing, and epoch-level SVD correspondence.
+            raise RuntimeError(
+                "Failed to load an exact VIS/IR pair: "
+                f"index={idx}, vis={sample['vis']!r}, ir={sample['ir']!r}."
+            ) from error
 
         vis_tensor, ir_tensor = self.paired_transform(vis_img, ir_img)
-        try:
-            label_id = self.label_map[sample["label"]]
-        except KeyError as error:
-            raise KeyError(
-                "Sample label is absent from label_map; refusing to silently "
-                f"remap original label {sample['label']} to class 0."
-            ) from error
-        return {
+        result = {
             "vis": vis_tensor,
             "ir": ir_tensor,
-            "label": torch.tensor(label_id, dtype=torch.long),
             "domain_label": self.domain_label,
         }
+        if self.include_label:
+            try:
+                label_id = self.label_map[sample["label"]]
+            except KeyError as error:
+                raise KeyError(
+                    "Sample label is absent from label_map; refusing to silently "
+                    f"remap original label {sample['label']} to class 0."
+                ) from error
+            result["label"] = torch.tensor(label_id, dtype=torch.long)
+        return result
 
 
 __all__ = [

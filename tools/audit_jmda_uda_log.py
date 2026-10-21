@@ -30,6 +30,11 @@ EPOCH_MACRO_RE = re.compile(
     r"Epoch \[(\d+)/(\d+)\].*?Val P/R/F1 \(Macro\):\s*"
     r"([0-9.]+)/([0-9.]+)/([0-9.]+)"
 )
+EPOCH_SCHEDULE_RE = re.compile(
+    r"Epoch \[(\d+)/(\d+)\].*?\| OT scale:\s*([-+0-9.eE]+).*?"
+    r"\| LR feature/other/discriminator:\s*"
+    r"([-+0-9.eE]+)/([-+0-9.eE]+)/([-+0-9.eE]+)"
+)
 SVD_RE = re.compile(
     r"Epoch \[(\d+)/(\d+)\]\s*\|\s*SVD update #(\d+):([^\r\n]*)"
 )
@@ -133,6 +138,46 @@ def _parse_float_field(text: str, field: str) -> Optional[float]:
     return float(match.group(1)) if match is not None else None
 
 
+def _parse_int_field(text: str, field: str) -> Optional[int]:
+    match = re.search(rf"{re.escape(field)}=(\d+)", text)
+    return int(match.group(1)) if match is not None else None
+
+
+def _parse_int_list_field(text: str, field: str) -> Optional[List[int]]:
+    match = re.search(rf"{re.escape(field)}=\[([^]]*)\]", text)
+    if match is None:
+        return None
+    values = [value.strip() for value in match.group(1).split(",")]
+    try:
+        return [int(value) for value in values if value]
+    except ValueError:
+        return None
+
+
+def _parse_float_list_field(text: str, field: str) -> Optional[List[float]]:
+    match = re.search(rf"{re.escape(field)}=\[([^]]*)\]", text)
+    if match is None:
+        return None
+    values = [value.strip() for value in match.group(1).split(",")]
+    try:
+        return [float(value) for value in values if value]
+    except ValueError:
+        return None
+
+
+def _expected_training_batches_without_singleton(
+    sample_count: int,
+    batch_size: int,
+) -> int:
+    """Mirror the sampler's singleton-tail merge for protocol auditing."""
+    if sample_count < 1 or batch_size < 1:
+        raise ValueError("sample_count and batch_size must be positive")
+    batch_count = math.ceil(sample_count / batch_size)
+    if batch_count > 1 and sample_count % batch_size == 1:
+        batch_count -= 1
+    return batch_count
+
+
 def audit_text(
     text: str,
     *,
@@ -143,6 +188,8 @@ def audit_text(
     expected_code_fingerprint: str,
     expected_num_iterations: int,
     expected_base_seed: int,
+    expected_batch_size: Optional[int] = None,
+    expected_svd_stat_batch_size: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Return protocol errors, non-blocking warnings and per-seed diagnostics."""
     errors: List[str] = []
@@ -180,6 +227,27 @@ def audit_text(
         )
 
     summary = _load_summary(text, errors)
+    pseudo_paired = (
+        summary.get("uda_pairing_mode") == "source_prototype_pseudo_class"
+    )
+    summary_label_map = summary.get("label_map_original_to_index", {})
+    summary_class_count = (
+        len(summary_label_map) if isinstance(summary_label_map, dict) else 0
+    )
+    oracle_expected = expected_protocol == "ORACLE_SHARED_UDA"
+    if oracle_expected and not pseudo_paired:
+        errors.append(
+            "ORACLE_SHARED_UDA must use source-prototype pseudo-class pairing"
+        )
+    if not oracle_expected and pseudo_paired:
+        errors.append(
+            "strict UDA must not use the oracle-only pseudo-class pairing mode"
+        )
+    if pseudo_paired and summary.get("target_ground_truth_used_for_pairing") is not False:
+        errors.append(
+            "pseudo-paired UDA summary does not prove target ground-truth "
+            "labels were excluded from pair construction"
+        )
     segments = _segments(text)
     if not segments:
         errors.append("no iteration sections found")
@@ -221,6 +289,15 @@ def audit_text(
             )
         else:
             observed_seeds.append(seed_matches[0])
+
+        label_exposure_marker = (
+            "Target training item label exposure: include_label=False;"
+        )
+        if segment.count(label_exposure_marker) != 1:
+            errors.append(
+                f"iteration {iteration_index}: UDA target training items must "
+                "prove include_label=False exactly once"
+            )
 
         warmup_records = [
             (int(epoch), int(total))
@@ -265,9 +342,219 @@ def audit_text(
             errors.append(
                 f"iteration {iteration_index}: SVD total-epoch denominator mismatch"
             )
+        if pseudo_paired:
+            for svd_epoch, _, _, tail in svd_records:
+                for required in (
+                    "class_paired=True",
+                    "class_balanced=True",
+                    "target_labels_source=pseudo",
+                ):
+                    if required not in tail:
+                        errors.append(
+                            f"iteration {iteration_index}, epoch {svd_epoch}: "
+                            f"pseudo-paired SVD is missing {required}"
+                        )
+            pseudo_pair_records = re.findall(
+                r"Epoch \[(\d+)/(\d+)\]\s*\|\s*UDA pseudo-class pairing:"
+                r"([^\r\n]*)",
+                segment,
+            )
+            observed_pseudo_epochs = [
+                int(epoch) for epoch, _, _ in pseudo_pair_records
+            ]
+            expected_pseudo_epochs = list(range(1, expected_total_epochs + 1))
+            if observed_pseudo_epochs != expected_pseudo_epochs:
+                errors.append(
+                    f"iteration {iteration_index}: pseudo-pairing epochs expected "
+                    f"{_describe_integers(expected_pseudo_epochs)}, found "
+                    f"{_describe_integers(observed_pseudo_epochs)}"
+                )
+            for pseudo_epoch, _, tail in pseudo_pair_records:
+                for required in (
+                    "target_label_source=source-prototype (no target ground truth)",
+                    "pseudo_feature_space=",
+                    "class_counts=",
+                    "coverage_repairs=",
+                    "repaired-vs-nearest agreement=",
+                    "modality_source_bal_acc=",
+                    "modality_weights=",
+                    "modality_reliability_estimator="
+                    "leave-one-out-source-prototypes",
+                    "change_rate=",
+                    "target_samples=",
+                    "balanced_epoch_samples=",
+                    "training_batches=",
+                ):
+                    if required not in tail:
+                        errors.append(
+                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                            f"pseudo-pairing diagnostics are missing {required}"
+                        )
+                expected_pseudo_space = (
+                    "native-pre-svd"
+                    if int(pseudo_epoch) == 1
+                    else "aligned-svd"
+                )
+                if (
+                    f"pseudo_feature_space={expected_pseudo_space}"
+                    not in tail
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        "pseudo feature space must be "
+                        f"{expected_pseudo_space}"
+                    )
+                class_counts = _parse_int_list_field(tail, "class_counts")
+                target_samples = _parse_int_field(tail, "target_samples")
+                coverage_repairs = _parse_int_field(tail, "coverage_repairs")
+                agreement = _parse_float_field(
+                    tail,
+                    "repaired-vs-nearest agreement",
+                )
+                balanced_epoch_samples = _parse_int_field(
+                    tail,
+                    "balanced_epoch_samples",
+                )
+                training_batches = _parse_int_field(tail, "training_batches")
+                modality_accuracies = _parse_float_list_field(
+                    tail,
+                    "modality_source_bal_acc",
+                )
+                modality_weights = _parse_float_list_field(
+                    tail,
+                    "modality_weights",
+                )
+                if (
+                    class_counts is None
+                    or not class_counts
+                    or any(count < 1 for count in class_counts)
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        f"invalid pseudo class_counts={class_counts!r}"
+                    )
+                else:
+                    if (
+                        summary_class_count
+                        and len(class_counts) != summary_class_count
+                    ):
+                        errors.append(
+                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                            "pseudo class count does not match classifier K: "
+                            f"{len(class_counts)} != {summary_class_count}"
+                        )
+                    if target_samples is None or sum(class_counts) != target_samples:
+                        errors.append(
+                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                            "pseudo counts do not sum to target_samples: "
+                            f"counts={class_counts}, target_samples={target_samples}"
+                        )
+                    expected_balanced_samples = max(class_counts) * len(class_counts)
+                    if balanced_epoch_samples != expected_balanced_samples:
+                        errors.append(
+                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                            "balanced_epoch_samples mismatch: expected "
+                            f"{expected_balanced_samples}, found "
+                            f"{balanced_epoch_samples}"
+                        )
+                    if (
+                        target_samples
+                        and expected_balanced_samples / target_samples > 4.0
+                    ):
+                        warnings.append(
+                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                            "pseudo-class balancing expands target exposure by "
+                            f"{expected_balanced_samples / target_samples:.2f}x"
+                        )
+                if (
+                    coverage_repairs is None
+                    or coverage_repairs < 0
+                    or (
+                        summary_class_count
+                        and coverage_repairs >= summary_class_count
+                    )
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        f"invalid coverage_repairs={coverage_repairs!r}"
+                    )
+                if (
+                    target_samples
+                    and coverage_repairs is not None
+                    and agreement is not None
+                    and not math.isclose(
+                        agreement,
+                        1.0 - coverage_repairs / target_samples,
+                        abs_tol=DISPLAYED_METRIC_TOLERANCE,
+                    )
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        "repair agreement is inconsistent with coverage repairs"
+                    )
+                if (
+                    modality_accuracies is None
+                    or len(modality_accuracies) != 2
+                    or any(
+                        not math.isfinite(value) or not 0.0 <= value <= 1.0
+                        for value in (modality_accuracies or [])
+                    )
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        "invalid modality_source_bal_acc"
+                    )
+                if (
+                    modality_weights is None
+                    or len(modality_weights) != 2
+                    or any(
+                        not math.isfinite(value) or value <= 0.0
+                        for value in (modality_weights or [])
+                    )
+                    or not math.isclose(
+                        sum(modality_weights or []),
+                        1.0,
+                        abs_tol=1e-5,
+                    )
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        "invalid modality_weights"
+                    )
+                summary_target_samples = summary.get("target_train_samples")
+                if (
+                    summary_target_samples is not None
+                    and target_samples != summary_target_samples
+                ):
+                    errors.append(
+                        f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                        "target_samples disagrees with run summary"
+                    )
+                summary_batch_size = (
+                    summary.get("data_loading", {}).get("batch_size")
+                    if isinstance(summary.get("data_loading"), dict)
+                    else None
+                )
+                if balanced_epoch_samples and summary_batch_size:
+                    expected_batches = _expected_training_batches_without_singleton(
+                        balanced_epoch_samples,
+                        summary_batch_size,
+                    )
+                    if training_batches != expected_batches:
+                        errors.append(
+                            f"iteration {iteration_index}, epoch {pseudo_epoch}: "
+                            "training_batches mismatch: expected "
+                            f"{expected_batches}, found {training_batches}"
+                        )
 
         first_svd_tail = svd_records[0][3] if svd_records else ""
-        min_cos_match = MIN_COS_RE.search(first_svd_tail)
+        first_transport_index = 0 if expected_warmup_epochs > 0 else 1
+        first_transport_tail = (
+            svd_records[first_transport_index][3]
+            if len(svd_records) > first_transport_index
+            else ""
+        )
+        min_cos_match = MIN_COS_RE.search(first_transport_tail)
         source_min_cosine = None
         target_min_cosine = None
         first_effective_ranks = _parse_int_tuple_field(
@@ -277,63 +564,65 @@ def audit_text(
             first_svd_tail, "stabilized_null_dims"
         )
         first_shared_transport_ranks = _parse_int_tuple_field(
-            first_svd_tail, "shared_transport_ranks"
+            first_transport_tail, "shared_transport_ranks"
         )
         first_basis_domain_gap = _parse_float_field(
-            first_svd_tail, "basis_domain_gap"
+            first_transport_tail, "basis_domain_gap"
         )
-        if expected_warmup_epochs > 0:
-            required_transition_fields = (
-                "effective_ranks=",
-                "stabilized_null_dims=",
-                "rank_thresholds=",
-                "basis_nonorth_src/tgt=",
-                "transport_nonorth=",
-                "shared_transport_ranks=",
-                "shared_transport_rank_thresholds=",
-                "classifier_basis=source",
-            )
-            for field in required_transition_fields:
-                if field not in first_svd_tail:
-                    errors.append(
-                        f"iteration {iteration_index}: first post-warm-up SVD "
-                        f"is missing {field}"
-                    )
-            if min_cos_match is None:
+        for field_name, values in (
+            ("effective_ranks", first_effective_ranks),
+            ("stabilized_null_dims", first_stabilized_null_dims),
+        ):
+            if values is None or len(values) != 2:
                 errors.append(
-                    f"iteration {iteration_index}: first post-warm-up SVD is "
-                    "missing basis_min_cos_src/tgt"
+                    f"iteration {iteration_index}: first SVD has invalid "
+                    f"{field_name} tuple: {values!r}"
                 )
-            else:
-                source_min_cosine = float(min_cos_match.group(1))
-                target_min_cosine = float(min_cos_match.group(2))
+        for field in ("effective_ranks=", "stabilized_null_dims=", "rank_thresholds="):
+            if field not in first_svd_tail:
+                errors.append(
+                    f"iteration {iteration_index}: first SVD is missing {field}"
+                )
+        if (
+            pseudo_paired
+            and
+            first_stabilized_null_dims is not None
+            and first_stabilized_null_dims != [0, 0]
+        ):
+            errors.append(
+                f"iteration {iteration_index}: legacy supervised paired-SVD must "
+                "not stabilize null directions; found "
+                f"{first_stabilized_null_dims}"
+            )
 
-            for field_name, values in (
-                ("effective_ranks", first_effective_ranks),
-                ("stabilized_null_dims", first_stabilized_null_dims),
-                ("shared_transport_ranks", first_shared_transport_ranks),
-            ):
-                if values is None or len(values) != 2:
-                    errors.append(
-                        f"iteration {iteration_index}: first post-warm-up SVD "
-                        f"has invalid {field_name} tuple: {values!r}"
-                    )
-            if (
-                first_effective_ranks is not None
-                and len(first_effective_ranks) == 2
-                and first_stabilized_null_dims is not None
-                and len(first_stabilized_null_dims) == 2
-            ):
-                expected_null_dims = [
-                    max(expected_projection_dim - rank, 0)
-                    for rank in first_effective_ranks
-                ]
-                if first_stabilized_null_dims != expected_null_dims:
-                    errors.append(
-                        f"iteration {iteration_index}: stabilized null dimensions "
-                        f"do not match projection/effective ranks; expected "
-                        f"{expected_null_dims}, found {first_stabilized_null_dims}"
-                    )
+        required_transition_fields = (
+            "basis_nonorth_src/tgt=",
+            "transport_nonorth=",
+            "shared_transport_ranks=",
+            "shared_transport_rank_thresholds=",
+            "basis_domain_gap=",
+            "classifier_basis=shared" if pseudo_paired else "classifier_basis=source",
+            "basis_transport=legacy_supervised",
+        )
+        for field in required_transition_fields:
+            if field not in first_transport_tail:
+                errors.append(
+                    f"iteration {iteration_index}: first transported SVD is "
+                    f"missing {field}"
+                )
+        if min_cos_match is None:
+            errors.append(
+                f"iteration {iteration_index}: first transported SVD is missing "
+                "basis_min_cos_src/tgt"
+            )
+        else:
+            source_min_cosine = float(min_cos_match.group(1))
+            target_min_cosine = float(min_cos_match.group(2))
+        if first_shared_transport_ranks is None or len(first_shared_transport_ranks) != 2:
+            errors.append(
+                f"iteration {iteration_index}: first transported SVD has invalid "
+                f"shared_transport_ranks tuple: {first_shared_transport_ranks!r}"
+            )
 
         epoch_metric_matches = list(EPOCH_METRIC_RE.finditer(segment))
         epoch_metrics: Dict[int, Dict[str, float]] = {}
@@ -364,10 +653,15 @@ def audit_text(
                     f"iteration {iteration_index}, epoch {epoch}: total-epoch "
                     f"denominator is {total}, expected {expected_total_epochs}"
                 )
-            if abs(target_loss) > 1e-10 or abs(intermediate_loss) > 1e-10:
+            if abs(target_loss) > 1e-10:
                 errors.append(
-                    f"iteration {iteration_index}, epoch {epoch}: target/mid "
+                    f"iteration {iteration_index}, epoch {epoch}: target "
                     "classification loss is non-zero"
+                )
+            if not pseudo_paired and abs(intermediate_loss) > 1e-10:
+                errors.append(
+                    f"iteration {iteration_index}, epoch {epoch}: unpaired UDA "
+                    "intermediate classification loss is non-zero"
                 )
             if labeled_target_observations != 0:
                 errors.append(
@@ -388,6 +682,72 @@ def audit_text(
                 f"iteration {iteration_index}: epoch metrics incomplete; "
                 f"missing={missing}, extra={extra}"
             )
+
+        schedule_records = {
+            int(epoch): (
+                int(total),
+                float(ot_scale),
+                float(feature_lr),
+                float(other_lr),
+                float(discriminator_lr),
+            )
+            for (
+                epoch,
+                total,
+                ot_scale,
+                feature_lr,
+                other_lr,
+                discriminator_lr,
+            ) in EPOCH_SCHEDULE_RE.findall(segment)
+        }
+        if set(schedule_records) != expected_metric_epochs:
+            errors.append(
+                f"iteration {iteration_index}: OT/LR schedule records are incomplete"
+            )
+        ot_warmup_epochs = int(summary.get("ot_warmup_epochs", 10))
+        ot_ramp_epochs = int(summary.get("ot_ramp_epochs", 5))
+        expected_discriminator_lr = float(summary.get("lr_other", 2e-4))
+        for schedule_epoch, (
+            total,
+            ot_scale,
+            _feature_lr,
+            _other_lr,
+            discriminator_lr,
+        ) in schedule_records.items():
+            if total != expected_total_epochs:
+                errors.append(
+                    f"iteration {iteration_index}, epoch {schedule_epoch}: "
+                    "OT/LR total-epoch denominator mismatch"
+                )
+            if schedule_epoch <= ot_warmup_epochs:
+                expected_ot_scale = 0.0
+            else:
+                expected_ot_scale = min(
+                    (schedule_epoch - ot_warmup_epochs) / ot_ramp_epochs,
+                    1.0,
+                )
+            if not math.isclose(
+                ot_scale,
+                expected_ot_scale,
+                abs_tol=5e-3,
+            ):
+                errors.append(
+                    f"iteration {iteration_index}, epoch {schedule_epoch}: "
+                    f"OT scale expected {expected_ot_scale:.4f}, "
+                    f"found {ot_scale:.4f}"
+                )
+            if not math.isclose(
+                discriminator_lr,
+                expected_discriminator_lr,
+                rel_tol=1e-6,
+                abs_tol=1e-12,
+            ):
+                errors.append(
+                    f"iteration {iteration_index}, epoch {schedule_epoch}: "
+                    "discriminator LR is not fixed at the supervised-reference "
+                    f"value {expected_discriminator_lr:g}: "
+                    f"found {discriminator_lr:g}"
+                )
 
         macro_matches = EPOCH_MACRO_RE.findall(segment)
         macro_counts = Counter(int(record[0]) for record in macro_matches)
@@ -449,10 +809,6 @@ def audit_text(
             errors.append(f"iteration {iteration_index}: final checkpoint was not saved")
 
         class_matches = CLASS_COUNT_RE.findall(segment)
-        summary_label_map = summary.get("label_map_original_to_index", {})
-        summary_class_count = (
-            len(summary_label_map) if isinstance(summary_label_map, dict) else 0
-        )
         class_count = (
             int(class_matches[-1])
             if class_matches
@@ -588,7 +944,6 @@ def audit_text(
                 f"iteration seeds mismatch: expected {expected_seeds!r}, "
                 f"found {observed_seeds!r}"
             )
-        oracle_expected = expected_protocol == "ORACLE_SHARED_UDA"
         if summary.get("oracle_target_label_support_used") is not oracle_expected:
             errors.append(
                 "summary oracle_target_label_support_used is inconsistent with protocol"
@@ -598,6 +953,59 @@ def audit_text(
             errors.append("oracle summary is missing oracle_shared_labels")
         if not oracle_expected and oracle_labels not in ([], None):
             errors.append("strict UDA summary contains oracle_shared_labels")
+        if pseudo_paired and not oracle_expected:
+            errors.append(
+                "source-prototype pseudo pairing is currently restricted to "
+                "the separately reported oracle shared-label protocol"
+            )
+        expected_parity_fields = {
+            "visual_finetuning_mode": "legacy_supervised",
+            "adaptive_sinkhorn": False,
+            "svd_projection_mode": "legacy_supervised",
+            "basis_transport_mode": "legacy_supervised",
+            "transport_mode": "sinkhorn",
+            "ot_sinkhorn_iterations": 50,
+            "ot_warmup_epochs": 10,
+            "ot_ramp_epochs": 5,
+            "class_conditional_ot": True,
+            "balance_svd_classes": True,
+            "sync_discriminator_lr": False,
+            "tensor_loss_weight": 0.12,
+            "adv_loss_weight": 0.08,
+            "lr_feature": 5e-6,
+            "lr_other": 2e-4,
+            "weight_decay": 5e-4,
+        }
+        for key, expected_value in expected_parity_fields.items():
+            if summary.get(key) != expected_value:
+                errors.append(
+                    f"summary {key!r} mismatch: expected {expected_value!r}, "
+                    f"found {summary.get(key)!r}"
+                )
+        if summary.get("target_training_item_labels_exposed") is not False:
+            errors.append(
+                "summary does not prove UDA target training items excluded labels"
+            )
+        if pseudo_paired and summary.get("modality_reliability_estimator") != (
+            "leave-one-out-source-prototypes"
+        ):
+            errors.append("summary modality reliability is not leave-one-out")
+        data_loading = summary.get("data_loading")
+        if not isinstance(data_loading, dict):
+            errors.append("summary data_loading is missing")
+        else:
+            for key, expected_value in (
+                ("batch_size", expected_batch_size),
+                ("svd_stat_batch_size", expected_svd_stat_batch_size),
+            ):
+                if (
+                    expected_value is not None
+                    and data_loading.get(key) != expected_value
+                ):
+                    errors.append(
+                        f"summary data_loading.{key} mismatch: expected "
+                        f"{expected_value}, found {data_loading.get(key)!r}"
+                    )
 
         summary_metrics = summary.get("metrics", {})
         expected_final_metrics = {
@@ -706,6 +1114,12 @@ def main() -> int:
     parser.add_argument("--expected-code-fingerprint", required=True)
     parser.add_argument("--expected-num-iterations", required=True, type=int)
     parser.add_argument("--expected-base-seed", required=True, type=int)
+    parser.add_argument("--expected-batch-size", required=True, type=int)
+    parser.add_argument(
+        "--expected-svd-stat-batch-size",
+        required=True,
+        type=int,
+    )
     args = parser.parse_args()
 
     if args.expected_projection_dim < 1:
@@ -718,6 +1132,10 @@ def main() -> int:
         parser.error("--expected-code-fingerprint must be 16 lowercase hex digits")
     if args.expected_num_iterations < 1:
         parser.error("--expected-num-iterations must be positive")
+    if args.expected_batch_size < 1:
+        parser.error("--expected-batch-size must be positive")
+    if args.expected_svd_stat_batch_size < 1:
+        parser.error("--expected-svd-stat-batch-size must be positive")
     if not args.log.is_file():
         parser.error(f"log file does not exist: {args.log}")
 
@@ -730,6 +1148,8 @@ def main() -> int:
         expected_code_fingerprint=args.expected_code_fingerprint,
         expected_num_iterations=args.expected_num_iterations,
         expected_base_seed=args.expected_base_seed,
+        expected_batch_size=args.expected_batch_size,
+        expected_svd_stat_batch_size=args.expected_svd_stat_batch_size,
     )
     print(f"JMDA log audit status: {result['status']}")
     for error in result["protocol_errors"]:

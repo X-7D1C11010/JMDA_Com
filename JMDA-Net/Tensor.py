@@ -56,6 +56,7 @@ class TensorBasedAlignmentStable(nn.Module):
         svd_tolerance: float = 1e-4,
         unpaired_ot_epsilon: float = 0.1,
         unpaired_sinkhorn_iterations: int = 50,
+        stabilize_rank_deficient: bool = True,
         eps: float = 1e-8,
     ):
         super().__init__()
@@ -84,6 +85,7 @@ class TensorBasedAlignmentStable(nn.Module):
         self.svd_tolerance = svd_tolerance
         self.unpaired_ot_epsilon = float(unpaired_ot_epsilon)
         self.unpaired_sinkhorn_iterations = int(unpaired_sinkhorn_iterations)
+        self.stabilize_rank_deficient = bool(stabilize_rank_deficient)
         self.eps = eps
         self.last_update_info: Dict[str, object] = {}
         self.register_buffer(
@@ -535,13 +537,24 @@ class TensorBasedAlignmentStable(nn.Module):
                     singular_values,
                 )
                 informative_rank = min(effective_rank, rank)
-                new_source, new_target = self._stabilize_rank_deficient_pair(
-                    new_source,
-                    new_target,
-                    self.U_matrices[mode],
-                    self.V_matrices[mode],
-                    informative_rank,
-                )
+                if self.stabilize_rank_deficient:
+                    new_source, new_target = self._stabilize_rank_deficient_pair(
+                        new_source,
+                        new_target,
+                        self.U_matrices[mode],
+                        self.V_matrices[mode],
+                        informative_rank,
+                    )
+                else:
+                    # Exact paired-SVD behavior used by the supervised
+                    # reference: retain all requested singular-vector columns
+                    # and only resolve their joint coordinate ambiguity.
+                    new_source, new_target = self._align_paired_subspace(
+                        new_source,
+                        new_target,
+                        self.U_matrices[mode],
+                        self.V_matrices[mode],
+                    )
 
                 self.U_matrices[mode].copy_(new_source)
                 self.V_matrices[mode].copy_(new_target)
@@ -549,7 +562,11 @@ class TensorBasedAlignmentStable(nn.Module):
                 getattr(self, f"singular_values_{mode}").copy_(retained)
                 current_singular_values.append(retained.clone())
                 effective_ranks.append(effective_rank)
-                stabilized_null_dims.append(rank - informative_rank)
+                stabilized_null_dims.append(
+                    rank - informative_rank
+                    if self.stabilize_rank_deficient
+                    else 0
+                )
                 rank_thresholds.append(rank_threshold)
 
             if previous_singular_values is not None:

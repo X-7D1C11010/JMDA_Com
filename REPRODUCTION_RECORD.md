@@ -618,4 +618,139 @@ powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 `
 - `Transfer-Learning-Library/` 与 JMDA-Net 的 tllib 依赖（MDD/MCC 依赖其裁剪子集）——删除会破坏 MDD/MCC，故保留。
 - `JMDA-Net/` 为本文方法（JMDA-Net）源码镜像，不属于被删除的对比方法。
 
+## 13. 2026-10-20 训练曲线诊断与保真性审计
+
+针对"5 个 UDA 方法都呈'先升后降/进入平台'的相同趋势、是否复现不完全"的疑问，做两项工作：(1) 把逐 epoch 指标从日志导出成 CSV 与曲线；(2) 把各方法本仓库实现与**仓库内留存的原参考实现**逐条对照。结论：**该趋势主要由"小数据 + 小验证集"引起的源域过拟合造成，不是复现失败；但 DANN/DeepCORAL/CDAN 确实存在真实的训练配方偏差，其中 CDAN 的偏差最可能放大后期退化。**
+
+### 13.1 逐 epoch 曲线导出工具
+
+新增 `tools/extract_epoch_curves.py`（**纯后处理**，只解析训练脚本已写出的日志，不触碰任何方法的训练代码、超参或 checkpoint）：
+
+```
+python tools/extract_epoch_curves.py \
+  --logs-dir efficiency_results/uda_sunny/logs \
+  --out-dir  efficiency_results/uda_sunny/epoch_curves
+```
+
+产出（`efficiency_results/uda_sunny/epoch_curves/`）：`curves/<方法>_<目标域>_seed<种子>.csv`（100 份，逐 epoch 准确率/P/R/F1/覆盖度/各损失项均值）、`all_epochs.csv`（合并长表）、`run_peak_final.csv`（每次运行的峰值/末期/差值）、`plots/<方法>_<目标域>.png`（20 张，多种子均值±标准差，含准确率与损失双面板）。
+
+**注（编码）**：`efficiency_results/` 下的日志由 PowerShell 5.1 的 `>` 重定向写出，编码为 **UTF-16LE(BOM)**，任何按 UTF-8 读取的脚本都会解析失败；工具已按 BOM 自动判定编码。汇总表 `efficiency_table.md` / `efficiency_summary.csv` 则是 GBK，非 UTF-8。
+
+### 13.2 趋势的量化证据
+
+从 100 个 run 的逐 epoch 曲线聚合（`peak_epoch` = 目标域 val 准确率最高的轮次）：
+
+| 方法 | 平均峰值轮次 | 峰值准确率 | 末期准确率 | 峰值−末期 | 峰值出现在第 10 轮之后的 run 数 |
+|------|------------|-----------|-----------|----------|------------------------------|
+| DANN | 6.4 | 0.3624 | 0.3108 | 0.0516 | 4/20 |
+| DeepCORAL | 6.5 | 0.3313 | 0.2841 | 0.0472 | 5/20 |
+| CDAN | 10.2 | 0.3464 | 0.2767 | 0.0696 | 10/20 |
+| MDD | 10.6 | 0.3571 | 0.2686 | 0.0885 | 12/20 |
+| MCC | 9.2 | 0.4288 | 0.3747 | 0.0541 | 7/20 |
+
+- **退化是真实的**：峰值普遍出现在第 6–13 轮，之后到第 20 轮平均掉 4.7–8.9 个点；个例更大（CDAN 雨天 0.262→0.154，掉 10.8 点；MDD 黑天 0.198→0.092；MDD 逆光 0.528→0.422）。
+- **根因是源域过拟合，不是欠拟合**：源域训练损失在 5–10 轮内被压到接近 0（DANN `loss_cls`→0.05~0.13；CDAN `loss_cls`→0.0012）。源域训练集仅 986 张 VIS，配 ImageNet 预训练 ResNet-18，很快被完全记住；此后模型趋于"源域专用"，域不变性下降。若是未收敛，源域损失应仍很高。
+- **因此加 epoch 会加重而非缓解该趋势**："增加训练轮数"不是该趋势的解法。
+- **100 轮的直接佐证**：历史有监督 Full（`new_full_sinkhorn.log`）跑到第 100 轮的 epoch-100 均值（逆光 0.3278 / 雨天 0.1769 / 雾天 0.1409 / 黑天 0.2567）远低于同批的 target-best 均值（0.5667 / 0.5385 / 0.4243 / 0.5067），说明轮数更长时退化幅度更大，与"过拟合"判断一致。
+- **量化噪声不可忽视**：目标域 val 仅 36（逆光）/26（雨天）/115（雾天）/120（黑天）个样本，单样本分别等价 2.78%/3.85%/0.87%/0.83%。逆光/雨天逐轮 1–3 个样本的抖动即表现为"范围内波动"，不应据此判断方法优劣；雾天/黑天粒度细，其平台更可信。
+- **CDAN 的对抗对齐确实在恶化**：`loss_transfer` 从 0.09 升到 0.84，同时 `loss_cls`→0.001，属"判别器压制特征"的典型退化。
+
+### 13.3 保真性审计（逐条对照仓库内留存的原参考实现）
+
+| 方法 | 项目 | 原参考实现（仓库内留存） | 本仓库实现 | 判定 |
+|------|------|------------------------|-----------|------|
+| DANN | 优化器 | **Adam**(lr=1e-3)　`DANN/train/main.py:76` | **SGD**(lr=1e-3, mom=0.9, wd=1e-4)　`DANN/train_dann.py:168` | **偏差** |
+| DANN | batch / epochs | 128 / 100　`main.py:21,23` | 32 / 20 | 偏差（随数据规模调整） |
+| DANN | alpha 调度 | α=2/(1+e^(−10p))−1　`main.py:100-101` | 同 | 一致 |
+| DANN | LR 调度 | 无 | 无 | 一致 |
+| DeepCORAL | 优化器参数组 | 2 组：主干=LR、**分类头 fc=10×LR**　`DeepCORAL/main.py:130-133` | 单组统一 LR　`train_deepcoral.py:148` | **偏差** |
+| DeepCORAL | CORAL 权重 | **λ=(e+1)/EPOCHS 线性递增**　`main.py:148` | **固定** `args.lamb`　`train_deepcoral.py:194` | **偏差** |
+| DeepCORAL | weight_decay | 定义了 5e-4 但未传入优化器 | 1e-4 | 偏差（小） |
+| DeepCORAL | EPOCHS / lr | 20 / 1e-3 | 20 / 1e-3 | 一致 |
+| CDAN | 优化器 | SGD(**nesterov=True**, wd=**5e-4**)　`pytorch/train_image.py:244-245` | SGD(wd=1e-4, 无 nesterov)　`train_cdan.py:144` | **偏差** |
+| CDAN | LR 调度 | **`inv`：lr·(1+0.001·iter)^(−0.75)，逐迭代**　`pytorch/lr_schedule.py` + `train_image.py:166,246` | 常量 LR（无调度） | **偏差** |
+| CDAN | coeff | `calc_coeff(iter)` | `calc_coeff(iter_num)` | 一致 |
+| CDAN | batch | 36 | 32 | 偏差（小） |
+| MDD | 全部 | tllib `examples/.../mdd.py`（lr 0.004 / γ 2e-4 / decay 0.75 / nesterov / wd 5e-4 / batch 32） | 完全一致　`MDD/train_mdd.py:200-202` | 一致 |
+| MCC | 全部 | tllib `examples/.../mcc.py`（lr 0.005 / γ 1e-3 / decay 0.75 / nesterov / wd 1e-3 / temp 2.5 / batch 36） | 完全一致　`MCC/train_mcc.py:193-194` | 一致 |
+
+**共同的有意适配**（第 6 节已记录，不属保真性偏差）：主干网络统一替换为 ResNet-18（原 DANN 为 MNIST-CNN、DeepCORAL 为 AlexNet@300×300、CDAN 为 ResNet-50、tllib 示例默认 ResNet-50），输入 224×224、14 类。
+
+**审计边界**：`DANN/` 内留存的是 fungtion/DANN 的 MNIST 版 `train/main.py`（Adam）；该仓库其它变体/DANN 论文原始 Theano 实现是否使用 SGD 未在本仓库留存、无法逐行核对，故上表 DANN 一行仅相对**本地留存版本**判定。MDD/MCC 可与 tllib 官方示例逐行核对，结论可靠。
+
+### 13.4 结论与建议
+
+1. **"所有方法同一趋势"的解释**：它们共享同一源域（986 张 VIS）、同一 20 轮预算与同样偏小的目标域验证集，因此共同呈现"源域快速过拟合 → 目标域先升后稳/微降"。这与各方法是否有独立 bug 无关。
+2. **有真实偏差的是 3 个**：DANN（Adam→SGD）、DeepCORAL（丢失分类头 10×LR、丢失 λ 线性递增）、CDAN（丢失 `inv` LR 衰减、nesterov、wd 5e-4）。其中 **CDAN 的偏差与其实测最严重的后期退化（雨天 −10.8 点）方向一致**，最可能是放大因素；但 MDD 配置完全忠实却仍有最大峰值−末期差（0.0885），说明**主因仍是过拟合/数据规模，而非配方偏差**。
+3. **若要归因到底**：这些偏差都是可检验的——补做对照实验（如给 CDAN 加回 `inv` 调度、给 DeepCORAL 加回 λ 递增与 10× 分类头 LR）即可分离"配方偏差"与"数据规模"两因素的贡献。该对照会改变优化过程，按项目约束需单独命名并披露，且需用户授权后进行。
+4. **不建议的做法**：单纯增加 epoch。源域损失已达 ≈0，延长训练只会加重过拟合。
+
+## 14. 2026-10-20 UDA 数据口径变更与训练配方偏差修复
+
+依据第 13.3 节审计结论，并经用户授权，对 6 个无监督域适应（UDA）方法做两类改动：**(A) 数据口径改为"以目标域类别为准"；(B) 修复 3 处训练配方偏差**。本节记录改动内容与影响范围。
+
+### 14.1 数据口径变更：标签空间以目标域为准
+
+**问题**：晴天（源域）含全部 14 类，而各目标域天气场景只含其中一部分类别。按原先的 14 类实现，源域里存在大量"目标域根本不存在的类别"的图像，无监督对齐会被迫把这些无法被目标域解释的类簇也压到一起，且分类头里有相当比例的类别在目标域上永远不可能被预测正确，准确率分母被稀释。
+
+**新口径**（用户给定）：
+- 目标域类别集 `T` = 该目标域 train ∪ val 列表中出现的原始类别 id；
+- 源域 **train** 与目标域 train/val 都只保留 `label ∈ T` 的图像；
+- 标签重映射到 `0..|T|-1`，**分类头输出维度 = |T|**；
+- 因此随机基线由全局 1/14=7.14% 变为 1/|T|。
+
+**公共实现**：新增 `tools/uda_data.py`（无监督方法共用的唯一数据入口），提供 `uda_label_space(data_dir, target)`→`(class_ids, label_map)`、`UdaImageListDataset(list_path, transform, label_map)`、`format_class_space` / `format_dropped`（日志用）。每个训练脚本启动时打印类别集、保留/丢弃数量。
+
+**过滤后的实际样本量与随机基线**（`data_lists/`，源域只过滤 `sunny_train.txt`，因为 6 个 UDA 脚本不使用源域 val）：
+
+| 目标域 | |T| | 原始类别 id | 目标 train / val | 源域 train 保留 / 丢弃 | 随机基线 |
+|--------|-----|-------------|-----------------|----------------------|---------|
+| 逆光 backlight | 9 | 0,4,5,6,7,8,10,12,13 | 128 / 36 | 643 / 343 | 11.1% |
+| 雨天 rainy | 6 | 0,4,5,6,8,10 | 96 / 26 | 525 / 461 | 16.7% |
+| 雾天 foggy | 9 | 0,1,3,4,5,7,8,9,10 | 440 / 115 | 713 / 273 | 11.1% |
+| 黑天 dark | 8 | 0,1,4,5,6,8,10,11 | 465 / 120 | 629 / 357 | 12.5% |
+
+**接入范围**：`DANN/train_dann.py`、`DeepCORAL/train_deepcoral.py`、`CDAN/train_cdan.py`、`MDD/train_mdd.py`、`MCC/train_mcc.py`、`PDA/train_pda.py`（这 6 个是 UDA 协议）。每处原有的本地 `ImageListDataset` 类已删除，改用 `uda_data` 的类；`classification_metrics(...)` 调用改为显式传入 `num_classes=|T|`（否则默认 14 的范围校验会拒绝）。PDA 的 CLIP 占位类名由 `class_1..class_14` 改为 `class_1..class_{|T|}`。
+
+**未接入**：`CCSA`、`d-SNE`（SDA 协议，用带标签的目标域子集，标签空间未变）、`MCFT`（VIS+IR 监督分类）、各 `*_sda.py` 变体。这些方法的训练代码与结果本次**完全未改动**。
+
+**可比性提醒**：过滤后各目标域的类别数不同（6/8/9/9），因此**跨目标域的准确率绝对值不能直接比较**，随机基线也不同；与第 8 节、第 13.2 节的历史数值不可直接对比。
+
+### 14.2 训练配方偏差修复（仅限第 13.3 节审计出的 3 处）
+
+| 方法 | 修复前 | 修复后（对齐仓库内原参考实现） |
+|------|--------|-------------------------------|
+| DANN | `SGD(lr=1e-3, momentum=0.9, weight_decay=1e-4)` | **`Adam(lr=1e-3)`**　（`DANN/train/main.py:76`，原实现不传 momentum/weight_decay） |
+| DeepCORAL | 单参数组统一 LR；CORAL 权重固定 `--lamb`；`weight_decay=1e-4` | **2 参数组：`sharedNet`=lr、`fc`=10×lr**（`main.py:130-133`）；**λ=(epoch+1)/EPOCHS 线性递增**（`main.py:148`）；**不传 weight_decay**（原实现定义 5e-4 但未传给优化器）。原 `--lamb` 参数已移除 |
+| CDAN | `SGD(wd=1e-4)`（无 nesterov、无 LR 调度），参数组经 `optimizer_utils.materialize_cdan_parameter_groups` 预展开 | **`SGD(momentum=0.9, weight_decay=5e-4, nesterov=True)`** 且直接使用 `get_parameters()` 的 `lr_mult`/`decay_mult` 分组；**逐迭代**调用 `inv_lr_scheduler`：`lr = lr·(1+0.001·iter)^(−0.75)`，`weight_decay = 5e-4·decay_mult`（`pytorch/train_image.py:166,244-246` + `pytorch/lr_schedule.py`）。新增 `--lr-gamma`(0.001) / `--lr-decay`(0.75) 两个可调参数，默认即原实现值 |
+
+`CDAN/optimizer_utils.py` 保留（仍被 `CDAN/train_cdan_sda.py` 与 `tools/test_comparison_reproducibility.py` 使用），只是不再被 UDA 版 `train_cdan.py` 引用。
+
+**未改动**：`MDD`/`MCC` 与 tllib 官方示例逐行一致，本次一处未动；所有方法的网络结构、损失函数、alpha/temperature 等超参、随机种子逻辑、效率日志逻辑均未改动。除上述 3 处外，其余"有意适配"（主干换 ResNet-18、输入 224×224 等）保持不变。
+
+### 14.3 效率基准的口径说明
+
+`tools/benchmark_efficiency.py` 新增 `--num-classes`（默认 14）以设置各方法分类头宽度，并把实际取值写入每次运行的 `benchmark.log`。该基准不加载任何真实数据（分类标签为随机张量，符合"效率测试不使用目标域真实标签"的约束），历史行仍按 14 类生成；UDA 训练改为 |T| 类后，分类头宽度差异对 ResNet-18 的参数量/FLOPs 影响 < 0.1%（如 512×(14−9)=2560 参数 vs 约 11.2M）。如需与训练严格对齐，可在基准命令上加 `--num-classes <|T|>`。
+
+### 14.4 验证与重跑
+
+1. **冒烟验证已通过**（`--target backlight --epochs 1 --seed 42`）：DANN / DeepCORAL / CDAN / MDD / MCC / PDA 六个方法全部 exit=0，日志确认：
+   - `UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8`
+   - `source train: kept 643, dropped 343`
+   - DeepCORAL `optimizer group learning rates: [0.001, 0.01]`（2 参数组生效）
+   - CDAN `optimizer group lr_mult: [1, 10, 10, 10]`，且 batch 日志中 lr 逐迭代递减（`9.93e-04 → 9.85e-04`），inv 调度生效
+   - 冒烟产物在系统临时目录，未写入 `efficiency_results/`。
+2. **当前重跑配置**（用户指定）：6 个 UDA 方法 × 目标域 backlight × 单种子 42 × **100 epoch**，输出目录 `efficiency_results/uda_sunny_targetspace/`：
+   ```
+   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 `
+       -Methods DANN,DeepCORAL,CDAN,MDD,MCC,PDA `
+       -Targets backlight -Seeds 42 -Epochs 100 `
+       -OutDir efficiency_results\uda_sunny_targetspace
+   ```
+   该脚本自动完成效率微基准 + 训练 + 汇总表重生成；逐 epoch 曲线用
+   `tools/extract_epoch_curves.py` 从 `logs/` 另行导出。
+3. 输出目录必须新建（如上例），**不要**复用 `efficiency_results/uda_sunny/`——第 8/13 节的历史结果保留原地，两者口径不同，不可混算。
+4. 本轮只覆盖 backlight 一个目标域，其余三个目标域（rainy/foggy/dark）的旧结果仍是 14 类口径，**不可与本轮数值并列比较**；若需完整结论，应补齐 `-Targets rainy,foggy,dark` 与 `-Seeds 42,43,44,45,46`。
+
+
 
