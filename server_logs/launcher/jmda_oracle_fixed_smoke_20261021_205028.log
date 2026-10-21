@@ -1,0 +1,47 @@
+nohup: 忽略输入
+[OK] JMDA reviewed code fingerprint: 94c6a030bec6a792
+协议=jmda_oracle_shared_uda 轮数=30 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/jmda_oracle_shared_uda
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261021_205031_4092158
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+运行公共配置预检...
+[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261021_205031_4092158/paired_protocol_manifest.json (4 labelled lists, 1 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=31589/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] backlight_train_pairs.tsv: 113 label-free rows, checked 113 exact pairs
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[ORACLE] target-training class support was isolated in the preprocessing manifest; training receives only the selected original class ids. This diagnostic is not strict UDA.
+[OK] JMDA-Net entry: /home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py
+[OK] JMDA protocol semantics: ORACLE_SHARED_UDA; target labels are excluded from losses, and an independently prepared class-support manifest filters the source label space
+[OK] server preflight passed
+运行 JMDA 协议接线门禁...
+.........................
+----------------------------------------------------------------------
+Ran 25 tests in 0.008s
+
+OK
+运行 JMDA Tensor/OT 数值门禁...
+.....................配对采样器已初始化，共 2 个共有类别；每个epoch覆盖全部 4 个目标样本，并按类别平衡扩展为 6 个训练观测。
+.........../home/lixiang/lx/JMDA_Com/JMDA-Net/test_tensor_ot_invariants.py:1533: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  self.assertLess(float(details["marginal_residual"]), 2e-4)
+....................
+----------------------------------------------------------------------
+Ran 52 tests in 4.286s
+
+OK
+JMDA加载参数: batch=32 workers=4 projection_dim=64 source_warmup=10 SVD_batch=128 prefetch=2 pin_memory=1
+目标域 backlight 独立类别支持(original ids)=1,5,6,7,8,9,11,13,14
+>>> [jmda_net_oracle_shared_uda_backlight]
+    done: jmda_net_oracle_shared_uda_backlight
+    protocol audit completed: jmda_net_oracle_shared_uda_backlight (JMDA log audit status: WARN)
+阶段结束（jmda_oracle_shared_uda）：失败任务数=0。
+全部任务成功（jmda_oracle_shared_uda）。

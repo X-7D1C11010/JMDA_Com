@@ -1,0 +1,51 @@
+================================================================================
+模块消融实验 - with_tensor_with_ot_oracle_shared
+目标域天气: 逆光
+训练开始时间: 2026-10-21 09:34:39
+训练代码指纹: 8e8e481c4fae1320
+设备: cuda
+协议: ORACLE_SHARED_UDA (adaptation=UDA)
+标签空间模式: oracle_shared
+ORACLE_SHARED_UDA reads target-training label support for filtering; it is a separate diagnostic and must not enter the strict UDA table.
+源域: /mnt/data/lixiang/data/Data/晴天
+目标域: /mnt/data/lixiang/data/Data/逆光
+批次大小: 32
+数据加载: workers=4, prefetch_factor=2, pin_memory(requested/active)=True/True
+总轮数: 100
+迭代次数: 5; seeds=[42, 43, 44, 45, 46]
+使用Tensor模块: 是
+使用OT模块: 是
+特征融合方式: Tensor对齐
+域对齐方式: 最优传输
+目标标签比例/权重: 0.0/0.0
+Tensor/Adv损失权重: 0.12/0.08
+Tensor投影维度/更新: 64/每epoch一次; SVD统计批次=128; SVD投影模式=legacy_supervised; 基变换模式=legacy_supervised
+学习率: feature=5e-06, other=0.0002, weight_decay=0.0005
+VIS训练/BN模式: legacy_supervised; Sinkhorn自适应迭代=False
+判别器学习率调度: 固定学习率
+报告策略: last, 窗口: 10
+UDA无标签对应: source-prototype pseudo-class paired Tensor/SVD + class-conditional OT; target ground-truth labels are excluded from pair construction and optimization; source_only_warmup=0
+================================================================================
+
+================================================================================
+迭代 1/5
+随机种子: 42
+================================================================================
+TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. reported_protocol=ORACLE_SHARED_UDA; shared original labels=[1, 5, 6, 7, 8, 9, 11, 13, 14]; source samples 760->515; target samples retained without filtering=113/113; classifier classes=9.
+Dataset audit: source_train=515, target_train=113, target_val=36
+Class counts (original labels): source={1: 120, 5: 53, 6: 53, 7: 83, 8: 44, 9: 45, 11: 47, 13: 40, 14: 30}; target_train=<class support inspected once; per-class counts withheld>; target_val={1: 6, 5: 4, 6: 4, 7: 8, 8: 1, 9: 5, 11: 3, 13: 4, 14: 1}
+Classifier label map (original->index): {1: 0, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5, 11: 6, 13: 7, 14: 8}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 515, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 245, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}; target_train={'union_vis_files': 164, 'union_ir_files': 169, 'matched_pairs_all': 149, 'selected_phase_pairs': 113, 'dropped_unpaired_vis': 15, 'dropped_unpaired_ir': 20, 'selected_phase_pairs_before_filter': 113, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}; target_val={'union_vis_files': 164, 'union_ir_files': 169, 'matched_pairs_all': 149, 'selected_phase_pairs': 36, 'dropped_unpaired_vis': 15, 'dropped_unpaired_ir': 20, 'selected_phase_pairs_before_filter': 36, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}
+Target training item label exposure: include_label=False; UDA must be False (the isolated oracle support probe, if enabled, is not passed to the optimizer).
+Training mode: prototype-pseudo-paired UDA; target ground-truth labels are excluded from pair construction, SVD, OT and losses.
+Training batches per epoch: determined from balanced target pseudo classes each epoch; batch_size=32; pseudo-pair loader matches the supervised in-process sampler.
+Trainable parameters: VIS=262,656/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=projection only (actual supervised-reference behavior).
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: Neural OT generator with 3-domain discriminator
+Loss weights: tensor=0.12, adv=0.08
+Transport: mode=sinkhorn, epsilon=0.1, Sinkhorn iterations(min/max)=50/50, tolerance=0.0001, correction scale=0.1, correction regularization weight=0.001, class conditional=True
+Joint optimization schedule: supervised-reference Tensor/SVD warm-up for 10 epochs from epoch 1, then OT loss ramp over 5 epochs.
+Tensor projection update: once per epoch from the complete class-balanced source/target pseudo-paired bank from epoch 1; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001, projection_mode=legacy_supervised, basis_transport=legacy_supervised
+Epoch [1/100] | UDA pseudo-class pairing: target_label_source=source-prototype (no target ground truth), pseudo_feature_space=native-pre-svd, class_counts=[22, 11, 16, 18, 8, 14, 8, 13, 3], coverage_repairs=0, assigned_confidence=0.1187, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[0.904710590839386, 0.5149782299995422], modality_weights=[0.6627320647239685, 0.3372679650783539], modality_reliability_estimator=leave-one-out-source-prototypes, change_rate=n/a, target_samples=113, balanced_epoch_samples=198, training_batches=7
+Epoch [1/100] | SVD update #1: pairs=198, sweeps=3, converged=True, rel_change=2.537e-05, effective_ranks=(112, 63), stabilized_null_dims=(0, 0), rank_thresholds=(0.0006653187447227538, 1.0392710997342292e-11), class_paired=True, class_balanced=True, target_labels_source=pseudo
+VIS BatchNorm behavior: supervised-reference train mode (running statistics update even in the frozen backbone).
