@@ -97,10 +97,43 @@ def exact_paired_split(domain_root, domain_type, phase):
     return selected, statistics
 
 
+def exact_vis_split(domain_root, domain_type, phase):
+    """VIS-only analog of exact_paired_split: same union/hash split rule but
+    without requiring a same-stem IR mate, so single-modality (VIS) methods
+    keep every VIS image of the domain."""
+    selected = []
+    statistics = {
+        'union_vis_files': 0,
+        'selected_phase_images': 0,
+    }
+    for class_name in class_names(domain_root, domain_type):
+        vis_by_stem, raw_val_vis = {}, {}
+        for split in ('train', 'val'):
+            split_vis = image_map(
+                modality_dir(domain_root, domain_type, split, class_name, '可见光')
+            )
+            vis_by_stem.update(split_vis)
+            if split == 'val':
+                raw_val_vis = split_vis
+
+        desired_val_count = min(len(raw_val_vis), len(vis_by_stem))
+        ranked = sorted(
+            vis_by_stem,
+            key=lambda stem: hashlib.sha256(
+                f'{domain_root.name}:{class_name}:{stem}'.encode('utf-8')
+            ).hexdigest(),
+        )
+        stems = ranked[:desired_val_count] if phase == 'val' else ranked[desired_val_count:]
+        statistics['union_vis_files'] += len(vis_by_stem)
+        statistics['selected_phase_images'] += len(stems)
+        selected.extend((vis_by_stem[stem], int(class_name)) for stem in stems)
+    return selected, statistics
+
+
 def write_list(path, samples, label_map):
     lines = [
         f'{vis} {label_map[original_label]}'
-        for vis, _, original_label in samples
+        for vis, *_, original_label in samples
     ]
     payload = ('\n'.join(lines) + '\n').encode('utf-8')
     path.write_bytes(payload)
@@ -124,14 +157,14 @@ def write_unlabeled_pair_list(path, samples):
 def write_sda_subset(path, target_train, label_map, shots, seed):
     by_label = defaultdict(list)
     for sample in target_train:
-        by_label[label_map[sample[2]]].append(sample)
+        by_label[label_map[sample[-1]]].append(sample)
     selected = []
     for label in sorted(by_label):
         candidates = sorted(by_label[label], key=lambda sample: str(sample[0]))
         rng = random.Random(seed * 1000 + label)
         count = min(shots, len(candidates))
         selected.extend(rng.sample(candidates, count))
-    selected.sort(key=lambda sample: (label_map[sample[2]], str(sample[0])))
+    selected.sort(key=lambda sample: (label_map[sample[-1]], str(sample[0])))
     return write_list(path, selected, label_map)
 
 
@@ -140,6 +173,9 @@ def main():
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--output-dir', required=True)
     parser.add_argument('--targets', nargs='+', choices=tuple(TARGET_DIRS), required=True)
+    parser.add_argument('--modality', choices=('paired', 'vis'), default='paired',
+                        help="paired: 仅保留有同名 IR 配对的 VIS 样本（多模态统一队列）；"
+                             "vis: 保留全部 VIS 样本（单模态方法，不做配对裁剪）")
     parser.add_argument('--sda-shots', type=int, default=10)
     parser.add_argument('--sda-seed', type=int, default=42)
     args = parser.parse_args()
@@ -149,23 +185,26 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     source_root = data_root / '晴天'
 
-    source_train, source_train_stats = exact_paired_split(
-        source_root, 'source', 'train'
-    )
-    source_val, source_val_stats = exact_paired_split(
-        source_root, 'source', 'val'
-    )
-    original_labels = sorted({sample[2] for sample in source_train + source_val})
+    split_fn = exact_paired_split if args.modality == 'paired' else exact_vis_split
+    source_train, source_train_stats = split_fn(source_root, 'source', 'train')
+    source_val, source_val_stats = split_fn(source_root, 'source', 'val')
+    original_labels = sorted({sample[-1] for sample in source_train + source_val})
     if len(original_labels) != 14:
         raise ValueError(
             f'Expected 14 source classes, found {original_labels}.'
         )
     label_map = {label: index for index, label in enumerate(original_labels)}
 
+    cohort_rule = (
+        'exact VIS/IR stem match over train+val union; stable hash split'
+        if args.modality == 'paired'
+        else 'all VIS images over train+val union; stable hash split (no IR pairing)'
+    )
     manifest = {
         'data_root': str(data_root),
+        'modality': args.modality,
         'label_map': label_map,
-        'cohort_rule': 'exact VIS/IR stem match over train+val union; stable hash split',
+        'cohort_rule': cohort_rule,
         'lists': {},
         'unlabeled_pair_lists': {},
         'target_class_support': {},
@@ -180,10 +219,10 @@ def main():
 
     for target in args.targets:
         root = data_root / TARGET_DIRS[target]
-        target_train, train_stats = exact_paired_split(root, 'target', 'train')
-        target_val, val_stats = exact_paired_split(root, 'target', 'val')
-        train_support = sorted({sample[2] for sample in target_train})
-        val_support = sorted({sample[2] for sample in target_val})
+        target_train, train_stats = split_fn(root, 'target', 'train')
+        target_val, val_stats = split_fn(root, 'target', 'val')
+        train_support = sorted({sample[-1] for sample in target_train})
+        val_support = sorted({sample[-1] for sample in target_val})
         if train_support != val_support:
             raise ValueError(
                 f'{target} train/val class support mismatch: '
@@ -207,12 +246,13 @@ def main():
         manifest['lists'][f'{target}_train.txt'] = write_list(
             output_dir / f'{target}_train.txt', target_train, label_map
         )
-        manifest['unlabeled_pair_lists'][f'{target}_train_pairs.tsv'] = (
-            write_unlabeled_pair_list(
-                output_dir / f'{target}_train_pairs.tsv',
-                target_train,
+        if args.modality == 'paired':
+            manifest['unlabeled_pair_lists'][f'{target}_train_pairs.tsv'] = (
+                write_unlabeled_pair_list(
+                    output_dir / f'{target}_train_pairs.tsv',
+                    target_train,
+                )
             )
-        )
         manifest['lists'][f'{target}_val.txt'] = write_list(
             output_dir / f'{target}_val.txt', target_val, label_map
         )

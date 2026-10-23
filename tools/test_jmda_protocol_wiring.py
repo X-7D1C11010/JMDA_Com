@@ -25,6 +25,12 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         cls.fingerprint_tool = (
             ROOT / "tools" / "print_jmda_code_fingerprint.py"
         ).read_text(encoding="utf-8")
+        cls.screening = (
+            ROOT / "scripts" / "run_jmda_uda_screening.sh"
+        ).read_text(encoding="utf-8")
+        cls.screening_summary = (
+            ROOT / "tools" / "summarize_jmda_screening.py"
+        ).read_text(encoding="utf-8")
 
     def test_strict_and_oracle_launchers_are_separate(self):
         strict_start = self.launcher.index(
@@ -215,6 +221,29 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--min-free-gpu-memory-mib", self.launcher)
         self.assertIn("--min-free-gpu-memory-mib", self.preflight)
         self.assertIn("torch.cuda.mem_get_info(0)", self.preflight)
+
+    def test_screening_matrix_is_explicit_and_never_uses_target_ce(self):
+        for tag in (
+            "source_only_fixed_projection",
+            "pseudo_tensor_only",
+            "oracle_tensor_only",
+            "pseudo_tensor_ot",
+            "oracle_tensor_ot",
+        ):
+            self.assertIn(tag, self.screening)
+        self.assertIn("--target_label_ratio 0", self.screening)
+        self.assertIn("--target_cls_weight 0", self.screening)
+        self.assertIn("--diagnostic_oracle_pairing", self.screening)
+        self.assertIn("--diagnostic_source_only", self.screening)
+        self.assertIn("summarize_jmda_screening.py", self.screening)
+        self.assertIn(
+            'EXPECTED_CODE_FINGERPRINT="4dc4ef0b01c7ea70"', self.screening
+        )
+        self.assertIn("print_jmda_code_fingerprint.py", self.screening)
+        self.assertIn("target_ce_max", self.screening_summary)
+        self.assertIn("target_observations_max", self.screening_summary)
+        self.assertIn("ORACLE_PAIRED_UDA_DIAGNOSTIC", self.module)
+        self.assertIn("TARGET SAMPLE LABEL ORACLE ACTIVE FOR PAIRING ONLY", self.module)
 
 
 if __name__ == "__main__":

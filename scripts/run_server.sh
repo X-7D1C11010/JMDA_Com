@@ -60,7 +60,7 @@ JMDA_RUN_INVARIANT_TESTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="94c6a030bec6a792"
+JMDA_EXPECTED_CODE_FINGERPRINT="4dc4ef0b01c7ea70"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 
 require_positive_integer() {
@@ -434,15 +434,28 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
   done
 
 elif [ "$PROTOCOL" = "uda" ]; then
-  # ---- 其他 UDA 对比方法 ----
+  # ---- 其他 UDA 对比方法（均为单模态 VIS，使用不要求 IR 配对的全量 VIS 清单）----
+  VIS_LIST_DIR="${FAIR_LIST_DIR}_vis"
+  echo "生成单模态 VIS 方法使用的全量 VIS 清单（同一 union/hash 划分，不做配对裁剪）..."
+  if ! "$PYTHON" "$HERE/tools/prepare_paired_protocol_lists.py" \
+    --data-root "$DATA_ROOT" \
+    --output-dir "$VIS_LIST_DIR" \
+    --targets "${TARGETS[@]}" \
+    --modality vis; then
+    echo "VIS 清单生成失败；尚未启动训练。"
+    exit 1
+  fi
+  UDA_COMMON=(--seed "$SEED" --data-dir "$VIS_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
+  CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
   for t in "${TARGETS[@]}"; do
-    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" "${COMMON[@]}"
-    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" "${COMMON[@]}"
-    run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" "${COMMON[@]}"
-    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" "${COMMON[@]}"
-    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" "${COMMON[@]}"
+    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
+    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
+    # CDAN 官方配置为迭代制（train_image.py: num_iterations=100004），不用 --epochs
+    run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" "${UDA_COMMON[@]}"
+    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
+    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
     # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
-    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" "${COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
+    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
   done
 
 else

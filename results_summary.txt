@@ -1,5 +1,10 @@
 Domain Adaptation Methods - Results Summary
 Source: 晴天 (Sunny), Targets: 逆光(backlight), 雨天(rainy), 雾天(foggy), 黑天(dark)
+
+!!! 注意：以下两批结果均为 3-epoch 冒烟测试结果（2026-10 早期配方），
+!!! 2026-10-21 逐项核对官方实现后发现多处配方偏差并已修复（见
+!!! REPRODUCTION_RECORD.md 第 15 节），以下数字不得作为正式性能结论，
+!!! 正式结果以修复后重跑为准。
 ================================================================================
 Method             backlight        rainy        foggy         dark       Average
 --------------------------------------------------------------------------------
@@ -7,8 +12,6 @@ DANN                 0.2778      0.0769      0.1652      0.1500      0.1675
 DeepCORAL            0.2500      0.1923      0.2609      0.0417      0.1862
 CDAN                 0.2500      0.1923      0.3565      0.0417      0.2101
 ================================================================================
-Random baseline (14 classes): 0.0714
-
 
 Second batch (same smoke protocol: source=sunny, 3 epochs,
 target-domain val accuracy)
@@ -18,7 +21,10 @@ Method             backlight        rainy        foggy         dark       Averag
 MDD                 0.3056  0.2692  0.2435  0.2417  0.2650
 MCC                 0.4722  0.4231  0.3652  0.1667  0.3568
 ================================================================================
-Random baseline (14 classes): 0.0714
+Random baseline (uniform over target classes): backlight 0.1111 (9类),
+rainy 0.1667 (6类), foggy 0.1111 (9类), dark 0.1250 (8类)
+（原先两批均标注 "14 classes: 0.0714"，有误：UDA 标签空间以目标域类别为准，
+各目标域类别数为 9/6/9/8，均匀随机基线应分别为 1/9、1/6、1/9、1/8。）
 
 Note: rows for AD-CLIP / CoOp / TransAdapter / Boomda / MODfinity were removed
 together with those method directories (2026-10-19). Current comparison methods:

@@ -162,16 +162,21 @@ def build_transforms():
     return train_tf, test_tf
 
 
-def load_classnames(args, num_classes):
+def load_classnames(args, class_ids):
     """Real names from --class-names-file / JMDA_CLASS_NAMES_FILE, else numbered
-    placeholders (recorded so results can never be mistaken for a real run)."""
+    placeholders (recorded so results can never be mistaken for a real run).
+
+    The mapping file always covers the full 14-class source label space; the
+    prompts use only the subset of classes present in the target domain
+    (``class_ids`` are original label ids, in compact-label order)."""
     path = args.class_names_file or os.environ.get('JMDA_CLASS_NAMES_FILE', '')
     if path:
         from class_names import load_class_names
-        return load_class_names(path, expected_count=num_classes), 'file'
+        all_names = load_class_names(path, expected_count=14)
+        return [all_names[cid] for cid in class_ids], 'file'
     print('WARNING: no class-name mapping supplied; using numbered placeholder '
           'prompts (not scientifically valid, recorded as prompt_source=placeholder).')
-    return [f'class_{i + 1}' for i in range(num_classes)], 'placeholder'
+    return [f'class_{i + 1}' for i in range(len(class_ids))], 'placeholder'
 
 
 # ── CLIP sub-modules (ported) ───────────────────────────────────────────────
@@ -339,10 +344,12 @@ class IFT_Module(nn.Module):
         out_fv = self.pre_project(Fv)
         out_fvs = self.pre_project(Fvs_bank)
         out_fvt = self.pre_project(Fvt_bank)
-        # rearrange(..., 'b (d k) -> k b d', k=3)
-        q_fv, k_fv, v_fv = out_fv.chunk(3, dim=-1)
-        q_fvs, k_fvs, v_fvs = out_fvs.chunk(3, dim=-1)
-        q_fvt, k_fvt, v_fvt = out_fvt.chunk(3, dim=-1)
+        # 官方实现为 rearrange(out, 'b (d k) -> k b d', k=3)：按 d 外层、k 内层
+        # 交错拆分（q/k/v 各取每隔 3 个元素的一段），与 chunk(3) 的连续三段
+        # 划分不同；这里按官方索引逐位复现。
+        q_fv, k_fv, v_fv = out_fv.view(out_fv.size(0), -1, 3).permute(2, 0, 1).unbind(0)
+        q_fvs, k_fvs, v_fvs = out_fvs.view(out_fvs.size(0), -1, 3).permute(2, 0, 1).unbind(0)
+        q_fvt, k_fvt, v_fvt = out_fvt.view(out_fvt.size(0), -1, 3).permute(2, 0, 1).unbind(0)
 
         As = self.softmax(self.scale * q_fv @ k_fvs.permute(1, 0))
         At = self.softmax(self.scale * q_fv @ k_fvt.permute(1, 0))
@@ -605,7 +612,7 @@ def main():
     parser.add_argument('--class-names-file', type=str, default=None)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                             'data_lists'))
+                                             'data_lists_vis'))
     parser.add_argument('--save-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     parser.add_argument('--efficiency_output_dir', type=str, default=None)
@@ -637,7 +644,9 @@ def main():
     print(f'Target val ({args.target}):       {len(tgt_val_ds)} images')
     print(format_dropped('source train', src_ds))
 
-    classnames, prompt_source = load_classnames(args, num_classes)
+    # 类名文件始终为完整 14 类，按目标域类别子集取提示词（修复 14 类文件与
+    # 9/6/8 类目标域的 expected_count 冲突）。
+    classnames, prompt_source = load_classnames(args, class_ids)
     print(f'Class names ({prompt_source}): {classnames}')
 
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=True)

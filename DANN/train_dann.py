@@ -10,6 +10,13 @@ Usage:
   * 标签空间以目标域为准（tools/uda_data.py）：只保留目标域存在的类别，分类头
     输出维度 = 该目标域类别数；
   * 优化器改为原参考实现 DANN/train/main.py 的 Adam(lr=1e-3)。
+
+2026-10-21 修复（逐项核对原参考实现 DANN/train/main.py 后）：
+  * 对抗系数 α 恢复 main.py:100-101 的**逐迭代**调度：
+    p = float(i + epoch·len_dataloader) / n_epoch / len_dataloader，
+    α = 2/(1+exp(−10p)) − 1（原实现每个 epoch 只算一次且首轮即 p=1/epochs）；
+  * 每轮步数恢复 main.py:93 的 min(len(source), len(target))，不再对较短
+    一侧循环取样。
 """
 import os
 import sys
@@ -106,7 +113,7 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                             'data_lists'))
+                                             'data_lists_vis'))
     parser.add_argument('--save-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
@@ -167,28 +174,20 @@ def main():
         if eff:
             eff.epoch_start(epoch)
         model.train()
-        # Alpha scheduling: increase from 0 to 1
-        p = (epoch + 1) / args.epochs
-        alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
-
-        # Define an epoch by the larger domain and cycle the exhausted side.
+        # 原参考实现 main.py:93：len_dataloader = min(len(source), len(target))，
+        # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
         tgt_iter = iter(tgt_loader)
-        n_batches = max(len(src_loader), len(tgt_loader))
+        n_batches = min(len(src_loader), len(tgt_loader))
 
         for i in range(n_batches):
+            # 原参考实现 main.py:100-101：逐迭代调度 α（0 基 i 与 epoch）
+            p = float(i + epoch * n_batches) / args.epochs / n_batches
+            alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
             if eff:
                 eff.step_start()
-            try:
-                src_imgs, src_labels = next(src_iter)
-            except StopIteration:
-                src_iter = iter(src_loader)
-                src_imgs, src_labels = next(src_iter)
-            try:
-                tgt_imgs, _ = next(tgt_iter)
-            except StopIteration:
-                tgt_iter = iter(tgt_loader)
-                tgt_imgs, _ = next(tgt_iter)
+            src_imgs, src_labels = next(src_iter)
+            tgt_imgs, _ = next(tgt_iter)
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
             tgt_imgs = tgt_imgs.to(device)

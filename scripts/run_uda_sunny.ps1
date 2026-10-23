@@ -26,6 +26,8 @@ param(
     [string[]]$Targets = @('backlight', 'rainy', 'foggy', 'dark'),
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
+    [string]$DataDir = '',
+    [int]$CdanIterations = 100004,
     [int]$BenchRepeats = 5,
     [switch]$SkipBenchmark
 )
@@ -34,6 +36,7 @@ $ErrorActionPreference = 'Continue'
 
 $Repo = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $Repo 'efficiency_results\uda_sunny' }
+if (-not $DataDir) { $DataDir = Join-Path $Repo 'data_lists_vis' }
 $LogDir = Join-Path $OutDir 'logs'
 New-Item -ItemType Directory -Force -Path $OutDir, $LogDir | Out-Null
 
@@ -92,12 +95,24 @@ foreach ($method in $Methods.Keys) {
             $log = Join-Path $LogDir "$tag.log"
             Write-Host ("[{0}/{1}] {2}  target={3}  seed={4}" -f $idx, $total, $method, $target, $seed)
 
-            & $Python -B $scriptPath `
-                --target $target `
-                --epochs $Epochs `
-                --seed $seed `
-                --efficiency_output_dir $OutDir `
-                --save-dir $checkpointDir *> $log
+            # CDAN 按官方配置为迭代制（num_iterations=100004），不用 --epochs
+            if ($method -eq 'CDAN') {
+                & $Python -B $scriptPath `
+                    --target $target `
+                    --num-iterations $CdanIterations `
+                    --seed $seed `
+                    --data-dir $DataDir `
+                    --efficiency_output_dir $OutDir `
+                    --save-dir $checkpointDir *> $log
+            } else {
+                & $Python -B $scriptPath `
+                    --target $target `
+                    --epochs $Epochs `
+                    --seed $seed `
+                    --data-dir $DataDir `
+                    --efficiency_output_dir $OutDir `
+                    --save-dir $checkpointDir *> $log
+            }
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Host ("      FAILED (exit={0})  log={1}" -f $LASTEXITCODE, $log) -ForegroundColor Red

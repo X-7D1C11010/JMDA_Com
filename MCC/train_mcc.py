@@ -9,9 +9,14 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
   * dataset replaced by the shared target-driven UDA loader
     (tools/uda_data.py: only target-domain classes are kept, labels remapped
     to 0..|T|-1, so the classifier head width equals that target's class count);
-  * iters_per_epoch = max(len(src_loader), len(tgt_loader)) instead of 1000;
   * ResizeImage implemented locally (tllib.vision.transforms not downloaded);
   * Windows: DataLoader num_workers=0.
+
+2026-10-21 修复（逐项核对 tllib 官方 mcc.py 后）：
+  * iters_per_epoch 恢复官方默认 1000（mcc.py:248），不再用数据加载器长度
+    （原写法每轮仅 ~11–16 次更新，比官方 20×1000 少约两个数量级）；
+  * 前向恢复官方 mcc.py:166-168 的 ``torch.cat((x_s, x_t))`` 一次前向 +
+    ``y.chunk(2)``（分别前向在含 BatchNorm 的 ResNet 下与官方不等价）。
 
 优化器/调度/超参保持与 tllib 官方示例 mcc.py 完全一致（未做任何改动）。
 
@@ -104,8 +109,10 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
         if eff:
             eff.dataloader_done()
 
-        y_s, f_s = classifier(x_s)
-        y_t, f_t = classifier(x_t)
+        # tllib 官方 mcc.py:166-168：拼接后一次前向，再 chunk 回源/目标。
+        x = torch.cat((x_s, x_t), dim=0)
+        y, f = classifier(x)
+        y_s, y_t = y.chunk(2, dim=0)
         cls_loss = F.cross_entropy(y_s, labels_s)
         transfer_loss = mcc(y_t)
         loss = cls_loss + transfer_loss * args.trade_off
@@ -136,10 +143,12 @@ def main():
     parser.add_argument('--temperature', default=2.5, type=float)
     parser.add_argument('--trade-off', default=1., type=float)
     parser.add_argument('--bottleneck-dim', default=256, type=int)
-    parser.add_argument('-p', '--print-freq', default=20, type=int)
+    parser.add_argument('-p', '--print-freq', default=100, type=int)
+    parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
+                        help='Number of iterations per epoch (tllib official default: 1000)')
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                             'data_lists'))
+                                             'data_lists_vis'))
     parser.add_argument('--save-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
@@ -173,7 +182,6 @@ def main():
                                 shuffle=False, num_workers=0)
     train_source_iter = ForeverDataIterator(src_loader)
     train_target_iter = ForeverDataIterator(tgt_loader)
-    args.iters_per_epoch = max(len(src_loader), len(tgt_loader))
 
     backbone = resnet18(pretrained=True)
     classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim).to(device)

@@ -801,5 +801,124 @@ python tools/extract_epoch_curves.py \
 - 叠加目标域 val 仅 26-120 张（逆光 36 张，1 张=2.8%），逐轮精度噪声大。
 - **建议**：把训练时长对齐官方迭代量级（如 `-Epochs 1000` ≈ 20000 iters，或按 GPU 预算取 300-500），预期峰值位置会后移、末轮值更接近原方法报告水平；这是运行配置调整，不属于方法超参改动。
 
+### 14.7 2026-10-21 1000 epoch 中止 + 低分归因（checkpoint 推理诊断）
+
+**A. 1000 epoch 重跑已中止（非崩溃）**：DANN 停在 epoch 912/1000，target val = 0.4444；从 epoch ≈400 到 912 共 500+ 轮无任何提升，100 epoch 版本同样为 0.4444。**延长训练不能解决 DANN 的问题**，而 1000 epoch × 6 方法按实测吞吐需 ~46 小时（DANN 28.6 s/epoch，数据加载占 ~95%，GPU 利用率仅 2%）。产物在 `efficiency_results/uda_sunny_targetspace_e1000/`（仅 DANN 日志与 benchmark，无 checkpoint）。
+
+**B. 数据泄漏核查（无泄漏）**：按"类别目录 + 文件名"比对，5 个域的 train/val 重复数均为 **0**（源域 986/255、逆光 128/36、雨天 96/26、雾天 440/115、黑天 465/120）。目标域 val 未参与训练。
+
+**C. checkpoint 推理诊断（逆光 val，n=36，9 类，随机基线 0.2222）**
+
+| 方法 | 源域 val | 目标域 val | 域差 | target top-1 | target top-3 | top3−top1 |
+|------|---------|-----------|------|-------------|-------------|-----------|
+| DANN | 0.9939 (n=165) | 0.4722 | 0.522 | 0.472 | 0.722 | 0.250 |
+| DeepCORAL | 1.0000 | 0.6667 | 0.333 | 0.667 | **0.972** | 0.306 |
+| CDAN | 1.0000 | 0.5000 | 0.500 | 0.500 | 0.889 | 0.389 |
+| MDD | 0.9758 | 0.6667 | 0.309 | 0.667 | 0.806 | 0.139 |
+| MCC | 0.9636 | 0.6667 | 0.297 | 0.667 | 0.889 | 0.222 |
+
+逐类召回（新标签 0..8）：类 2、类 8 在所有方法上均 1.00；类 7 在所有方法上均为 0.25；类 1、类 4、类 6 多数方法为 0.00。DeepCORAL 的 top-3 达 35/36。
+
+**判定**：模型对**源域已完全记忆**（96–100%），但对目标域只有一半正确；而 **top-3 高达 0.72–0.97**，说明"表征基本可用、最终决策边界混淆"，不是特征完全失效。低分不是数据口径或代码错误，而是**在 643 张源域图上全量微调 11M 参数的预训练 ResNet-18** 造成的源域过拟合 + 9 类决策头过拟合。
+
+**D. 训练动力学证据**
+- 源域分类损失降到 <0.01 的轮次：CDAN 第 2 轮、DeepCORAL 第 6 轮、DANN 第 45 轮、MDD 第 49 轮 → 分类头在极早期即完成记忆化。
+- DANN 的 `loss_domain` 全程 ≈1.31–1.45（=2·ln2=1.386 为二分类随机水平）→ 域判别器长期处于"猜不出"，对抗信号饱和。
+- CDAN 的 `loss_transfer` 第 5 轮降到 0.095 后又回升到 0.70 → 对抗项先被判别器"打穿"再反弹，属对抗不平衡。
+- DeepCORAL 的 `loss_coral` 全程打印 0.0000：原实现 `loss/(4*d*d)`，d=512 时除以 1048576，损失量级 ~1e-6，相对 CE(~1e-3) **数值上被淹没**，对齐项实际近乎失效（该除数与原仓库一致，不是移植错误）。
+- PDA 是唯一例外：冻结 CLIP ViT-B/16、仅 3.18M 可训练提示 → 峰值 0.806、末轮 0.722、后 20 轮 std=0.0000。**"冻结强预训练特征 + 轻量适配"明显优于"全量微调 ResNet-18"**，这是本轮最重要的对照。
+
+**E. 待决策的方向（均需用户确认，因为会改变"原配方"）**
+1. **统一使用 tllib 标准优化配方**（SGD backbone lr=0.001、头 lr=0.01、wd=5e-4、nesterov，即 MDD/MCC 当前配方）到 DANN/DeepCORAL/CDAN。依据：MDD/MCC 是本次唯二"峰值后不衰减"的方法；而 DANN 的 `Adam(lr=1e-3)`、CDAN 的 `SGD(lr=1e-3)` 是为**小网络从头训练**设计的，与"预训练 ResNet-18 + 643 张图"不匹配，属于"换了骨干却沿用原学习率"的移植瑕疵。
+2. **冻结骨干、只训练分类头/瓶颈**（改动更大，但可直接验证过拟合假设）。
+3. **仅报告 top-1 末轮并以 top-3 作为辅助指标**，同时增加种子数（逆光 val 仅 36 张，单张即 2.8%，5 个种子的标准差不可忽略）。
+4. 补一个 **source-only 基线**（晴天训练、逆光测试）：若其目标域准确率也接近 0.55–0.60，则说明 5 个 UDA 方法相对"什么都不做"的提升非常有限，这才是需要向审稿人说明的核心结论；若 source-only 明显更低，则 UDA 确实有效。
+
+---
+
+## 15. 2026-10-21 逐项核对官方实现：8 项偏差修复与修复后全量复查
+
+### 15.0 背景与本轮原则
+
+用户指出：此前在未逐行核对官方实现的情况下声称"代码已与官方方法完全一样"，属于不严谨表述。本轮工作原则：
+
+- **只写有代码证据的结论**：每条"与官方一致"均给出官方文件 + 行号；
+- **明确列出全部剩余差异**，不再使用"完全一样"类表述；
+- 官方参考来源：DeepCORAL、DANN(fungtion)、CDAN(thuml)、Transfer-Learning-Library(tllib) 均为**仓库内克隆**；PDA 官方仓库（BaiShuanghao/Prompt-based-Distribution-Alignment）无本地克隆，本轮通过抓取官方 `utils/ift_block.py`、`trainers/da/pda.py`、`trainers/baseda.py`、`configs/trainers/PDA/b32_ep20_office31.yaml` 在线核对。
+
+### 15.1 八项偏差与修复（每项附官方行号依据）
+
+| # | 偏差 | 官方依据 | 修复位置 |
+|---|------|---------|---------|
+| 1 | DeepCORAL 的 CORAL 损失误作用于 512 维池化特征 | 官方 `DeepCORAL/main.py:46` `models.CORAL(out1, out2)`，其中 out1/out2 为 fc 之后 logits（`models.py:40-46`）；CORAL 公式 `models.py:13-28` | `DeepCORAL/train_deepcoral.py:194` 改作用于分类器输出 |
+| 2 | MCC/MDD iters_per_epoch 用数据加载器长度（~11-16），训练更新数比官方少约两个数量级 | tllib `examples/.../mcc.py:248`、`mdd.py:249` 默认 `-i 1000` | `MCC/train_mcc.py:147`、`MDD/train_mdd.py:151` 恢复默认 1000 |
+| 3 | MCC 源/目标分别前向（含 BatchNorm 的 ResNet 下与官方不等价） | tllib `mcc.py:166-168` `torch.cat((x_s,x_t))` 一次前向 + `y.chunk(2)` | `MCC/train_mcc.py:113-115` 恢复 cat 前向（MDD 原本即正确，`mdd.py:168-171` vs `MDD/train_mdd.py:114-117`） |
+| 4 | MDD bottleneck_dim 误为 256 | tllib `mdd.py:227` 默认 1024（且 `mdd.py:75` `width=args.bottleneck_dim`） | `MDD/train_mdd.py:149,191-192` 恢复 1024（MCC 官方默认即 256，`mcc.py:224`，未动） |
+| 5 | CDAN 强制使用 RandomLayer | 官方 `CDAN/pytorch/train_image.py:208` `--random type=bool default=False`，`:113-118` random=False 时 `random_layer=None`、ad_net 输入 = `output_num()×class_num`（外积） | `CDAN/train_cdan.py:98-100,146-154` 改为 `--random` 可选、默认 False 走外积分支 |
+| 6 | DANN 对抗系数 α 按 epoch 计算且首轮即 p=1/epochs | 官方 `DANN/train/main.py:100-101` 逐迭代 `p=float(i+epoch·len)/n_epoch/len`，`α=2/(1+exp(−10p))−1` | `DANN/train_dann.py:185-186` 恢复逐迭代调度 |
+| 7 | PDA 类名文件接线冲突（14 类文件 vs 目标域 9/6/8 类的 expected_count） | 项目规则：标签空间以目标域为准；`tools/class_names.py:7` 严格校验 14 类 | `PDA/train_pda.py:165-179,649` 始终按 14 类加载文件、再按目标域 class_ids 取子集 |
+| 8 | 配对数据清单额外丢弃单模态方法可用的 VIS 图像（实测：晴天 178/1136、逆光 15/164，其余 0） | 各对比方法原始设定均为单模态 VIS | `tools/prepare_paired_protocol_lists.py` 新增 `--modality {paired,vis}`；生成 `data_lists_vis/` 并设为 UDA 默认 `--data-dir` |
+
+附带修复（同属配方核对）：DeepCORAL 每轮步数与循环取样（官方 `main.py:29` `train_steps=min(...)`，已对齐 `train_deepcoral.py:174-176`）；DANN 同项（官方 `main.py:93`，已对齐 `train_dann.py:179-181`）；CDAN 训练预算由 epochs×loader 长度改为官方迭代制 `num_iterations=100004`、`test_interval=500`（`train_image.py:217,204`），预处理恢复 `pre_process.py:138-150 image_train(256,224)`，评估恢复官方默认 `test_10crop=True` 十裁剪协议（`train_image.py:22-45,228` + `pre_process.py:169-240`），训练 batch 恢复官方 36（`train_image.py:249-250`）。
+
+### 15.2 修复后逐方法对照结论（一致项均有行号；差异全部列出）
+
+**DeepCORAL**（官方：`DeepCORAL/main.py`、`models.py`、`data_loader.py`，仓库内克隆）
+
+- 一致项：CORAL 公式直接 import 官方 `models.py:13-28`（构造性相同）；CORAL 作用于 fc logits（`main.py:46` vs 我方 `:194`）；每轮 min 步数（`main.py:29` vs `:176`）；λ=(e+1)/E（`main.py:147-148` vs `:171`）；SGD 双参数组 fc 10×lr、momentum 0.9、**不传** weight_decay（`main.py:130-133`，该仓库虽定义 `WEIGHT_DECAY=5e-4` 于 `:14` 但未传给优化器，vs `:147-150`）；fc 初始化 normal_(0,0.005)（`models.py:38` vs `:55`）；损失组合 cls+λ·coral（`main.py:48` vs `:195`）；CE 损失（`main.py:45` vs `:153,192`）；shuffle+drop_last（`data_loader.py:93-94` vs `:137-140`）。
+- 显式差异：①主干 AlexNet(227px，`models.py:49-81`)→**ResNet-18(224px)**（项目统一主干，最大适配）；②batch 200/56（`main.py:16`）→32/32；③训练增广：官方仅 Scale+ToTensor+Normalize（`data_loader.py:80-84`），我方**新增了 RandomHorizontalFlip**（本轮新识别，见 15.3）；④评估集：官方 office31 训练域即测试域，我方用目标域 train/val 划分；⑤标签空间以目标域类别为准（项目规则）；⑥EPOCHS 官方 20（`main.py:17`），正式重跑用 20。
+
+**DANN**（官方：`DANN/train/main.py`、`DANN/models/*`，仓库内克隆）
+
+- 一致项：GRL 直接 import 官方 `models/functions.py:4-16`；Adam(lr=1e-3)（`main.py:76` vs 我方 `:159`）；每轮 min 步数（`main.py:93` vs `:181`）；逐迭代 p/α（`main.py:100-101` vs `:185-186`）；损失组合 s_label+s_domain+t_domain（`main.py:148` vs `:207-210`）；域标签 source=0/target=1（`main.py:112,136` vs `:203-204`）；源/目标分别前向（`main.py:125,146` vs `:199,205`）；官方 NLLLoss+LogSoftmax（`main.py:78-79`、`models/model.py:29,36`）与我方 CE(logits) 数学等价。
+- 显式差异：①主干 MNIST 小 CNN（`models/model.py:9-18`）→ResNet-18，分类头 100-100-10/域头 100-2（`model.py:20-36`）→256 单隐层+Dropout(0.5)（主干替换的连带适配）；②batch 128（`main.py:21`）→32；③n_epoch 100（`main.py:23`）→正式重跑 20（**训练预算少于官方**）；④图像 28px→224px 且新增 RandomHorizontalFlip（官方 MNIST 流程无增广）；⑤官方每 epoch 存模型并 test，我方不选 best、报告 final+诊断 peak（项目规则）。
+
+**CDAN**（官方：`CDAN/pytorch/*`，仓库内克隆；network/loss/lr_schedule/pre_process 四个模块被我方**直接 import**，构造性逐字节一致）
+
+- 一致项：random=False 分支与 ad_net 输入维度（`train_image.py:113-118` vs 我方 `:146-154`）；迭代制 100004/test_interval 500（`:217,204` vs `:84-87`）；迭代器耗尽重建（`:168-171` vs `:200-203`）；inv 逐迭代 0 基调度（`:166` + `lr_schedule.py:1-10` vs `:197-199`，lr_mult/decay_mult 分组语义由官方 `network.py:230-241,401-402` 提供）；源/目标分别前向后 cat（`:175-178` vs `:214-217`）；softmax(cat)（`:179` vs `:218`）；CDAN+E 默认与 entropy、calc_coeff(i)（`:180-184,198` + `network.py:10-11` vs `:95-97,224-230`）；cls 作用于 outputs_source（`:189` vs `:221`）；trade_off=1.0（`:229` vs `:232`）；SGD(1e-3, mom 0.9, wd 5e-4, nesterov)（`:244-246` vs `:161-162`）；batch 36/36、test batch 4、shuffle+drop_last（`:249-251,86-91` vs `:88,136-139,61`）；image_train(256,224)（`:228` vs `:119`）；十裁剪评估（10 个 transform、softmax 求和 argmax，`:22-45` vs `:54-77`）。
+- 显式差异：①主干官方默认 ResNet50（`train_image.py:200`）→ResNet18（**官方支持的可选项**，`:200` choices 含 ResNet18；项目统一主干）；②评估集：官方以目标域 train list 兼作 test（`:251`）→我方目标域 val 划分；③best 选择（`:151-153,193`）→项目禁用，报告 final+诊断 peak；④评估时点：官方在 `i%500==499` 的迭代**开头**评估（即第 499 次更新之前），我方在该迭代**末尾**评估且末次迭代补评一次（差 1 次更新的报告时点，本轮新识别）；⑤num_workers 4→2。
+
+**MCC**（官方：tllib `examples/domain_adaptation/image_classification/mcc.py` + tllib 模块，仓库内克隆；损失/分类器/迭代器/主干均**直接 import tllib**，构造性相同）
+
+- 一致项：bottleneck 256（`mcc.py:224` vs 我方 `:145`）；iters 1000（`:248` vs `:147`）；cat 前向+chunk（`:166-168` vs `:113-115`）；loss=cls+1.0·mcc（`:170-172,230` vs `:116-118,144`）；SGD(get_parameters(), lr 0.005, mom 0.9, wd 1e-3, nesterov)（`:77-78,236-243` vs `:189-190`）；LambdaLR inv γ=0.001/power 0.75 逐迭代 step（`:79,184` vs `:191,121`）；batch 36（`:233` vs `:137`）；temperature 2.5（`:229` vs `:143`）；transforms：ResizeImage(256)+RandomResizedCrop(224, 0.08-1.0, 3/4-4/3)+flip，val ResizeImage(256)+CenterCrop(224)（examples `utils.py:144-216` vs `:64-80`）；epochs 官方 20（`:246`）。
+- 显式差异：①best checkpoint（`mcc.py:120-131`）→项目禁用；②epoch 计数 0 基→1 基（仅显示）；③目标域 val 协议；④num_workers 官方 2→我方 0（Windows）。
+
+**MDD**（官方：tllib `mdd.py`，同 MCC 结构）
+
+- 一致项：bottleneck 1024 且 width=bottleneck（`mdd.py:227,75` vs 我方 `:149,191-192`）；margin 4.0（`:231` vs `:147`）；lr 0.004/γ 0.0002/decay 0.75/wd 5e-4/batch 32（`:235-244` vs `:141-146`）；iters 1000（`:249` vs `:151`）；cat 前向+双 chunk（`:168-171` vs `:114-117`）；transfer=−mdd、classifier.step() 先于 backward（`:177-179` vs `:120-122`）；SGD+LambdaLR（`:80-81` vs `:194-196`）；transforms 与 epochs 同 MCC。
+- 显式差异：同 MCC 的①-④。
+
+**PDA**（官方：GitHub 在线核对，本轮抓取 `utils/ift_block.py`、`trainers/da/pda.py`、`trainers/baseda.py`、`configs/trainers/PDA/b32_ep20_office31.yaml`）
+
+- 一致项（本轮核对的官方原文）：IFT_Module 的 Q/K/V 拆分为 einops `rearrange(out,'b (d k)->k b d',k=3)`（ift_block.py forward 段），我方 `:350-352` 用 `view(b,-1,3).permute(2,0,1).unbind(0)`——索引语义逐项验证等价（q/k/v 分别为通道 0,3,6,…/1,4,7,…/2,5,8,…）；IFT 其余计算（softmax(scale·q@kᵀ)、Fv+post_project(A@v)、归一化、logit_scale.exp()、logits_s+logits_t）与官方一致；**beta_s/beta_t=0.1**（官方 trainer 在 `pda.py:125` 显式传 0.1，覆盖类默认 1.0，vs 我方 `:436`）；ctx 初始化（官方 `pda.py:46-57` 先取 token 嵌入再立刻 `normal_(0.02)` 覆盖，等效于我方直接 normal 初始化 `:391-393`）；deep prompts 结构（SHARE_LAYER=[0,5]+DEEP_SHARED：proj 克隆 6 个、deep_vctx 为 num_layer−6 层，`pda.py:97-99` vs `:411-415`）；PromptLearner.forward（`pda.py:132-153` vs `:443-451`）；CustomCLIP.forward 全部分支（train 源/目标、construct、eval 的 logits+0.5·logits_c，`pda.py:188-264` vs `:484-558`）；bank 逐样本更新规则（K=5、min-prob 替换、source 侧要求 l==label_p，`pda.py:126,205-228` vs `:437,505-522`）；run_epoch 语义（COUNT_ITER=train_x→num_batches=len(train_x)、迭代器耗尽重建，baseda.py run_epoch 段 vs `:719,725-738`）；冻结策略（仅 prompt_learner 可训练、bank 冻结，`pda.py:279-284` vs `:668-673`）；超参（yaml：batch 32/32/128、SGD lr 0.003 mom 0.9 wd 5e-4、cosine+warmup 1 constant 1e-5、MAX_EPOCH 20、ViT-B/16、CLIP 归一化、random_resized_crop+random_flip，vs `:592-610,147-162,680-683`）。
+- 显式差异：①dassl 未移植，训练循环按相同预算语义重写（docstring 早已声明）；②einops→纯 torch 等价写法（已验证）；③仅 ViT-B/16 路径；④torch.jit 加载回退→`build_model(state_dict)`；⑤类名按目标域子集取提示词，无文件时用占位符并记录 prompt_source；⑥best 选择（baseda.py after_epoch 的 best_result）→项目禁用；⑦bank 构造循环加了 `min(probs)>0.99` 早停（工程保护）；⑧官方 `PDA.construct_bank`/`forward_backward` 的 trainer 侧完整源码本轮未逐行核对（在线抓取被截断），已核对的是模型侧 bank 更新规则与 loss 组合。
+- 官方 yaml 中 CONFI/EPOCH/WARM_UP 由 `scripts/pda/main_pda.sh` 传入（Office-31 为 0.9/0/1），本轮未重新抓取该 sh，沿用此前移植时的核对结论；我方默认 `--confi 0.9 --warm-up 1 --epoch-switch 0`。
+
+### 15.3 本轮新识别、此前未声明的差异（如实补充）
+
+1. **DeepCORAL 训练增广**：官方 office31 加载器无任何随机增广（`data_loader.py:80-84` 仅 Scale+ToTensor+Normalize），我方训练 transform 含 RandomHorizontalFlip（`train_deepcoral.py:70`）。DANN 同理（官方 MNIST 流程无增广，我方 `:82`）。是否移除增广待用户决策（属于改配方）。
+2. **CDAN 评估时点**：官方在 `i%500==499` 迭代开头评估（`train_image.py:146-149`），我方在该迭代末尾评估并末次补评（`train_cdan.py:245-256`）；差 1 次更新的报告时点，不影响训练。
+3. **DANN/DeepCORAL 分类头结构**与官方不同（主干替换的连带项，此前只笼统声明"主干适配"，现细化到具体结构，见 15.2）。
+
+### 15.4 数据清单与启动器变更
+
+- 新增 `tools/prepare_paired_protocol_lists.py --modality vis`：VIS-only 清单（同一 union/hash 划分规则，不要求 IR 配对）；paired 模式行为不变，仍供 sda/jmda/oracle 协议使用。
+- 已生成 `data_lists_vis/`：sunny_train 884 行；backlight 128/36、rainy 96/26、foggy 440/115、dark 465/120（train/val）。
+- `scripts/run_uda_sunny.ps1`：新增 `-DataDir`（默认 `data_lists_vis`）与 `-CdanIterations`（默认 100004）；CDAN 特判传 `--num-iterations`，其余方法传 `--epochs`。
+- `scripts/run_server.sh` uda 分支：先生成 VIS 清单到 `${FAIR_LIST_DIR}_vis`，经 `UDA_COMMON` 传 `--data-dir`；CDAN 特判 `${CDAN_NUM_ITERATIONS:-100004}`。
+- 配对裁剪的真实影响（实测自 `prepared_lists/local_smoke_20261013` manifest）：晴天 178/1136、逆光 15/164、雨天/雾天/黑天为 0；此前"源域仅剩 515/401/493"主要由目标域类别过滤（用户指定规则）造成，不是配对裁剪。
+
+### 15.5 results_summary.txt 更正与旧结果作废
+
+- 两批冒烟结果的基线标注 "Random baseline (14 classes): 0.0714" **有误**：UDA 标签空间以目标域类别为准，正确基线为 backlight 0.1111（9 类）、rainy 0.1667（6 类）、foggy 0.1111（9 类）、dark 0.1250（8 类），文件顶部已加作废警告。
+- `results_summary.txt` 中的 3-epoch 数字与 `efficiency_results/uda_sunny_targetspace/` 的重跑结果均为**修复前配方**产物，已全部作废；正式结果以修复后代码 + `data_lists_vis` 重跑为准。
+
+### 15.6 修复后验证
+
+- 7 个改动文件 `py_compile` 全部通过。
+- 5 个非 CLIP 方法最小预算冒烟全部正常完成：DeepCORAL/DANN `--epochs 1`；MCC/MDD `--epochs 1 -i 10`（命名空间确认 iters_per_epoch 可配、MDD bottleneck_dim=1024 生效）；CDAN `--num-iterations 12 --test-interval 6`（十裁剪评估正常，ad_net 输入 2304=256×9 确认 random=False 外积分支生效）。冒烟日志均显示目标域类别过滤工作正常（source kept 584/dropped 300，逆光 9 类）。
+- PDA 需下载 CLIP 权重未做运行冒烟，仅编译通过；其 IFT 拆分与超参本轮已对官方源码核对（15.2）。
+
+
 
 

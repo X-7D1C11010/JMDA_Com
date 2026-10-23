@@ -30,6 +30,7 @@ from Ablation.module_ablation import (
     derive_oracle_shared_labels,
     infer_prototype_pseudo_labels,
     is_uda_source_warmup,
+    map_oracle_labels_to_pair_manifest,
     reported_protocol,
     select_report_metrics,
     set_frozen_batchnorm_eval,
@@ -530,6 +531,29 @@ class EpochPairingTests(unittest.TestCase):
             self.assertNotIn("label", dataset.samples[0])
             self.assertNotIn("label", dataset[0])
 
+    def test_oracle_pair_labels_are_joined_by_exact_paths_not_row_order(self):
+        label_free = SimpleNamespace(
+            samples=[
+                {"vis": "target/b/vis.png", "ir": "target/b/ir.png"},
+                {"vis": "target/a/vis.png", "ir": "target/a/ir.png"},
+            ]
+        )
+        oracle = SimpleNamespace(
+            samples=[
+                {"vis": "target/a/vis.png", "ir": "target/a/ir.png"},
+                {"vis": "target/b/vis.png", "ir": "target/b/ir.png"},
+            ],
+            labels=[10, 20],
+        )
+
+        mapped = map_oracle_labels_to_pair_manifest(
+            label_free,
+            oracle,
+            {10: 0, 20: 1},
+        )
+
+        self.assertTrue(torch.equal(mapped, torch.tensor([1, 0])))
+
 
 class ResultReportingTests(unittest.TestCase):
     def test_joint_ot_warmup_and_ramp_schedule(self):
@@ -586,12 +610,16 @@ class ResultReportingTests(unittest.TestCase):
 class AdaptationProtocolTests(unittest.TestCase):
     @staticmethod
     def _args(use_target_labels=False, ratio=0.0, weight=0.0,
-              label_space_mode="partial_set"):
+              label_space_mode="partial_set",
+              diagnostic_oracle_pairing=False,
+              diagnostic_source_only=False):
         return SimpleNamespace(
             use_target_labels=use_target_labels,
             target_label_ratio=ratio,
             target_cls_weight=weight,
             label_space_mode=label_space_mode,
+            diagnostic_oracle_pairing=diagnostic_oracle_pairing,
+            diagnostic_source_only=diagnostic_source_only,
         )
 
     def test_protocol_states_are_disjoint(self):
@@ -605,6 +633,24 @@ class AdaptationProtocolTests(unittest.TestCase):
         self.assertEqual(reported_protocol(args), "ORACLE_SHARED_UDA")
         with self.assertRaisesRegex(ValueError, "only defined for pure UDA"):
             reported_protocol(self._args(True, label_space_mode="oracle_shared"))
+
+    def test_oracle_pairing_and_source_only_diagnostics_have_unique_protocols(self):
+        oracle_pairing = self._args(
+            label_space_mode="oracle_shared",
+            diagnostic_oracle_pairing=True,
+        )
+        source_only = self._args(
+            label_space_mode="oracle_shared",
+            diagnostic_source_only=True,
+        )
+        self.assertEqual(
+            reported_protocol(oracle_pairing),
+            "ORACLE_PAIRED_UDA_DIAGNOSTIC",
+        )
+        self.assertEqual(
+            reported_protocol(source_only),
+            "ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC",
+        )
 
     def test_oracle_shared_label_intersection_is_explicit(self):
         self.assertEqual(

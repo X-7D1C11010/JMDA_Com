@@ -14,6 +14,13 @@ Usage:
     WEIGHT_DECAY=5e-4 但未传给优化器）；
   * CORAL 权重恢复原参考实现 main.py:148 的线性递增 λ=(epoch+1)/EPOCHS，
     取代原先固定的 --lamb。
+
+2026-10-21 变更（逐项核对官方实现后的修复）：
+  * CORAL 损失作用点改为分类器输出（main.py:46 ``models.CORAL(out1, out2)``，
+    即 fc 之后、softmax 之前的 logits），不再作用于 512 维池化特征；
+    models.py 的 CORAL 公式与官方仓库逐字节一致，未改动；
+  * 每轮步数改为 min(len(source), len(target))（main.py:29），不再对较短
+    一侧循环取样。
 """
 import os
 import sys
@@ -94,7 +101,7 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                             'data_lists'))
+                                             'data_lists_vis'))
     parser.add_argument('--save-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'))
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
@@ -162,23 +169,17 @@ def main():
         model.train()
         # 原参考实现 main.py:148：CORAL 权重 λ=(e+1)/EPOCHS 随 epoch 线性递增
         _lambda = (epoch + 1) / args.epochs
+        # 原参考实现 main.py:29：train_steps = min(len(source), len(target))，
+        # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
         tgt_iter = iter(tgt_loader)
-        n_batches = max(len(src_loader), len(tgt_loader))
+        n_batches = min(len(src_loader), len(tgt_loader))
 
         for i in range(n_batches):
             if eff:
                 eff.step_start()
-            try:
-                src_imgs, src_labels = next(src_iter)
-            except StopIteration:
-                src_iter = iter(src_loader)
-                src_imgs, src_labels = next(src_iter)
-            try:
-                tgt_imgs, _ = next(tgt_iter)
-            except StopIteration:
-                tgt_iter = iter(tgt_loader)
-                tgt_imgs, _ = next(tgt_iter)
+            src_imgs, src_labels = next(src_iter)
+            tgt_imgs, _ = next(tgt_iter)
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
             tgt_imgs = tgt_imgs.to(device)
@@ -186,10 +187,11 @@ def main():
             if eff:
                 eff.dataloader_done()
 
-            src_out, tgt_out, src_feat, tgt_feat = model(src_imgs, tgt_imgs)
+            src_out, tgt_out, _, _ = model(src_imgs, tgt_imgs)
 
             loss_cls = criterion(src_out, src_labels)
-            loss_coral = CORAL(src_feat, tgt_feat)
+            # 原参考实现 main.py:46：CORAL 作用于 fc 输出（softmax 前 logits）。
+            loss_coral = CORAL(src_out, tgt_out)
             loss = loss_cls + _lambda * loss_coral
 
             optimizer.zero_grad()
