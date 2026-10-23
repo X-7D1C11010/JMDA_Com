@@ -31,6 +31,9 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         cls.screening_summary = (
             ROOT / "tools" / "summarize_jmda_screening.py"
         ).read_text(encoding="utf-8")
+        cls.label_guided = (
+            ROOT / "scripts" / "run_jmda_label_guided_weather.sh"
+        ).read_text(encoding="utf-8")
 
     def test_strict_and_oracle_launchers_are_separate(self):
         strict_start = self.launcher.index(
@@ -237,13 +240,28 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--diagnostic_source_only", self.screening)
         self.assertIn("summarize_jmda_screening.py", self.screening)
         self.assertIn(
-            'EXPECTED_CODE_FINGERPRINT="4dc4ef0b01c7ea70"', self.screening
+            'EXPECTED_CODE_FINGERPRINT="83cf8634a962df2f"', self.screening
         )
         self.assertIn("print_jmda_code_fingerprint.py", self.screening)
         self.assertIn("target_ce_max", self.screening_summary)
         self.assertIn("target_observations_max", self.screening_summary)
         self.assertIn("ORACLE_PAIRED_UDA_DIAGNOSTIC", self.module)
         self.assertIn("TARGET SAMPLE LABEL ORACLE ACTIVE FOR PAIRING ONLY", self.module)
+
+    def test_label_guided_weather_run_uses_truth_for_tensor_ot_but_zero_target_ce(self):
+        self.assertIn("--label_guided_alignment", self.label_guided)
+        self.assertIn("--ablation_mode full", self.label_guided)
+        self.assertIn("--target_label_ratio 0", self.label_guided)
+        self.assertIn("--target_cls_weight 0", self.label_guided)
+        self.assertIn("--class_conditional_ot", self.label_guided)
+        self.assertIn("--balance_svd_classes", self.label_guided)
+        self.assertIn("jmda_label_guided_da", self.label_guided)
+        self.assertIn("'jmda_label_guided_da'", self.preflight)
+        self.assertIn("audit_jmda_label_guided_log.py", self.label_guided)
+        self.assertIn("LABEL_GUIDED_DA_NO_TARGET_CE", self.module)
+        self.assertIn(
+            "(args.use_target_labels or oracle_pairing_active)", self.module
+        )
 
 
 if __name__ == "__main__":

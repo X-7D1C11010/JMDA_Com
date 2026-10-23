@@ -745,7 +745,7 @@ def adaptation_protocol(args):
 
 
 def reported_protocol(args):
-    """Return a result label that keeps oracle diagnostics out of UDA tables."""
+    """Return the externally reported adaptation protocol."""
     protocol = adaptation_protocol(args)
     label_space_mode = getattr(args, 'label_space_mode', 'partial_set')
     if label_space_mode == 'oracle_shared':
@@ -758,6 +758,8 @@ def reported_protocol(args):
             return 'ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC'
         if getattr(args, 'diagnostic_oracle_pairing', False):
             return 'ORACLE_PAIRED_UDA_DIAGNOSTIC'
+        if getattr(args, 'label_guided_alignment', False):
+            return 'LABEL_GUIDED_DA_NO_TARGET_CE'
         return 'ORACLE_SHARED_UDA'
     if label_space_mode != 'partial_set':
         raise ValueError(f"Unsupported label-space mode: {label_space_mode!r}")
@@ -809,8 +811,8 @@ def map_oracle_labels_to_pair_manifest(
 
     Cohort preparation and the live dataset sort samples differently. Labels
     must therefore be joined by the exact VIS/IR path pair, never by row index.
-    This helper is intentionally limited to the explicitly marked oracle
-    diagnostic and returns only compact class ids.
+    This helper is used only by explicitly selected target-label-guided
+    correspondence modes and returns compact class ids.
     """
     def normalized_pair_key(sample):
         return (
@@ -1332,7 +1334,11 @@ def run_single_iteration(args, seed, logger):
     protocol = adaptation_protocol(args)
     experiment_protocol = reported_protocol(args)
     oracle_pairing_active = bool(
-        protocol == 'UDA' and args.diagnostic_oracle_pairing
+        protocol == 'UDA'
+        and (
+            args.diagnostic_oracle_pairing
+            or args.label_guided_alignment
+        )
     )
     source_only_diagnostic = bool(
         protocol == 'UDA' and args.diagnostic_source_only
@@ -1464,11 +1470,10 @@ def run_single_iteration(args, seed, logger):
         assert_matching_sample_order(tgt_train_ds, tgt_svd_ds, "target")
 
         if oracle_pairing_active:
-            # Deliberately isolated diagnostic: recover the per-sample target
-            # truth only to replace the pseudo correspondence used by the
-            # pairing/SVD/class-conditional-OT path.  The live target training
-            # dataset remains label-free, and UDA classification below still
-            # receives t_label=None, so no target CE can be formed.
+            # Recover per-sample target truth only for the correspondence,
+            # SVD/Tensor and class-conditional-OT path. The live target
+            # classification stream remains label-free and receives
+            # t_label=None, so no target classification CE can be formed.
             oracle_target_ds = MultiModalDomainDataset(
                 TARGET_ROOT,
                 domain_type='target',
@@ -1488,11 +1493,18 @@ def run_single_iteration(args, seed, logger):
                     "Oracle target-pair labels do not cover the exact "
                     "label-free target training cohort."
                 )
-            logger.warning(
-                "TARGET SAMPLE LABEL ORACLE ACTIVE FOR PAIRING ONLY; NOT UDA. "
-                "Target truth may enter pairing, SVD and class-conditional OT, "
-                "but target CE/model selection remain disabled."
-            )
+            if args.label_guided_alignment:
+                logger.info(
+                    "LABEL-GUIDED ALIGNMENT ACTIVE: target truth enters "
+                    "Tensor pairing/SVD and class-conditional OT; target "
+                    "classification CE remains exactly zero."
+                )
+            else:
+                logger.warning(
+                    "TARGET SAMPLE LABEL ORACLE ACTIVE FOR PAIRING ONLY; NOT UDA. "
+                    "Target truth may enter pairing, SVD and class-conditional OT, "
+                    "but target CE/model selection remain disabled."
+                )
             del oracle_target_ds
 
     tgt_val_ds = MultiModalDomainDataset(TARGET_ROOT, domain_type='target', phase='val',
@@ -1556,7 +1568,11 @@ def run_single_iteration(args, seed, logger):
     if source_only_diagnostic:
         uda_pairing_mode = 'source_only_fixed_projection'
     elif oracle_pairing_active:
-        uda_pairing_mode = 'target_ground_truth_oracle'
+        uda_pairing_mode = (
+            'target_ground_truth_label_guided'
+            if args.label_guided_alignment
+            else 'target_ground_truth_oracle'
+        )
     elif use_pseudo_class_pairing:
         uda_pairing_mode = 'source_prototype_pseudo_class'
     else:
@@ -1578,12 +1594,19 @@ def run_single_iteration(args, seed, logger):
             seed=seed,
         )
         if oracle_pairing_active:
-            logger.warning(
-                "Training mode: ORACLE target-class paired diagnostic; target "
-                "truth is used only for pairing/SVD/class-conditional OT. "
-                "Target classification loss and target-label checkpoint "
-                "selection remain disabled."
-            )
+            if args.label_guided_alignment:
+                logger.info(
+                    "Training mode: target-label-guided Tensor/SVD and "
+                    "class-conditional OT; target classification CE is "
+                    "disabled."
+                )
+            else:
+                logger.warning(
+                    "Training mode: ORACLE target-class paired diagnostic; target "
+                    "truth is used only for pairing/SVD/class-conditional OT. "
+                    "Target classification loss and target-label checkpoint "
+                    "selection remain disabled."
+                )
         else:
             logger.info(
                 "Training mode: prototype-pseudo-paired UDA; target ground-truth "
@@ -1911,9 +1934,14 @@ def run_single_iteration(args, seed, logger):
                     'modality_weights': [],
                     'modality_reliability_estimator': 'not-applicable-oracle',
                 }
-                pseudo_feature_space = 'target-ground-truth-oracle'
-                target_label_source_text = 'target-ground-truth-oracle'
-                pairing_log_label = 'UDA oracle-class pairing'
+                if args.label_guided_alignment:
+                    pseudo_feature_space = 'target-ground-truth-label-guided'
+                    target_label_source_text = 'target-ground-truth-label-guided'
+                    pairing_log_label = 'label-guided target-class pairing'
+                else:
+                    pseudo_feature_space = 'target-ground-truth-oracle'
+                    target_label_source_text = 'target-ground-truth-oracle'
+                    pairing_log_label = 'UDA oracle-class pairing'
             else:
                 pseudo_projection_ready = bool(
                     args.use_tensor_module
@@ -2012,7 +2040,8 @@ def run_single_iteration(args, seed, logger):
                 seed=seed * 1000,
                 class_paired=(args.use_target_labels or use_pseudo_class_pairing),
                 balance_classes=(
-                    args.use_target_labels and args.balance_svd_classes
+                    (args.use_target_labels or oracle_pairing_active)
+                    and args.balance_svd_classes
                 ),
                 target_labels_override=target_pseudo_original_labels,
                 source_class_weights=(
@@ -2030,7 +2059,11 @@ def run_single_iteration(args, seed, logger):
                 pin_memory=pin_memory,
             )
             if oracle_pairing_active:
-                svd_info['target_labels_source'] = 'target-ground-truth-oracle'
+                svd_info['target_labels_source'] = (
+                    'target-ground-truth-label-guided'
+                    if args.label_guided_alignment
+                    else 'target-ground-truth-oracle'
+                )
             # Epoch 1 has no learned downstream function to preserve. From
             # epoch 2 onward, move every projected-feature consumer into the
             # new SVD coordinates before its next optimizer step.
@@ -2127,6 +2160,7 @@ def run_single_iteration(args, seed, logger):
         collect_target_prior = (
             protocol != 'SDA'
             and not use_pseudo_class_pairing
+            and not source_only_diagnostic
             and args.uda_source_reweighting
             and epoch >= max(
                 args.uda_prior_warmup_epochs,
@@ -2656,7 +2690,12 @@ def run_single_iteration(args, seed, logger):
                 'seed': seed,
                 'epoch': EPOCHS,
                 'protocol': experiment_protocol,
-                'adaptation_protocol': protocol,
+                'adaptation_protocol': (
+                    'LABEL_GUIDED_DA'
+                    if args.label_guided_alignment
+                    else protocol
+                ),
+                'classification_protocol': protocol,
                 'label_space_mode': args.label_space_mode,
                 'oracle_shared_labels': report_metrics['oracle_shared_labels'],
                 'label_map_original_to_index': dict(global_map),
@@ -2697,6 +2736,7 @@ def run_single_iteration(args, seed, logger):
                 ),
                 'diagnostic_screening': bool(args.diagnostic_screening),
                 'diagnostic_source_only': source_only_diagnostic,
+                'label_guided_alignment': bool(args.label_guided_alignment),
                 'code_fingerprint': getattr(args, 'code_fingerprint', None),
                 'uda_source_warmup_epochs': args.uda_source_warmup_epochs,
                 'data_loading': {
@@ -2773,7 +2813,13 @@ def run_ablation_experiment(args):
     logger.info(f"训练开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"训练代码指纹: {code_fingerprint}")
     logger.info(f"设备: {DEVICE}")
-    logger.info(f"协议: {experiment_protocol} (adaptation={protocol})")
+    if args.label_guided_alignment:
+        logger.info(
+            f"协议: {experiment_protocol} "
+            "(adaptation=LABEL_GUIDED_DA, classification=source-only CE)"
+        )
+    else:
+        logger.info(f"协议: {experiment_protocol} (adaptation={protocol})")
     logger.info(f"标签空间模式: {args.label_space_mode}")
     if experiment_protocol == 'ORACLE_SHARED_UDA':
         logger.warning(
@@ -2786,6 +2832,12 @@ def run_ablation_experiment(args):
             "ORACLE_PAIRED_UDA_DIAGNOSTIC uses per-sample target truth only "
             "for correspondence/SVD/class-conditional OT. It has zero target "
             "classification loss and must never enter an SDA or UDA result table."
+        )
+    elif experiment_protocol == 'LABEL_GUIDED_DA_NO_TARGET_CE':
+        logger.info(
+            "LABEL_GUIDED_DA_NO_TARGET_CE uses target truth for Tensor/SVD "
+            "correspondence and class-conditional OT, while target "
+            "classification CE is fixed to zero."
         )
     elif experiment_protocol == 'ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC':
         logger.warning(
@@ -2839,6 +2891,13 @@ def run_ablation_experiment(args):
             logger.info(
                 "Diagnostic source-only control: target images, SVD/Tensor "
                 "alignment and OT are disabled for every epoch."
+            )
+        elif args.label_guided_alignment:
+            logger.info(
+                "Label-guided DA without target CE: true target classes enter "
+                "Tensor pairing/SVD and class-conditional OT; target "
+                "classification ratio/weight=0/0; "
+                f"source_only_warmup={args.uda_source_warmup_epochs}"
             )
         elif args.diagnostic_oracle_pairing:
             logger.warning(
@@ -2961,7 +3020,12 @@ def run_ablation_experiment(args):
     )
     machine_summary = {
         'protocol': experiment_protocol,
-        'adaptation_protocol': protocol,
+        'adaptation_protocol': (
+            'LABEL_GUIDED_DA'
+            if args.label_guided_alignment
+            else protocol
+        ),
+        'classification_protocol': protocol,
         'label_space_mode': args.label_space_mode,
         'oracle_target_label_support_used': (
             args.label_space_mode == 'oracle_shared'
@@ -2976,17 +3040,23 @@ def run_ablation_experiment(args):
             'source_only_fixed_projection'
             if args.diagnostic_source_only
             else (
-                'target_ground_truth_oracle'
-                if args.diagnostic_oracle_pairing
+                'target_ground_truth_label_guided'
+                if args.label_guided_alignment
                 else (
-                    'source_prototype_pseudo_class'
-                    if args.uda_pseudo_class_pairing
-                    else 'all_pairs'
+                    'target_ground_truth_oracle'
+                    if args.diagnostic_oracle_pairing
+                    else (
+                        'source_prototype_pseudo_class'
+                        if args.uda_pseudo_class_pairing
+                        else 'all_pairs'
+                    )
                 )
             )
         ),
         'target_ground_truth_used_for_pairing': bool(
-            args.use_target_labels or args.diagnostic_oracle_pairing
+            args.use_target_labels
+            or args.diagnostic_oracle_pairing
+            or args.label_guided_alignment
         ),
         'target_training_item_labels_exposed': bool(
             target_training_item_labels_exposed
@@ -3013,10 +3083,12 @@ def run_ablation_experiment(args):
             if (
                 args.uda_pseudo_class_pairing
                 and not args.diagnostic_oracle_pairing
+                and not args.label_guided_alignment
             ) else None
         ),
         'diagnostic_screening': bool(args.diagnostic_screening),
         'diagnostic_source_only': bool(args.diagnostic_source_only),
+        'label_guided_alignment': bool(args.label_guided_alignment),
         'code_fingerprint': code_fingerprint,
         'uda_source_warmup_epochs': args.uda_source_warmup_epochs,
         'data_loading': {
@@ -3199,6 +3271,15 @@ def main():
                        dest='uda_pseudo_class_pairing', action='store_false',
                        help='use the unpaired all-pairs UDA path')
     parser.add_argument(
+        '--label_guided_alignment',
+        action='store_true',
+        default=False,
+        help=(
+            'use true target training classes for Tensor pairing/SVD and '
+            'class-conditional OT while forcing target classification CE to zero'
+        ),
+    )
+    parser.add_argument(
         '--diagnostic_screening',
         action='store_true',
         default=False,
@@ -3357,6 +3438,36 @@ def main():
                 '--diagnostic_oracle_pairing/--diagnostic_source_only require '
                 '--diagnostic_screening'
             )
+    if args.label_guided_alignment:
+        if adaptation_protocol(args) != 'UDA':
+            parser.error(
+                '--label_guided_alignment requires no --use_target_labels '
+                'and no target classification loss'
+            )
+        if args.target_label_ratio != 0.0 or args.target_cls_weight != 0.0:
+            parser.error(
+                '--label_guided_alignment fixes target classification '
+                'ratio/weight to 0/0'
+            )
+        if args.label_space_mode != 'oracle_shared':
+            parser.error(
+                '--label_guided_alignment requires '
+                '--label_space_mode oracle_shared'
+            )
+        if (
+            args.diagnostic_screening
+            or args.diagnostic_oracle_pairing
+            or args.diagnostic_source_only
+        ):
+            parser.error(
+                '--label_guided_alignment cannot be combined with diagnostic '
+                'screening flags'
+            )
+        if args.uda_pseudo_class_pairing:
+            parser.error(
+                '--label_guided_alignment uses true target correspondence and '
+                'cannot be combined with --uda_pseudo_class_pairing'
+            )
     if args.diagnostic_oracle_pairing and args.diagnostic_source_only:
         parser.error(
             '--diagnostic_oracle_pairing and --diagnostic_source_only are '
@@ -3371,23 +3482,29 @@ def main():
         parser.error(
             '--diagnostic_source_only cannot construct pseudo-class pairs'
         )
-    if args.uda_pseudo_class_pairing or args.diagnostic_oracle_pairing:
+    if (
+        args.uda_pseudo_class_pairing
+        or args.diagnostic_oracle_pairing
+        or args.label_guided_alignment
+    ):
         if adaptation_protocol(args) != 'UDA':
-            parser.error('class-paired diagnostics are only valid for UDA')
+            parser.error(
+                'class-paired alignment requires target classification CE=0'
+            )
         if args.label_space_mode != 'oracle_shared':
             parser.error(
-                'class-paired diagnostics require '
+                'class-paired alignment requires '
                 '--label_space_mode oracle_shared so every configured class is '
                 'known to occur in the target domain'
             )
         if args.uda_source_warmup_epochs < 1:
             parser.error(
-                'class-paired diagnostics require a positive source-only '
+                'class-paired alignment requires a positive source-only '
                 'warm-up before target pseudo correspondences are constructed'
             )
         if not args.class_conditional_ot:
             parser.error(
-                'class-paired diagnostics require class-conditional OT; '
+                'class-paired alignment requires class-conditional OT; '
                 'do not pass --no_class_conditional_ot'
             )
         if args.epochs < (
@@ -3396,7 +3513,7 @@ def main():
             + args.ot_ramp_epochs
         ):
             parser.error(
-                'class-paired diagnostics require epochs >= '
+                'class-paired alignment requires epochs >= '
                 'uda_source_warmup_epochs + ot_warmup_epochs + '
                 'ot_ramp_epochs so the declared full model reaches the '
                 'complete OT weight'

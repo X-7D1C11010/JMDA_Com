@@ -76,7 +76,7 @@ CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="4dc4ef0b01c7ea70"
+JMDA_EXPECTED_CODE_FINGERPRINT="83cf8634a962df2f"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 
 require_positive_integer() {

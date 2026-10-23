@@ -612,7 +612,8 @@ class AdaptationProtocolTests(unittest.TestCase):
     def _args(use_target_labels=False, ratio=0.0, weight=0.0,
               label_space_mode="partial_set",
               diagnostic_oracle_pairing=False,
-              diagnostic_source_only=False):
+              diagnostic_source_only=False,
+              label_guided_alignment=False):
         return SimpleNamespace(
             use_target_labels=use_target_labels,
             target_label_ratio=ratio,
@@ -620,6 +621,7 @@ class AdaptationProtocolTests(unittest.TestCase):
             label_space_mode=label_space_mode,
             diagnostic_oracle_pairing=diagnostic_oracle_pairing,
             diagnostic_source_only=diagnostic_source_only,
+            label_guided_alignment=label_guided_alignment,
         )
 
     def test_protocol_states_are_disjoint(self):
@@ -650,6 +652,17 @@ class AdaptationProtocolTests(unittest.TestCase):
         self.assertEqual(
             reported_protocol(source_only),
             "ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC",
+        )
+
+    def test_label_guided_alignment_has_formal_reported_protocol(self):
+        args = self._args(
+            label_space_mode="oracle_shared",
+            label_guided_alignment=True,
+        )
+        self.assertEqual(adaptation_protocol(args), "UDA")
+        self.assertEqual(
+            reported_protocol(args),
+            "LABEL_GUIDED_DA_NO_TARGET_CE",
         )
 
     def test_oracle_shared_label_intersection_is_explicit(self):

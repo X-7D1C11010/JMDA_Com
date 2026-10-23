@@ -216,7 +216,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--protocol',
-        choices=('sda', 'jmda_uda', 'jmda_oracle_shared_uda', 'uda', 'vlm'),
+        choices=(
+            'sda', 'jmda_uda', 'jmda_oracle_shared_uda',
+            'jmda_label_guided_da', 'uda', 'vlm'
+        ),
                         required=True)
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--jmda-net-dir', required=True)
@@ -303,7 +306,10 @@ def main():
             lists.append(
                 list_dir / f'{target}_sda_10shot_seed42.txt'
             )
-        elif args.protocol in ('jmda_uda', 'jmda_oracle_shared_uda', 'uda', 'vlm'):
+        elif args.protocol in (
+            'jmda_uda', 'jmda_oracle_shared_uda',
+            'jmda_label_guided_da', 'uda', 'vlm'
+        ):
             lists.append(list_dir / f'{target}_train.txt')
     validated = {}
     for path in lists:
@@ -311,7 +317,7 @@ def main():
             path, data_root, args.check_all_paths
         )
     validated_pairs = {}
-    if args.protocol == 'jmda_oracle_shared_uda':
+    if args.protocol in ('jmda_oracle_shared_uda', 'jmda_label_guided_da'):
         for target in args.targets:
             pair_path = list_dir / f'{target}_train_pairs.tsv'
             pair_rows = validate_unlabeled_pair_list(
@@ -380,7 +386,7 @@ def main():
                 f'manifest={sorted(mapped_support)}, '
                 f'train={sorted(target_labels)}, val={sorted(val_labels)}'
             )
-        if args.protocol == 'jmda_oracle_shared_uda':
+        if args.protocol in ('jmda_oracle_shared_uda', 'jmda_label_guided_da'):
             pair_rows = validated_pairs.get(target, [])
             if len(pair_rows) != len(validated[training_name]):
                 fail(
@@ -424,8 +430,17 @@ def main():
             'preprocessing manifest; training receives only the selected '
             'original class ids. This diagnostic is not strict UDA.'
         )
+    elif args.protocol == 'jmda_label_guided_da':
+        print(
+            '[LABEL-GUIDED] target-training labels are available only to '
+            'Tensor pairing/SVD and class-conditional OT; target '
+            'classification CE is disabled.'
+        )
 
-    if args.protocol in ('sda', 'jmda_uda', 'jmda_oracle_shared_uda'):
+    if args.protocol in (
+        'sda', 'jmda_uda', 'jmda_oracle_shared_uda',
+        'jmda_label_guided_da'
+    ):
         jmda = Path(args.jmda_net_dir).expanduser().resolve()
         required = (
             jmda / 'main_sda.py' if args.protocol == 'sda'
@@ -444,6 +459,11 @@ def main():
                 'ORACLE_SHARED_UDA; target labels are excluded from losses, '
                 'and an independently prepared class-support manifest filters '
                 'the source label space'
+            ),
+            'jmda_label_guided_da': (
+                'LABEL_GUIDED_DA_NO_TARGET_CE; true target classes supervise '
+                'Tensor pairing/SVD and class-conditional OT, while target '
+                'classification CE remains zero'
             ),
         }[args.protocol]
         print(f'[OK] JMDA protocol semantics: {protocol_explanation}')
