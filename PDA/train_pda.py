@@ -46,11 +46,12 @@ Faithfulness notes -- every deviation is listed:
     Windows certificate store, which raises ``ssl.SSLError`` on this machine, so
     the downloader falls back to ``certifi``'s CA bundle.  The SHA-256 check is
     kept.
-  * Class names: this project's dataset only exposes numeric class folders, so
-    prompts use numbered placeholder names (``class_1`` ... ``class_{|T|}``)
-    unless a real mapping is supplied via ``--class-names-file`` /
-    ``JMDA_CLASS_NAMES_FILE``.  The efficiency record stores which of the two was
-    used.  2026-10-20: the count follows the target-driven label space
+  * Class names: this project's dataset only exposes numeric class folders.
+    Formal runs launched by ``scripts/run_server.sh uda`` therefore require a
+    real 14-class English mapping via ``--class-names-file`` /
+    ``JMDA_CLASS_NAMES_FILE``. Direct standalone diagnostic runs can still use
+    numbered placeholders, and the efficiency record marks those runs as
+    scientifically invalid.  2026-10-20: the count follows the target-driven label space
     (``tools/uda_data.py``), i.e. the number of classes that actually exist in
     the target domain, not the dataset-wide 14.
   * Precision: the release defaults to fp16 (``TRAINER.PDA.PREC = "fp16"``);

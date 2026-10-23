@@ -8,6 +8,7 @@
 #   bash scripts/run_server.sh jmda_oracle_shared_uda [epochs] # 共同类 oracle 诊断（不进 UDA 主表）
 #   bash scripts/run_server.sh uda            # 其他无监督域适应方法（各用官方预算）
 #   bash scripts/run_server.sh supervised [epochs] # MCFT（源域监督，VIS+IR，独立表）
+#   bash scripts/run_server_background.sh uda # 后台运行，断开 SSH 后继续
 #
 # 环境变量:
 #   JMDA_DATA_ROOT  数据根目录（默认 /mnt/data/lixiang/data/Data）
@@ -202,6 +203,24 @@ done
 
 if [ ! -d "$DATA_ROOT" ]; then
   echo "数据根不存在: $DATA_ROOT（可用 JMDA_DATA_ROOT 指定）"; exit 1
+fi
+if [ "$PROTOCOL" = "uda" ]; then
+  if [ -z "$CLASS_NAMES_FILE" ]; then
+    echo "uda 协议包含 PDA，必须设置 JMDA_CLASS_NAMES_FILE。"
+    echo "该文件应按原始类别 1..14 的顺序，每行写一个真实英文船舶类别名称。"
+    echo "示例: export JMDA_CLASS_NAMES_FILE=/home/lixiang/lx/JMDA_Com/config/14_class_names.txt"
+    exit 1
+  fi
+  if [ ! -f "$CLASS_NAMES_FILE" ]; then
+    echo "类别名称文件不存在: $CLASS_NAMES_FILE"
+    echo "注意：/path/to/14_class_names.txt 只是示例占位路径，不能直接使用。"
+    exit 1
+  fi
+  if ! "$PYTHON" "$HERE/tools/class_names.py" \
+      "$CLASS_NAMES_FILE" --expected-count 14; then
+    echo "类别名称文件格式或内容无效；尚未生成清单，也未启动训练。"
+    exit 1
+  fi
 fi
 echo "协议=$PROTOCOL 轮数=$EPOCHS 数据根=$DATA_ROOT"
 echo "日志目录=$LOG_ROOT"

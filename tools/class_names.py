@@ -1,6 +1,7 @@
 """Strict class-name loading for CLIP-based comparison methods."""
 
 from pathlib import Path
+import argparse
 import re
 
 
@@ -84,3 +85,21 @@ def load_class_names(path, expected_count=14):
 
 
 __all__ = ['load_class_names']
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate an ordered English class-name mapping.'
+    )
+    parser.add_argument('path')
+    parser.add_argument('--expected-count', type=int, default=14)
+    args = parser.parse_args()
+    names = load_class_names(args.path, expected_count=args.expected_count)
+    print(
+        f'[OK] class-name mapping: {Path(args.path).expanduser().resolve()} '
+        f'({len(names)} classes)'
+    )
+
+
+if __name__ == '__main__':
+    main()
