@@ -1,0 +1,88 @@
+JMDA_SCREEN_EXPERIMENT=source_only_fixed_projection
+JMDA_SCREEN_TARGET=backlight
+================================================================================
+模块消融实验 - with_tensor_without_ot_source_only_diagnostic
+目标域天气: 逆光
+训练开始时间: 2026-10-23 10:18:55
+训练代码指纹: 4dc4ef0b01c7ea70
+设备: cuda
+协议: ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC (adaptation=UDA)
+标签空间模式: oracle_shared
+ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC keeps the initialized Tensor projection fixed and disables every cross-domain update.
+源域: /mnt/data/lixiang/data/Data/晴天
+目标域: /mnt/data/lixiang/data/Data/逆光
+批次大小: 32
+数据加载: workers=4, prefetch_factor=2, pin_memory(requested/active)=True/True
+总轮数: 30
+迭代次数: 1; seeds=[42]
+使用Tensor模块: 是
+使用OT模块: 否
+特征融合方式: Tensor对齐
+域对齐方式: 常规对抗
+目标标签比例/权重: 0.0/0.0
+Tensor/Adv损失权重: 0.12/0.0
+Tensor投影维度/更新: 64/每epoch一次; SVD统计批次=128; SVD投影模式=legacy_supervised; 基变换模式=legacy_supervised
+学习率: feature=5e-06, other=0.0002, weight_decay=0.0005
+VIS训练/BN模式: legacy_supervised; Sinkhorn自适应迭代=False
+判别器学习率调度: 固定学习率
+报告策略: last, 窗口: 10
+Diagnostic source-only control: target images, SVD/Tensor alignment and OT are disabled for every epoch.
+================================================================================
+
+================================================================================
+迭代 1/1
+随机种子: 42
+================================================================================
+TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. support supplied by independent cohort preprocessing; no labelled target-support probe exists in the optimization process. reported_protocol=ORACLE_SHARED_SOURCE_ONLY_DIAGNOSTIC; shared original labels=[1, 5, 6, 7, 8, 9, 11, 13, 14]; source samples 760->515; target samples retained without filtering=113/113; classifier classes=9; label-free pair manifest sha256=283862861d42b84860a38202da10ab71962356de2aa1531243c7aa8c259ab3ec.
+Dataset audit: source_train=515, target_train=113, target_val=36
+Class counts (original labels): source={1: 120, 5: 53, 6: 53, 7: 83, 8: 44, 9: 45, 11: 47, 13: 40, 14: 30}; target_train=<class support inspected once; per-class counts withheld>; target_val={1: 6, 5: 4, 6: 4, 7: 8, 8: 1, 9: 5, 11: 3, 13: 4, 14: 1}
+Classifier label map (original->index): {1: 0, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5, 11: 6, 13: 7, 14: 8}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 515, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 245, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}; target_train={'source': 'independent_label_free_pair_manifest', 'selected_phase_pairs_before_filter': 113, 'filtered_out_pairs': 0, 'selected_phase_pairs': 113, 'retained_original_labels': 'withheld_from_training_dataset'}; target_val={'union_vis_files': 164, 'union_ir_files': 169, 'matched_pairs_all': 149, 'selected_phase_pairs': 36, 'dropped_unpaired_vis': 15, 'dropped_unpaired_ir': 20, 'selected_phase_pairs_before_filter': 36, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}
+Target training item label exposure: include_label=False; UDA must be False (oracle class support, if enabled, comes from the independent preprocessing manifest).
+Training mode: ORACLE_SHARED_UDA; target labels are excluded from losses and pair construction; target-training class support was supplied by independent preprocessing.
+Training batches per epoch: 17; batch_size=32; num_workers=4; prefetch_factor=2; pin_memory=True
+Trainable parameters: VIS=262,656/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=projection only (actual supervised-reference behavior).
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: disabled by source-only diagnostic
+Loss weights: tensor=0.12, adv=0.00
+Tensor projection update: once per epoch from the complete independent source/target training banks after warm-up; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001, projection_mode=legacy_supervised, basis_transport=legacy_supervised
+Epoch [1/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+VIS BatchNorm behavior: supervised-reference train mode (running statistics update even in the frozen backbone).
+
+[Batch 1/1] with Tensor + w/o OT, target=逆光
+Epoch [1/30] | Loss: 1.8205 (Cls: 1.8205 [src/tgt/mid=1.8205/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.3879 | Val Acc: 0.1667 | Val P/R/F1 (Macro): 0.0185/0.1111/0.0317 | LR feature/other/discriminator: 4.98767e-06/0.000199507/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.1667
+Epoch [2/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [2/30] | Loss: 1.2534 (Cls: 1.2534 [src/tgt/mid=1.2534/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.6801 | Val Acc: 0.1389 | Val P/R/F1 (Macro): 0.1524/0.1148/0.0937 | LR feature/other/discriminator: 4.95083e-06/0.000198033/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [3/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [3/30] | Loss: 0.9992 (Cls: 0.9992 [src/tgt/mid=0.9992/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.7960 | Val Acc: 0.2778 | Val P/R/F1 (Macro): 0.3489/0.2481/0.2370 | LR feature/other/discriminator: 4.88988e-06/0.000195595/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.2778
+Epoch [4/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [4/30] | Loss: 0.9140 (Cls: 0.9140 [src/tgt/mid=0.9140/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.8346 | Val Acc: 0.3611 | Val P/R/F1 (Macro): 0.3917/0.4750/0.4025 | LR feature/other/discriminator: 4.80548e-06/0.000192219/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.3611
+Epoch [5/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [5/30] | Loss: 0.8445 (Cls: 0.8445 [src/tgt/mid=0.8445/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.8824 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.3519/0.4056/0.3649 | LR feature/other/discriminator: 4.69856e-06/0.000187942/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [6/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [6/30] | Loss: 0.7951 (Cls: 0.7951 [src/tgt/mid=0.7951/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9154 | Val Acc: 0.3056 | Val P/R/F1 (Macro): 0.3992/0.3833/0.3313 | LR feature/other/discriminator: 4.57029e-06/0.000182812/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [7/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [7/30] | Loss: 0.7482 (Cls: 0.7482 [src/tgt/mid=0.7482/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9210 | Val Acc: 0.4167 | Val P/R/F1 (Macro): 0.3333/0.4926/0.3738 | LR feature/other/discriminator: 4.42208e-06/0.000176883/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.4167
+Epoch [8/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [8/30] | Loss: 0.7194 (Cls: 0.7194 [src/tgt/mid=0.7194/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9393 | Val Acc: 0.3056 | Val P/R/F1 (Macro): 0.2803/0.3889/0.2768 | LR feature/other/discriminator: 4.25554e-06/0.000170222/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [9/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [9/30] | Loss: 0.7034 (Cls: 0.7034 [src/tgt/mid=0.7034/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9357 | Val Acc: 0.3889 | Val P/R/F1 (Macro): 0.4722/0.5648/0.4560 | LR feature/other/discriminator: 4.07252e-06/0.000162901/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [10/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [10/30] | Loss: 0.6873 (Cls: 0.6873 [src/tgt/mid=0.6873/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9320 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.3278/0.4815/0.3720 | LR feature/other/discriminator: 3.875e-06/0.000155/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [11/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Traceback (most recent call last):
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 3643, in <module>
+    main()
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 3623, in main
+    summary = run_ablation_experiment(exp_args)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 2883, in run_ablation_experiment
+    best_metrics = run_single_iteration(args, seed, logger)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 2466, in run_single_iteration
+    raise RuntimeError(
+RuntimeError: Unlabeled target-prior pass did not cover the complete target training domain (113 samples missing).

@@ -1,0 +1,84 @@
+nohup: 忽略输入
+[OK] JMDA reviewed code fingerprint: 4dc4ef0b01c7ea70
+JMDA UDA diagnosis suite=20261023_101843_2477374
+targets=backlight epochs=30 iterations=1 seed=42
+output=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374
+注意：oracle pairing 使用目标训练样本真实类别建立对应，但目标CE始终为0；所有结果仅用于定位故障。
+[OK] prepared exact-paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/jmda_uda_screening_20261023_101843_2477374
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+[OK] exact-paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/jmda_uda_screening_20261023_101843_2477374/paired_protocol_manifest.json (4 labelled lists, 1 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=30801/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] backlight_train_pairs.tsv: 113 label-free rows, checked 113 exact pairs
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[ORACLE] target-training class support was isolated in the preprocessing manifest; training receives only the selected original class ids. This diagnostic is not strict UDA.
+[OK] JMDA-Net entry: /home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py
+[OK] JMDA protocol semantics: ORACLE_SHARED_UDA; target labels are excluded from losses, and an independently prepared class-support manifest filters the source label space
+[OK] server preflight passed
+...........................
+----------------------------------------------------------------------
+Ran 27 tests in 0.012s
+
+OK
+.......................配对采样器已初始化，共 2 个共有类别；每个epoch覆盖全部 4 个目标样本，并按类别平衡扩展为 6 个训练观测。
+.........../home/lixiang/lx/JMDA_Com/JMDA-Net/test_tensor_ot_invariants.py:1579: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  self.assertLess(float(details["marginal_residual"]), 2e-4)
+....................
+----------------------------------------------------------------------
+Ran 54 tests in 2.418s
+
+OK
+>>> [backlight/source_only_fixed_projection] log=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/backlight_source_only_fixed_projection.log
+    FAILED(1): backlight/source_only_fixed_projection
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.2778
+Epoch [4/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [4/30] | Loss: 0.9140 (Cls: 0.9140 [src/tgt/mid=0.9140/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.8346 | Val Acc: 0.3611 | Val P/R/F1 (Macro): 0.3917/0.4750/0.4025 | LR feature/other/discriminator: 4.80548e-06/0.000192219/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.3611
+Epoch [5/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [5/30] | Loss: 0.8445 (Cls: 0.8445 [src/tgt/mid=0.8445/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.8824 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.3519/0.4056/0.3649 | LR feature/other/discriminator: 4.69856e-06/0.000187942/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [6/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [6/30] | Loss: 0.7951 (Cls: 0.7951 [src/tgt/mid=0.7951/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9154 | Val Acc: 0.3056 | Val P/R/F1 (Macro): 0.3992/0.3833/0.3313 | LR feature/other/discriminator: 4.57029e-06/0.000182812/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [7/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [7/30] | Loss: 0.7482 (Cls: 0.7482 [src/tgt/mid=0.7482/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9210 | Val Acc: 0.4167 | Val P/R/F1 (Macro): 0.3333/0.4926/0.3738 | LR feature/other/discriminator: 4.42208e-06/0.000176883/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.4167
+Epoch [8/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [8/30] | Loss: 0.7194 (Cls: 0.7194 [src/tgt/mid=0.7194/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9393 | Val Acc: 0.3056 | Val P/R/F1 (Macro): 0.2803/0.3889/0.2768 | LR feature/other/discriminator: 4.25554e-06/0.000170222/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [9/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [9/30] | Loss: 0.7034 (Cls: 0.7034 [src/tgt/mid=0.7034/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9357 | Val Acc: 0.3889 | Val P/R/F1 (Macro): 0.4722/0.5648/0.4560 | LR feature/other/discriminator: 4.07252e-06/0.000162901/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [10/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Epoch [10/30] | Loss: 0.6873 (Cls: 0.6873 [src/tgt/mid=0.6873/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | Source Train Acc: 0.9320 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.3278/0.4815/0.3720 | LR feature/other/discriminator: 3.875e-06/0.000155/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9
+Epoch [11/30] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled for the complete diagnostic run.
+Traceback (most recent call last):
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 3643, in <module>
+    main()
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 3623, in main
+    summary = run_ablation_experiment(exp_args)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 2883, in run_ablation_experiment
+    best_metrics = run_single_iteration(args, seed, logger)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py", line 2466, in run_single_iteration
+    raise RuntimeError(
+RuntimeError: Unlabeled target-prior pass did not cover the complete target training domain (113 samples missing).
+>>> [backlight/pseudo_tensor_only] log=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/backlight_pseudo_tensor_only.log
+    done: backlight/pseudo_tensor_only
+>>> [backlight/oracle_tensor_only] log=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/backlight_oracle_tensor_only.log
+    done: backlight/oracle_tensor_only
+>>> [backlight/pseudo_tensor_ot] log=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/backlight_pseudo_tensor_ot.log
+    done: backlight/pseudo_tensor_ot
+>>> [backlight/oracle_tensor_ot] log=/home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/backlight_oracle_tensor_ot.log
+    done: backlight/oracle_tensor_ot
+[OK] wrote /home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/screening_summary.csv
+[OK] wrote /home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/screening_summary.md
+[WARN] backlight_source_only_fixed_projection.log: missing screening marker or JMDA_RUN_SUMMARY_JSON
+筛选实验结束：failures=1
+汇总: /home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/screening_summary.md
+CSV:  /home/lixiang/lx/JMDA_Com/server_logs/jmda_uda_screening/20261023_101843_2477374/screening_summary.csv
