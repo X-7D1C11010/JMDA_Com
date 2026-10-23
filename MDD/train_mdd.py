@@ -20,7 +20,7 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
 优化器/调度/超参保持与 tllib 官方示例 mdd.py 完全一致（未做任何改动）。
 
 Usage:
-    python train_mdd.py --target backlight --epochs 3
+    python train_mdd.py --target backlight
 """
 import os
 import sys
@@ -137,7 +137,8 @@ def main():
     parser = argparse.ArgumentParser(description='MDD (tllib) for JMDA-Net dataset')
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--epochs', type=int, default=20,
+                        help='训练轮数（tllib 官方默认 20）')
     parser.add_argument('-b', '--batch-size', default=32, type=int)
     parser.add_argument('--lr', default=0.004, type=float)
     parser.add_argument('--lr-gamma', default=0.0002, type=float)

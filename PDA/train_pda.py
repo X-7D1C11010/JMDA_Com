@@ -26,9 +26,9 @@ Faithfulness notes -- every deviation is listed:
     steps, the unlabeled iterator is recycled when exhausted), the same
     optimizer (SGD) and the same cosine-with-warmup schedule, stepped once per
     epoch exactly like ``BaseDA.run_epoch`` -> ``update_lr()``.
-  * ``einops.rearrange`` in ``IFT_Module`` is replaced by ``chunk(3, dim=-1)``,
-    which is exactly the same tensor split (a (d k) reshape with k = 3 followed
-    by a stack over k).
+  * ``einops.rearrange('b (d k) -> k b d', k=3)`` in ``IFT_Module`` is
+    implemented as reshape + permute.  This preserves the official interleaved
+    q/k/v layout; a contiguous ``chunk(3, dim=-1)`` is not equivalent.
   * Only the ViT-B/16 path is wired up (``ImageEncoder_Trans``); the released
     ``ImageEncoder_Conv`` alternative cannot be prompt-tuned anyway (its own
     comment: "Maybe furtherly there will be some prompt tuning methods for
@@ -588,7 +588,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=20,
+                        help='训练轮数（PDA Office-31 官方配置 b32_ep20_office31）')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--test-batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=0.003)

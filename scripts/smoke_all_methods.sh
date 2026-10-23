@@ -15,7 +15,13 @@ echo "[smoke 1/3] JMDA-Net UDA"
 bash "$HERE/scripts/run_server.sh" jmda_uda 1
 
 echo "[smoke 2/3] original-protocol UDA comparison methods"
-bash "$HERE/scripts/run_server.sh" uda 1
+UDA_DANN_EPOCHS=1 \
+UDA_DEEPCORAL_EPOCHS=1 \
+UDA_MDD_EPOCHS=1 \
+UDA_MCC_EPOCHS=1 \
+UDA_PDA_EPOCHS=1 \
+CDAN_NUM_ITERATIONS=2 \
+bash "$HERE/scripts/run_server.sh" uda
 
 echo "[smoke 3/3] MCFT supervised multimodal baseline"
 bash "$HERE/scripts/run_server.sh" supervised 1

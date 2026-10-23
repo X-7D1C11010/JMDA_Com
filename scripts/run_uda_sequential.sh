@@ -44,7 +44,7 @@ JMDA_SEED="$FIRST_SEED" bash "$HERE/scripts/run_server.sh" jmda_uda "$EPOCHS"
 echo "[2/2] UDA comparison methods: seeds=${BASELINE_SEEDS[*]}"
 for seed in "${BASELINE_SEEDS[@]}"; do
   echo ">>> UDA comparison seed=$seed"
-  JMDA_SEED="$seed" bash "$HERE/scripts/run_server.sh" uda "$EPOCHS"
+  JMDA_SEED="$seed" bash "$HERE/scripts/run_server.sh" uda
 done
 
 "${PYTHON:-python}" "$HERE/tools/summarize_run_results.py" \

@@ -6,7 +6,7 @@
 #   bash scripts/run_server.sh sda [epochs]   # 监督域适应（论文主结果）
 #   bash scripts/run_server.sh jmda_uda [epochs] # JMDA-Net 无监督
 #   bash scripts/run_server.sh jmda_oracle_shared_uda [epochs] # 共同类 oracle 诊断（不进 UDA 主表）
-#   bash scripts/run_server.sh uda [epochs]   # 其他无监督域适应方法
+#   bash scripts/run_server.sh uda            # 其他无监督域适应方法（各用官方预算）
 #   bash scripts/run_server.sh supervised [epochs] # MCFT（源域监督，VIS+IR，独立表）
 #
 # 环境变量:
@@ -26,6 +26,10 @@
 #   JMDA_MIN_FREE_GPU_MEMORY_MIB  可选的启动前空闲显存门禁（MiB；默认不启用）
 #   JMDA_CLASS_NAMES_FILE  14类真实英文名称文件（PDA 文本提示必需）
 #   CLIP_CACHE_DIR  CLIP 权重缓存目录（PDA；默认 ~/.cache/clip）
+#   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_MDD_EPOCHS /
+#   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  各方法训练轮数；默认分别为
+#     100 / 20 / 20 / 20 / 20，与当前采用的各自发布配方一致
+#   CDAN_NUM_ITERATIONS  CDAN 总迭代数（默认官方 100004）
 #
 # 本仓库 JMDA-Net/ 子目录为本文方法（JMDA-Net）的源码镜像，与对比方法目录区分。
 # 每次运行的日志 -> server_logs/<protocol>/，效率结果 -> efficiency_results/<protocol>/
@@ -42,6 +46,11 @@ case "$PROTOCOL" in
   sda|jmda_uda|jmda_oracle_shared_uda|uda|supervised) ;;
   *) echo "用法: bash scripts/run_server.sh {sda|jmda_uda|jmda_oracle_shared_uda|uda|supervised} [epochs]"; exit 1 ;;
 esac
+if [[ "$PROTOCOL" = "uda" && "$#" -ge 2 ]]; then
+  echo "uda 协议不接受统一 epochs 参数；各方法默认使用官方预算。"
+  echo "如需覆盖，请设置 UDA_DANN_EPOCHS、UDA_DEEPCORAL_EPOCHS、UDA_MDD_EPOCHS、UDA_MCC_EPOCHS、UDA_PDA_EPOCHS。"
+  exit 1
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
@@ -57,6 +66,12 @@ JMDA_SVD_STAT_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-128}"
 JMDA_PREFETCH_FACTOR="${JMDA_PREFETCH_FACTOR:-2}"
 JMDA_PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
 JMDA_RUN_INVARIANT_TESTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
+UDA_DANN_EPOCHS="${UDA_DANN_EPOCHS:-100}"
+UDA_DEEPCORAL_EPOCHS="${UDA_DEEPCORAL_EPOCHS:-20}"
+UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
+UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
+UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
+CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
@@ -78,6 +93,15 @@ require_nonnegative_integer() {
     exit 1
   fi
 }
+
+if [[ "$PROTOCOL" = "uda" ]]; then
+  require_positive_integer "UDA_DANN_EPOCHS" "$UDA_DANN_EPOCHS"
+  require_positive_integer "UDA_DEEPCORAL_EPOCHS" "$UDA_DEEPCORAL_EPOCHS"
+  require_positive_integer "UDA_MDD_EPOCHS" "$UDA_MDD_EPOCHS"
+  require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
+  require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
+  require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
+fi
 
 if [[ "$PROTOCOL" = "jmda_uda" || "$PROTOCOL" = "jmda_oracle_shared_uda" ]]; then
   require_positive_integer "JMDA_NUM_ITERATIONS" "$JMDA_NUM_ITERATIONS"
@@ -446,16 +470,15 @@ elif [ "$PROTOCOL" = "uda" ]; then
     exit 1
   fi
   UDA_COMMON=(--seed "$SEED" --data-dir "$VIS_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
-  CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
   for t in "${TARGETS[@]}"; do
-    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
-    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
+    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$UDA_DANN_EPOCHS" "${UDA_COMMON[@]}"
+    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" "${UDA_COMMON[@]}"
     # CDAN 官方配置为迭代制（train_image.py: num_iterations=100004），不用 --epochs
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" "${UDA_COMMON[@]}"
-    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
-    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}"
+    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$UDA_MDD_EPOCHS" "${UDA_COMMON[@]}"
+    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" --epochs "$UDA_MCC_EPOCHS" "${UDA_COMMON[@]}"
     # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
-    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$EPOCHS" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
+    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$UDA_PDA_EPOCHS" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
   done
 
 else

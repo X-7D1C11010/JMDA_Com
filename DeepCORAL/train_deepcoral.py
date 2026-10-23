@@ -4,23 +4,25 @@ Source domain: 晴天 (Sunny)
 Target domains: 逆光, 雨天, 雾天, 黑天
 
 Usage:
-    python train_deepcoral.py --target backlight --epochs 3
+    python train_deepcoral.py --target backlight
 
 2026-10-20 变更（见 REPRODUCTION_RECORD.md 第 14 节）：
   * 标签空间以目标域为准（tools/uda_data.py）：只保留目标域存在的类别，分类头
     输出维度 = 该目标域类别数；
-  * 优化器恢复原参考实现 DeepCORAL/main.py:130-133 的 2 参数组（主干 = lr，
-    分类头 fc = 10×lr），并按其原样**不传入** weight_decay（该仓库虽定义了
-    WEIGHT_DECAY=5e-4 但未传给优化器）；
+  * 优化器使用 2 参数组（主干 = lr，分类头 fc = 10×lr）；
   * CORAL 权重恢复原参考实现 main.py:148 的线性递增 λ=(epoch+1)/EPOCHS，
     取代原先固定的 --lamb。
 
 2026-10-21 变更（逐项核对官方实现后的修复）：
   * CORAL 损失作用点改为分类器输出（main.py:46 ``models.CORAL(out1, out2)``，
     即 fc 之后、softmax 之前的 logits），不再作用于 512 维池化特征；
-    models.py 的 CORAL 公式与官方仓库逐字节一致，未改动；
   * 每轮步数改为 min(len(source), len(target))（main.py:29），不再对较短
     一侧循环取样。
+
+2026-10-23 变更（以论文公式覆盖第三方 PyTorch 端口的偏差）：
+  * models.py 的 CORAL 公式按论文 Eq. (1)--(3) 计算无偏协方差及 Frobenius
+    范数；不沿用第三方 PyTorch 端口遗漏 1/(n-1) 且重复除 d² 的实现；
+  * 恢复论文的 weight_decay=5e-4，并将默认训练预算设为 20 epochs。
 """
 import os
 import sys
@@ -96,9 +98,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--epochs', type=int, default=20,
+                        help='训练轮数（Deep CORAL 参考实验为 20）')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--weight-decay', type=float, default=5e-4,
+                        help='Deep CORAL 论文实验设置为 5e-4')
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists_vis'))
@@ -142,12 +147,13 @@ def main():
                                 shuffle=False, num_workers=2)
 
     model = DeepCORAL(num_classes=num_classes).to(device)
-    # 原参考实现 DeepCORAL/main.py:130-133：2 个参数组，分类头 fc 用 10× 学习率；
-    # 该实现未把 WEIGHT_DECAY 传给优化器，这里保持一致。
+    # Deep CORAL 论文：新分类层使用 10× 学习率，momentum=0.9，
+    # weight decay=5e-4。第三方 PyTorch 端口遗漏了 weight_decay，不能作为
+    # 论文公式/配方的依据。
     optimizer = optim.SGD([
         {'params': model.sharedNet.parameters()},
         {'params': model.fc.parameters(), 'lr': 10 * args.lr},
-    ], lr=args.lr, momentum=0.9)
+    ], lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
           f'{[group["lr"] for group in optimizer.param_groups]}')
     criterion = nn.CrossEntropyLoss()

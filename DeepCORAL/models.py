@@ -11,21 +11,26 @@ MODELS
 
 
 def CORAL(source, target):
-    d = source.data.shape[1]
+    """Deep CORAL loss from Sun & Saenko, ECCV 2016, Eq. (1)--(3).
 
-    # source covariance
-    xm = torch.mean(source, 0, keepdim=True) - source
-    xc = xm.t() @ xm
+    ``source`` and ``target`` contain one mini-batch of activations.  The
+    paper aligns the *unbiased covariance matrices*, not the unnormalised
+    scatter matrices.  It then applies the squared Frobenius norm (a sum,
+    not an element-wise mean) and the ``1 / (4 d^2)`` scale.
+    """
+    if source.ndim != 2 or target.ndim != 2:
+        raise ValueError('CORAL expects 2-D tensors shaped [batch, features]')
+    if source.size(1) != target.size(1):
+        raise ValueError('source and target feature dimensions must match')
+    if source.size(0) < 2 or target.size(0) < 2:
+        raise ValueError('CORAL covariance requires at least two samples per domain')
 
-    # target covariance
-    xmt = torch.mean(target, 0, keepdim=True) - target
-    xct = xmt.t() @ xmt
-
-    # frobenius norm between source and target
-    loss = torch.mean(torch.mul((xc - xct), (xc - xct)))
-    loss = loss/(4*d*d)
-
-    return loss
+    d = source.size(1)
+    source_centered = source - source.mean(dim=0, keepdim=True)
+    target_centered = target - target.mean(dim=0, keepdim=True)
+    source_cov = source_centered.t().matmul(source_centered) / (source.size(0) - 1)
+    target_cov = target_centered.t().matmul(target_centered) / (target.size(0) - 1)
+    return (source_cov - target_cov).pow(2).sum() / (4.0 * d * d)
 
 
 class DeepCORAL(nn.Module):

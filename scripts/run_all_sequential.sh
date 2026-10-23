@@ -15,7 +15,7 @@ echo "[1/4] JMDA-Net unsupervised domain adaptation"
 bash "$HERE/scripts/run_server.sh" jmda_uda "$EPOCHS"
 
 echo "[2/4] Original-protocol UDA comparison methods"
-bash "$HERE/scripts/run_server.sh" uda "$EPOCHS"
+bash "$HERE/scripts/run_server.sh" uda
 
 echo "[3/4] MCFT supervised multimodal baseline (reported separately)"
 bash "$HERE/scripts/run_server.sh" supervised "$EPOCHS"

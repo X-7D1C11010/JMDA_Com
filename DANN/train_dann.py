@@ -4,7 +4,7 @@ Source domain: 晴天 (Sunny)
 Target domains: 逆光, 雨天, 雾天, 黑天
 
 Usage:
-    python train_dann.py --target backlight --epochs 3
+    python train_dann.py --target backlight
 
 2026-10-20 变更（见 REPRODUCTION_RECORD.md 第 14 节）：
   * 标签空间以目标域为准（tools/uda_data.py）：只保留目标域存在的类别，分类头
@@ -108,7 +108,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='训练轮数（随附 DANN 参考实现默认 100）')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--data-dir', type=str,

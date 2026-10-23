@@ -919,6 +919,28 @@ python tools/extract_epoch_curves.py \
 - 5 个非 CLIP 方法最小预算冒烟全部正常完成：DeepCORAL/DANN `--epochs 1`；MCC/MDD `--epochs 1 -i 10`（命名空间确认 iters_per_epoch 可配、MDD bottleneck_dim=1024 生效）；CDAN `--num-iterations 12 --test-interval 6`（十裁剪评估正常，ad_net 输入 2304=256×9 确认 random=False 外积分支生效）。冒烟日志均显示目标域类别过滤工作正常（source kept 584/dropped 300，逆光 9 类）。
 - PDA 需下载 CLIP 权重未做运行冒烟，仅编译通过；其 IFT 拆分与超参本轮已对官方源码核对（15.2）。
 
+---
+
+## 16. 2026-10-23 官方公式与独立训练预算修正
+
+本节覆盖第 15 节中后来复核发现不准确的 DeepCORAL 公式判断及统一训练预算。
+
+- **DeepCORAL 公式**：仓库内第三方 PyTorch 端口的 `models.CORAL` 虽然被旧记录
+  当作参考实现，但它使用未除 `n-1` 的散布矩阵，并在矩阵均值后再次除
+  `4d²`，不符合论文 Eq. (1)--(3)。现已改为无偏协方差
+  `centered.T @ centered / (n-1)`，再计算平方 Frobenius **和**并除 `4d²`。
+  batch=32 时，旧实现相对论文公式在 6/8/9 类任务上分别放大约
+  26.69/15.02/11.86 倍。
+- **DeepCORAL 优化器**：恢复论文实验的 `weight_decay=5e-4`，保留新分类层
+  10× 学习率及 momentum=0.9；默认训练轮数改为 20。
+- **独立官方预算**：DANN/MCC/MDD/PDA 默认轮数分别改为 100/20/20/20；
+  CDAN 继续使用 100004 iterations。`run_server.sh` 不再把统一 `EPOCHS=100`
+  传给全部 UDA 基线，而是使用可分别覆盖的 `UDA_*_EPOCHS`。
+- **Windows 六方法入口**：`run_uda_sunny.ps1` 加入 PDA，要求真实 14 类英文名称
+  文件；默认使用上述独立预算。仅当显式传 `-Epochs N` 时，才以统一 N 轮进行
+  冒烟测试（CDAN 仍保持迭代制）。
+- 目标域类别集合裁剪、源域过滤、连续标签重映射及全量 VIS 清单规则均未改变。
+
 
 
 

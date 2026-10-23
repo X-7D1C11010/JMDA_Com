@@ -2,7 +2,7 @@
 # UDA experiments: source = 晴天 (sunny), targets = 逆光/雨天/雾天/黑天
 #
 # Methods (each keeps its ORIGINAL single-modal / multi-modal setting):
-#   DANN, DeepCORAL, CDAN, MDD, MCC   -> all single-modal (VIS), per their own
+#   DANN, DeepCORAL, CDAN, MDD, MCC, PDA -> all single-modal (VIS), per their own
 #   original definitions. No target labels are used during training (UDA).
 #
 # Per target weather the experiment is INDEPENDENT. Each method x target is run
@@ -17,17 +17,24 @@
 #
 # Usage (run from the repo root or anywhere):
 #   powershell -ExecutionPolicy Bypass -File scripts\run_uda_sunny.ps1
-#   powershell -ExecutionPolicy Bypass -File scripts\run_uda_sunny.ps1 -Epochs 5
+#   powershell -ExecutionPolicy Bypass -File scripts\run_uda_sunny.ps1 -Epochs 5  # 冒烟：覆盖各方法轮数
 #   powershell -ExecutionPolicy Bypass -File scripts\run_uda_sunny.ps1 -Seeds 42 -Targets backlight   # quick trial
 # =============================================================================
 param(
-    [int]$Epochs = 20,
+    [int]$Epochs = 0,
     [int[]]$Seeds = @(42, 43, 44, 45, 46),
     [string[]]$Targets = @('backlight', 'rainy', 'foggy', 'dark'),
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
     [string]$DataDir = '',
     [int]$CdanIterations = 100004,
+    [int]$DANNEpochs = 100,
+    [int]$DeepCoralEpochs = 20,
+    [int]$MDDEpochs = 20,
+    [int]$MCCEpochs = 20,
+    [int]$PDAEpochs = 20,
+    [string]$ClassNamesFile = $env:JMDA_CLASS_NAMES_FILE,
+    [string]$ClipCacheDir = '',
     [int]$BenchRepeats = 5,
     [switch]$SkipBenchmark
 )
@@ -47,10 +54,28 @@ $Methods = [ordered]@{
     'CDAN'      = 'CDAN\train_cdan.py'
     'MDD'       = 'MDD\train_mdd.py'
     'MCC'       = 'MCC\train_mcc.py'
+    'PDA'       = 'PDA\train_pda.py'
+}
+
+# 默认使用每种方法发布配方中的训练预算。-Epochs > 0 仅用于用户明确要求的
+# 统一冒烟预算；CDAN 始终使用自己的迭代制参数。
+$MethodEpochs = [ordered]@{
+    'DANN'      = $DANNEpochs
+    'DeepCORAL' = $DeepCoralEpochs
+    'MDD'       = $MDDEpochs
+    'MCC'       = $MCCEpochs
+    'PDA'       = $PDAEpochs
+}
+if ($Epochs -gt 0) {
+    foreach ($name in @($MethodEpochs.Keys)) { $MethodEpochs[$name] = $Epochs }
 }
 
 if (-not (Test-Path $Python)) {
     Write-Host "Python interpreter not found: $Python" -ForegroundColor Red
+    exit 1
+}
+if (-not $ClassNamesFile -or -not (Test-Path -LiteralPath $ClassNamesFile -PathType Leaf)) {
+    Write-Host 'PDA requires a real ordered 14-class English name file. Pass -ClassNamesFile or set JMDA_CLASS_NAMES_FILE.' -ForegroundColor Red
     exit 1
 }
 
@@ -58,7 +83,8 @@ Write-Host "=============================================================="
 Write-Host " UDA experiments  (source = sunny, target = other weathers)"
 Write-Host "--------------------------------------------------------------"
 Write-Host " Python  : $Python"
-Write-Host " Epochs  : $Epochs"
+Write-Host " Epochs  : DANN=$($MethodEpochs.DANN), DeepCORAL=$($MethodEpochs.DeepCORAL), MDD=$($MethodEpochs.MDD), MCC=$($MethodEpochs.MCC), PDA=$($MethodEpochs.PDA)"
+Write-Host " CDAN iters: $CdanIterations"
 Write-Host " Seeds   : $($Seeds -join ', ')"
 Write-Host " Targets : $($Targets -join ', ')"
 Write-Host " Methods : $($Methods.Keys -join ', ')"
@@ -71,7 +97,7 @@ if (-not $SkipBenchmark) {
     $benchLog = Join-Path $LogDir 'benchmark.log'
     $benchScript = Join-Path $Repo 'tools\benchmark_efficiency.py'
     & $Python -B $benchScript `
-        --methods 'dann,deepcoral,cdan,mdd,mcc' `
+        --methods 'dann,deepcoral,cdan,mdd,mcc,pda' `
         --protocol UDA `
         --benchmark_repeats $BenchRepeats `
         --efficiency_output_dir $OutDir *> $benchLog
@@ -95,7 +121,7 @@ foreach ($method in $Methods.Keys) {
             $log = Join-Path $LogDir "$tag.log"
             Write-Host ("[{0}/{1}] {2}  target={3}  seed={4}" -f $idx, $total, $method, $target, $seed)
 
-            # CDAN 按官方配置为迭代制（num_iterations=100004），不用 --epochs
+            # CDAN 按官方配置为迭代制（num_iterations=100004），不用 --epochs。
             if ($method -eq 'CDAN') {
                 & $Python -B $scriptPath `
                     --target $target `
@@ -104,10 +130,20 @@ foreach ($method in $Methods.Keys) {
                     --data-dir $DataDir `
                     --efficiency_output_dir $OutDir `
                     --save-dir $checkpointDir *> $log
+            } elseif ($method -eq 'PDA') {
+                & $Python -B $scriptPath `
+                    --target $target `
+                    --epochs $MethodEpochs[$method] `
+                    --seed $seed `
+                    --data-dir $DataDir `
+                    --efficiency_output_dir $OutDir `
+                    --save-dir $checkpointDir `
+                    --class-names-file $ClassNamesFile `
+                    --clip-cache-dir $ClipCacheDir *> $log
             } else {
                 & $Python -B $scriptPath `
                     --target $target `
-                    --epochs $Epochs `
+                    --epochs $MethodEpochs[$method] `
                     --seed $seed `
                     --data-dir $DataDir `
                     --efficiency_output_dir $OutDir `

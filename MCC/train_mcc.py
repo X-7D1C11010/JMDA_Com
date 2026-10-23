@@ -21,7 +21,7 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
 优化器/调度/超参保持与 tllib 官方示例 mcc.py 完全一致（未做任何改动）。
 
 Usage:
-    python train_mcc.py --target backlight --epochs 3
+    python train_mcc.py --target backlight
 """
 import os
 import sys
@@ -133,7 +133,8 @@ def main():
     parser = argparse.ArgumentParser(description='MCC (tllib) for JMDA-Net dataset')
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--epochs', type=int, default=20,
+                        help='训练轮数（tllib 官方默认 20）')
     parser.add_argument('-b', '--batch-size', default=36, type=int)
     parser.add_argument('--lr', default=0.005, type=float)
     parser.add_argument('--lr-gamma', default=0.001, type=float)
