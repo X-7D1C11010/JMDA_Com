@@ -62,6 +62,19 @@ class ResultProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'English'):
                 load_class_names(path)
 
+    def test_class_names_accept_original_one_based_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'classes.txt'
+            expected = [f'vessel type alpha {index}' for index in range(1, 15)]
+            path.write_text(
+                '\n'.join(
+                    f'{index} {name}'
+                    for index, name in enumerate(expected, start=1)
+                ),
+                encoding='utf-8',
+            )
+            self.assertEqual(load_class_names(path), expected)
+
     def test_per_seed_final_results_are_aggregated(self):
         rows = [
             {

@@ -8,9 +8,10 @@ import re
 def load_class_names(path, expected_count=14):
     """Load ordered English class names without inventing prompts.
 
-    Use either one class name per line (line order is the zero-based label
-    order), or ``<zero-based-label> <class name>``. Blank lines and comments
-    beginning with ``#`` are ignored.
+    Use either one class name per line (line order corresponds to original
+    dataset classes 1..N), ``<zero-based-label> <class name>``, or
+    ``<one-based-label> <class name>``. Blank lines and comments beginning
+    with ``#`` are ignored.
     """
     if not path:
         raise ValueError(
@@ -48,13 +49,18 @@ def load_class_names(path, expected_count=14):
             f"Do not mix indexed and ordered class-name rows in {source}."
         )
     if indexed:
-        expected_labels = list(range(expected_count))
-        if sorted(indexed) != expected_labels:
+        zero_based_labels = list(range(expected_count))
+        one_based_labels = list(range(1, expected_count + 1))
+        actual_labels = sorted(indexed)
+        if actual_labels == zero_based_labels:
+            names = [indexed[label] for label in zero_based_labels]
+        elif actual_labels == one_based_labels:
+            names = [indexed[label] for label in one_based_labels]
+        else:
             raise ValueError(
                 f"Indexed class names in {source} must cover labels "
-                f"0..{expected_count - 1} exactly."
+                f"0..{expected_count - 1} or 1..{expected_count} exactly."
             )
-        names = [indexed[label] for label in expected_labels]
     else:
         names = ordered
 
