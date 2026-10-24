@@ -2,7 +2,7 @@
 # One-click experiments: source = 晴天 (sunny), targets = 逆光/雨天/雾天/黑天
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1
-#   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Epochs 5
+#   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Epochs 5  # 显式统一覆盖（冒烟）
 #   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Methods CCSA,d-SNE
 #   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Seeds 42 -Targets backlight -Methods PDA
 #
@@ -27,7 +27,7 @@
 #                  -> EfficiencyLogger inside each training script
 # =============================================================================
 param(
-    [int]$Epochs = 20,
+    [int]$Epochs = 0,                       # 0 = 各方法官方预算；>0 = 显式统一覆盖
     [string[]]$Seeds = @('42', '43', '44', '45', '46'),
     [string[]]$Targets = @('backlight', 'rainy', 'foggy', 'dark'),
     [string[]]$Methods = @(),                 # empty = all methods below
@@ -37,7 +37,16 @@ param(
     [switch]$SkipBenchmark,
     [int]$TargetLabelsPerClass = 10,          # SDA label budget (CCSA / d-SNE)
     [int]$SdaSeed = 42,                       # seed used by tools/make_sda_lists.py
-    [string]$ClipCacheDir = ''                # PDA: CLIP weight cache ('' = ~/.cache/clip)
+    [string]$ClipCacheDir = '',               # PDA: CLIP weight cache ('' = ~/.cache/clip)
+    [int]$DANNEpochs = 100,
+    [int]$DeepCoralEpochs = 20,
+    [int]$MDDEpochs = 20,
+    [int]$MCCEpochs = 20,
+    [int]$PDAEpochs = 20,
+    [int]$CCSAEpochs = 80,
+    [int]$DSNEEpochs = 20,
+    [int]$MCFTEpochs = 500,
+    [int]$CdanIterations = 100004
 )
 
 $ErrorActionPreference = 'Continue'
@@ -62,6 +71,20 @@ $MethodSpecs = [ordered]@{
                         '--target-labels-per-class', $TargetLabelsPerClass,
                         '--sda-seed', $SdaSeed) }
     'MCFT'      = @{ script = 'MCFT\train_mcft.py';           protocol = 'Supervised'; args = @() }
+}
+
+$MethodEpochs = [ordered]@{
+    'DANN'      = $DANNEpochs
+    'DeepCORAL' = $DeepCoralEpochs
+    'MDD'       = $MDDEpochs
+    'MCC'       = $MCCEpochs
+    'PDA'       = $PDAEpochs
+    'CCSA'      = $CCSAEpochs
+    'd-SNE'     = $DSNEEpochs
+    'MCFT'      = $MCFTEpochs
+}
+if ($Epochs -gt 0) {
+    foreach ($name in @($MethodEpochs.Keys)) { $MethodEpochs[$name] = $Epochs }
 }
 
 # ``powershell -File script.ps1 -Methods CCSA,d-SNE`` binds "CCSA,d-SNE" as ONE
@@ -122,7 +145,11 @@ Write-Host "=============================================================="
 Write-Host " Experiments  (source = sunny, target = other weathers)"
 Write-Host "--------------------------------------------------------------"
 Write-Host " Python   : $Python"
-Write-Host " Epochs   : $Epochs"
+Write-Host (" Epochs   : DANN={0}, DeepCORAL={1}, MDD={2}, MCC={3}, PDA={4}, CCSA={5}, d-SNE={6}, MCFT={7}" -f `
+    $MethodEpochs.DANN, $MethodEpochs.DeepCORAL, $MethodEpochs.MDD,
+    $MethodEpochs.MCC, $MethodEpochs.PDA, $MethodEpochs.CCSA,
+    $MethodEpochs.'d-SNE', $MethodEpochs.MCFT)
+Write-Host " CDAN     : $CdanIterations iterations"
 Write-Host " Seeds    : $($Seeds -join ', ')"
 Write-Host " Targets  : $($Targets -join ', ')"
 Write-Host " Methods  : $($Selected -join ', ')"
@@ -189,10 +216,14 @@ foreach ($method in $Selected) {
 
             $cli = @('-B', $scriptPath,
                      '--target', $target,
-                     '--epochs', $Epochs,
                      '--seed', $seed,
                      '--efficiency_output_dir', $OutDir,
                      '--save-dir', $checkpointDir)
+            if ($method -eq 'CDAN') {
+                $cli += @('--num-iterations', $CdanIterations)
+            } else {
+                $cli += @('--epochs', $MethodEpochs[$method])
+            }
             $cli += $spec['args']
             if ($method -eq 'PDA' -and $ClipCacheDir) {
                 $cli += @('--clip-cache-dir', $ClipCacheDir)

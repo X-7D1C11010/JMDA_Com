@@ -6,7 +6,7 @@ from tools.audit_jmda_label_guided_log import audit_text
 
 class LabelGuidedLogAuditTests(unittest.TestCase):
     def _summary(self):
-        return {
+        summary = {
             "protocol": "LABEL_GUIDED_DA_NO_TARGET_CE",
             "adaptation_protocol": "LABEL_GUIDED_DA",
             "classification_protocol": "UDA",
@@ -26,6 +26,36 @@ class LabelGuidedLogAuditTests(unittest.TestCase):
                 "f1_macro": {"mean": 0.74},
             },
         }
+        run = {
+            "training_total_params": 100,
+            "training_trainable_params": 50,
+            "inference_total_params": 80,
+            "inference_gflops": 1.2,
+            "total_training_time_s": 10.0,
+            "train_epoch_mean_s": 1.0,
+            "inference_latency_mean_ms": 2.0,
+            "inference_latency_p50_ms": 1.9,
+            "inference_latency_p95_ms": 2.2,
+            "inference_throughput_samples_s": 500.0,
+            "peak_train_allocated_gb": 2.0,
+            "peak_train_reserved_gb": 3.0,
+            "peak_inference_allocated_gb": 1.0,
+            "peak_inference_reserved_gb": 1.5,
+            "inference_data_loading_included": False,
+            "flops_convention": "1 MAC = 2 FLOPs",
+        }
+        summary["efficiency"] = {
+            "enabled": True,
+            "per_iteration": [run],
+            "aggregate": {
+                key: {"values": [value], "mean": value, "std": 0.0}
+                for key, value in run.items()
+                if isinstance(value, (int, float)) and value > 0
+            },
+            "summary_json": "/tmp/summary.json",
+            "runs_csv": "/tmp/runs.csv",
+        }
+        return summary
 
     def _log(self, target_loss="0.0000", balanced="True"):
         return (
@@ -47,6 +77,20 @@ class LabelGuidedLogAuditTests(unittest.TestCase):
         summary, errors = audit_text(self._log(), 1)
         self.assertEqual(errors, [])
         self.assertEqual(summary["protocol"], "LABEL_GUIDED_DA_NO_TARGET_CE")
+
+    def test_valid_efficiency_evidence_passes(self):
+        _, errors = audit_text(self._log(), 1, require_efficiency=True)
+        self.assertEqual(errors, [])
+
+    def test_missing_efficiency_evidence_is_rejected(self):
+        summary = self._summary()
+        summary.pop("efficiency")
+        text = self._log().replace(
+            json.dumps(self._summary()),
+            json.dumps(summary),
+        )
+        _, errors = audit_text(text, 1, require_efficiency=True)
+        self.assertTrue(any("efficiency summary" in item for item in errors))
 
     def test_target_ce_is_rejected(self):
         _, errors = audit_text(self._log(target_loss="0.2"), 1)

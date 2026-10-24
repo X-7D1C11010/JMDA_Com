@@ -55,10 +55,10 @@ def _make_ir_input(bs, device):
 def _make_ais_input(bs, device, dim=23040):
     return torch.randn(bs, dim, device=device)
 
-def _make_mcft_patch(bs, device):
+def _make_mcft_patch(bs, device, channels=3):
     """MCFT's architecture contract: tokens are a patch_size x patch_size grid
     (15x15), which is what the released model reshapes its position embedding to."""
-    return torch.randn(bs, 3, 15, 15, device=device)
+    return torch.randn(bs, channels, 15, 15, device=device)
 
 def _load_module_from_file(module_name, path):
     """Load a .py file as a module; needed for d-SNE/ whose directory name is not
@@ -180,20 +180,21 @@ def adapter_mcc():
 
 # ── CCSA (SDA) ───────────────────────────────────────────────────────────────
 def adapter_ccsa():
-    from CCSA.train_ccsa import CCSA, build_pairs, euclidean_distance, contrastive_loss
+    from CCSA.train_ccsa import CCSA, euclidean_distance, contrastive_loss
     def build():
-        return CCSA(num_classes=14)
+        return CCSA(num_classes=NUM_CLASSES)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         tgt = _make_vis_input(inp.size(0), inp.device)
         logits_s, logits_t, f_s, f_t = model(inp, tgt)
-        labels_s = torch.randint(0, 14, (inp.size(0),), device=inp.device)
-        labels_t = torch.randint(0, 14, (inp.size(0),), device=inp.device)
-        si, ti, yc = build_pairs(labels_s, labels_t)
-        distance = euclidean_distance(f_s[si], f_t[ti])
-        ce = 0.5 * (nn.CrossEntropyLoss()(logits_s, labels_s) +
-                    nn.CrossEntropyLoss()(logits_t, labels_t))
+        labels_s = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
+        labels_t = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
+        yc = labels_s.eq(labels_t).float()
+        distance = euclidean_distance(f_s, f_t)
+        # One released source-side update; the training entry point performs
+        # the corresponding target-side update immediately afterwards.
+        ce = nn.CrossEntropyLoss()(logits_s, labels_s)
         return 0.75 * ce + 0.25 * contrastive_loss(yc, distance)
     return {'name':'CCSA','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
@@ -204,19 +205,19 @@ def adapter_dsne():
     mod = _load_module_from_file('dsne_train_module',
                                  os.path.join(PROJ, 'd-SNE', 'train_dsne.py'))
     def build():
-        return mod.DSNE(num_classes=14)
+        return mod.DSNE(num_classes=NUM_CLASSES)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
         tgt = _make_vis_input(inp.size(0), inp.device)
-        labels_s = torch.randint(0, 14, (inp.size(0),), device=inp.device)
-        labels_t = torch.randint(0, 14, (inp.size(0),), device=inp.device)
+        labels_s = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
+        labels_t = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
         logits_s, f_s = model(inp, return_embedding=True)
         logits_t, f_t = model(tgt, return_embedding=True)
-        xent = 0.5 * (nn.CrossEntropyLoss()(logits_s, labels_s) +
-                      nn.CrossEntropyLoss()(logits_t, labels_t))
-        aux = 0.5 * (mod.dsne_loss(f_s, labels_s, f_t, labels_t) +
-                     mod.dsne_loss(f_t, labels_t, f_s, labels_s))
+        # Released default: target CE plus target->source d-SNE.  The optional
+        # source update is enabled only by train_dsne.py --train-src.
+        xent = nn.CrossEntropyLoss()(logits_t, labels_t)
+        aux = mod.dsne_loss(f_t, labels_t, f_s, labels_s)
         return 0.9 * xent + 0.1 * aux
     return {'name':'d-SNE','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
@@ -226,11 +227,14 @@ def adapter_dsne():
 def adapter_mcft():
     from MCFT.train_mcft import build_model
     def build():
-        return build_model()
+        return build_model(NUM_CLASSES)
     def make_input(bs, device):
-        return {'vis': _make_mcft_patch(bs, device), 'ir': _make_mcft_patch(bs, device)}
+        return {
+            'vis': _make_mcft_patch(bs, device, channels=3),
+            'ir': _make_mcft_patch(bs, device, channels=1),
+        }
     def forward_loss(model, inp):
-        labels = torch.randint(0, 14, (inp['vis'].size(0),), device=inp['vis'].device)
+        labels = torch.randint(0, NUM_CLASSES, (inp['vis'].size(0),), device=inp['vis'].device)
         logits, loss_ita, loss_itm = model(inp['vis'], inp['ir'], labels)
         return nn.CrossEntropyLoss()(logits, labels) + 0.1 * loss_ita + loss_itm
     def forward_infer(model, inp):
@@ -242,7 +246,7 @@ def adapter_mcft():
     return {'name':'MCFT','group':'multimodal','modalities':'VIS+IR',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'forward_infer':forward_infer,
-            'vis_shape':'(1,3,15,15)','ir_shape':'(1,3,15,15)'}
+            'vis_shape':'(1,3,15,15)','ir_shape':'(1,1,15,15)'}
 
 # ── PDA (UDA, CLIP) ──────────────────────────────────────────────────────────
 def adapter_pda():
@@ -387,7 +391,7 @@ BACKBONE_INFO = {
     'mdd':            ('ResNet-18', 'ImageNet'),
     'mcc':            ('ResNet-18', 'ImageNet'),
     'ccsa':           ('CCSA-CNN (conv 32x2 + fc120/fc84)', 'None (from scratch)'),
-    'dsne':           ('ResNet-18 (original: mxnet ResNet-101)', 'ImageNet'),
+    'dsne':           ('ResNetV2-101 + released 4096/512 head', 'None by default'),
     'mcft':           ('MCFT MViT (patch 15x15, dim=64)', 'None (from scratch)'),
     'pda':            ('CLIP ViT-B/16 + PDA prompts', 'CLIP zero-shot'),
     'jmda_baseline':  ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
@@ -799,7 +803,7 @@ def main():
         ('MDD', 'MDD/train_mdd.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
         ('MCC', 'MCC/train_mcc.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
         ('CCSA', 'CCSA/train_ccsa.py', 'CCSA-CNN (Keras port)', 'ImageListDataset (VIS, SDA subset)'),
-        ('d-SNE', 'd-SNE/train_dsne.py', 'DSNE(ResNet-18 + 512 embed)', 'ImageListDataset (VIS, SDA subset)'),
+        ('d-SNE', 'd-SNE/train_dsne.py', 'DSNE(ResNetV2-101 + 512 embed)', 'Paired source/target table (VIS, SDA)'),
         ('MCFT', 'MCFT/train_mcft.py', 'MViT (VIS+IR)', 'PairedVisIrDataset (VIS+IR, 15x15)'),
         ('PDA', 'PDA/train_pda.py', 'CustomCLIP(ViT-B/16)', 'ImageListDataset (VIS)'),
         ('JMDA-Net', os.path.join(JMDA_NET_DIR, 'Ablation', 'module_ablation.py'),

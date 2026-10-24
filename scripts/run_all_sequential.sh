@@ -6,6 +6,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The positional budget applies only to JMDA-Net.  Comparison methods keep
+# their independently released budgets; MCFT therefore defaults to 500.
 EPOCHS="${1:-100}"
 PYTHON="${PYTHON:-python}"
 export PYTHON
@@ -18,7 +20,7 @@ echo "[2/4] Original-protocol UDA comparison methods"
 bash "$HERE/scripts/run_server.sh" uda
 
 echo "[3/4] MCFT supervised multimodal baseline (reported separately)"
-bash "$HERE/scripts/run_server.sh" supervised "$EPOCHS"
+bash "$HERE/scripts/run_server.sh" supervised
 
 if [ "${RUN_EFFICIENCY:-1}" = "1" ]; then
   echo "[4/4] Unified efficiency benchmark"

@@ -31,10 +31,12 @@ from Ablation.module_ablation import (
     infer_prototype_pseudo_labels,
     is_uda_source_warmup,
     map_oracle_labels_to_pair_manifest,
+    measure_final_model_efficiency,
     reported_protocol,
     select_report_metrics,
     set_frozen_batchnorm_eval,
     transport_projected_feature_basis,
+    write_iteration_efficiency_artifacts,
 )
 from Ablation.paired_dataset import (
     LabelFreePairedTargetDataset,
@@ -98,6 +100,29 @@ class _FeatureOnlyTargetDataset(_FeatureDataset):
             "vis": base,
             "ir": torch.flip(base, dims=(0,)),
         }
+
+
+class _TinyImageDataset:
+    def __len__(self):
+        return 2
+
+    def __getitem__(self, index):
+        return {
+            "vis": torch.full((3, 2, 2), float(index)),
+            "ir": torch.full((3, 2, 2), float(index + 1)),
+            "label": torch.tensor(index % 2, dtype=torch.long),
+        }
+
+
+class _TinyTal(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("vis_projection", torch.eye(4, 2))
+        self.register_buffer("ir_projection", torch.eye(4, 2))
+
+    @property
+    def V_matrices(self):
+        return [self.vis_projection, self.ir_projection]
 
 
 class _PrototypeDataset:
@@ -1636,6 +1661,57 @@ class SinkhornTransportTests(unittest.TestCase):
         off_class = labels[:, None].ne(labels[None, :])
         self.assertEqual(float(plan.masked_select(off_class).sum()), 0.0)
         self.assertLess(float(details["marginal_residual"]), 2e-4)
+
+
+class EfficiencyEvidenceTests(unittest.TestCase):
+    def test_exact_inference_graph_records_flops_latency_and_artifacts(self):
+        device = torch.device("cpu")
+        net_vis = nn.Sequential(nn.Flatten(), nn.Linear(12, 4), nn.ReLU())
+        net_ir = nn.Sequential(nn.Flatten(), nn.Linear(12, 4), nn.ReLU())
+        tal = _TinyTal()
+        classifier = nn.Linear(4, 2)
+        generator = nn.Linear(4, 4)
+        discriminator = nn.Linear(4, 3)
+        loader = torch.utils.data.DataLoader(_TinyImageDataset(), batch_size=2)
+
+        metrics = measure_final_model_efficiency(
+            net_vis=net_vis,
+            net_ir=net_ir,
+            tal_module=tal,
+            generator=generator,
+            classifier=classifier,
+            discriminator=discriminator,
+            val_loader=loader,
+            device=device,
+            use_tensor_module=True,
+            warmup_iterations=1,
+            benchmark_iterations=3,
+            require_flops=True,
+        )
+        self.assertGreater(metrics["training_total_params"], 0)
+        self.assertGreater(metrics["training_trainable_params"], 0)
+        self.assertGreater(metrics["inference_gflops"], 0)
+        self.assertGreater(metrics["inference_latency_mean_ms"], 0)
+        self.assertGreater(metrics["inference_throughput_samples_s"], 0)
+        self.assertFalse(metrics["inference_data_loading_included"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            json_path, csv_path = write_iteration_efficiency_artifacts(
+                output_dir=directory,
+                target_weather="逆光",
+                seed=42,
+                protocol="LABEL_GUIDED_DA_NO_TARGET_CE",
+                epoch_records=[{
+                    "epoch": 1,
+                    "epoch_time_s": 1.0,
+                    "svd_update_time_s": 0.2,
+                    "peak_allocated_gb": 0.0,
+                    "peak_reserved_gb": 0.0,
+                }],
+                metrics=metrics,
+            )
+            self.assertTrue(Path(json_path).is_file())
+            self.assertTrue(Path(csv_path).is_file())
 
 
 if __name__ == "__main__":

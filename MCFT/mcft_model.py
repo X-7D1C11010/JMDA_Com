@@ -23,9 +23,9 @@ mlp_dim=32, dropout=0.1, emb_dropout=0.1 and loss
 
 Faithfulness notes -- deviations are listed explicitly:
 
-  * ``einops.rearrange`` / ``timm`` / ``scipy.stats`` are gone: the port uses
-    plain ``reshape``/``permute`` and ``torch.nn.init.trunc_normal_`` so that no
-    new dependency is required.  The tensor algebra itself is unchanged.
+  * ``einops.rearrange`` / unused ``timm`` / ``scipy.stats`` imports are gone:
+    the port uses plain ``reshape``/``permute`` and keeps PyTorch's released
+    parameter initialisation, so no extra dependency is required.
   * The release hardcodes the 15x15 reshape in ``get_position_embedding`` and
     the centre index ``(7, 7)`` at its call site.  Both are rewritten in terms
     of the actual token count / patch size, which for patch_size = 15 gives the
@@ -47,8 +47,10 @@ Faithfulness notes -- deviations are listed explicitly:
   * Negative mining.  The release calls ``torch.multinomial(weights[b], 1)``
     per row; rows whose weights are entirely zero (duplicate labels inside a
     batch -- always the case at batch size 1) raise a RuntimeError.  Such rows
-    fall back to a uniform draw so that the benchmark's batch-1 inference path
-    and small-batch training both run.  Row weights are otherwise untouched.
+    fall back to a uniformly chosen different-label item when one exists, so
+    the intended ITM negative semantics are retained.  If an entire batch has
+    one class, a uniform item is the only non-crashing fallback.  Non-degenerate
+    row weights are untouched.
   * ``mlp_head0`` squeeze is applied on the last axis only, so batch size 1
     (used by the efficiency benchmark) does not collapse the token axis.  For
     all batch sizes > 1 this is identical to the release's ``torch.squeeze``.
@@ -257,7 +259,6 @@ class MViT(nn.Module):
             nn.Linear(dim, num_classes),
         )
         self.pixel_pos_embedding_relative = nn.Parameter(torch.randn(patch_size * patch_size, dim))
-        nn.init.trunc_normal_(self.pixel_pos_embedding_relative, std=.02)
 
         self.alpha = 0.7
 
@@ -275,19 +276,26 @@ class MViT(nn.Module):
         return self.pixel_pos_embedding_relative[pos_index, :]
 
     @staticmethod
-    def _sample_negative(weights, fallback_size):
+    def _sample_negative(weights, eligible_mask):
         """Pick one index per row; rows whose weights collapsed to zero fall
-        back to a uniform draw (the release calls ``torch.multinomial`` directly
-        and crashes on such rows)."""
+        back to a different-label item when available."""
         idx = []
-        for row in weights:
+        for row, eligible in zip(weights, eligible_mask):
             if float(row.sum()) > 0:
                 idx.append(int(torch.multinomial(row, 1).item()))
             else:
-                idx.append(int(torch.randint(0, max(fallback_size, 1), (1,), device=row.device).item()))
+                candidates = eligible.nonzero(as_tuple=False).flatten()
+                if candidates.numel():
+                    selected = candidates[
+                        torch.randint(candidates.numel(), (1,), device=row.device)
+                    ]
+                    idx.append(int(selected.item()))
+                else:
+                    idx.append(int(torch.randint(row.numel(), (1,), device=row.device).item()))
         return torch.tensor(idx, device=weights.device, dtype=torch.long)
 
-    def forward(self, x1, x2, label, mask=None):
+    def forward(self, x1, x2, label=None, mask=None, return_features=False,
+                compute_auxiliary=True):
         # ── multimodal tokenisation ─────────────────────────────────────────
         x1 = self.separable1(x1).flatten(2).transpose(1, 2)
         x1 = self.to_patch_embedding2(x1)
@@ -330,7 +338,19 @@ class MViT(nn.Module):
         xs = torch.einsum('bn,bnd->bd', xs, x)
         logits = self.mlp_head1(xs)
 
+        # Classification does not require labels.  This path is used for
+        # validation/test inference so ground-truth labels never enter the
+        # model computation.  The two zero scalars only preserve the public
+        # return signature expected by wrappers.
+        if not compute_auxiliary:
+            zero = logits.new_zeros(())
+            if return_features:
+                return logits, zero, zero, xs
+            return logits, zero, zero
+
         # ── ITM with ALBEF-style hard negative mining ───────────────────────
+        if label is None:
+            raise ValueError('label is required when compute_auxiliary=True')
         bs = x1.size(0)
         weights_i2t = torch.nn.functional.softmax(logits_per_image[:, :bs], dim=1)
         weights_t2i = torch.nn.functional.softmax(logits_per_text[:, :bs], dim=1)
@@ -347,8 +367,9 @@ class MViT(nn.Module):
         weights_i2t = weights_i2t.masked_fill(matrix == 0, 0)
         weights_t2i = weights_t2i.masked_fill(matrix == 0, 0)
 
-        neg_idx_i = self._sample_negative(weights_t2i, bs)
-        neg_idx_t = self._sample_negative(weights_i2t, bs)
+        eligible_negatives = ~same
+        neg_idx_i = self._sample_negative(weights_t2i, eligible_negatives)
+        neg_idx_t = self._sample_negative(weights_i2t, eligible_negatives)
         image_embeds_neg = x1[neg_idx_i]
         text_embeds_neg = x2[neg_idx_t]
 
@@ -366,6 +387,8 @@ class MViT(nn.Module):
         ], dim=0)
         loss_itm = torch.nn.functional.cross_entropy(vl_output, itm_labels)
 
+        if return_features:
+            return logits, loss_ita, loss_itm, xs
         return logits, loss_ita, loss_itm
 
 

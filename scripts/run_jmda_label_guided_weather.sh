@@ -21,7 +21,7 @@ RUN_INVARIANTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 BATCH_SIZE=32
 PROJECTION_DIM=64
 SVD_BATCH_SIZE=128
-EXPECTED_CODE_FINGERPRINT="83cf8634a962df2f"
+EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"
 
 if ! [[ "$EPOCHS" =~ ^[1-9][0-9]*$ ]] || (( EPOCHS < 25 )); then
   echo "完整流程至少需要25轮（10轮源域预热+10轮Tensor/SVD+5轮OT爬升）: $EPOCHS"
@@ -60,8 +60,9 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 RUN_ROOT="$HERE/server_logs/jmda_label_guided/$RUN_ID"
 LIST_ROOT="$HERE/prepared_lists/jmda_label_guided_$RUN_ID"
 CHECKPOINT_ROOT="$HERE/checkpoints/jmda_label_guided/$RUN_ID"
+EFFICIENCY_ROOT="$HERE/efficiency_results/jmda_label_guided/$RUN_ID"
 TRAIN_LOG="$RUN_ROOT/${TARGET}_label_guided_tensor_ot.log"
-mkdir -p "$RUN_ROOT" "$LIST_ROOT" "$CHECKPOINT_ROOT"
+mkdir -p "$RUN_ROOT" "$LIST_ROOT" "$CHECKPOINT_ROOT" "$EFFICIENCY_ROOT"
 
 echo "[OK] JMDA reviewed code fingerprint: $ACTUAL_CODE_FINGERPRINT"
 echo "protocol=LABEL_GUIDED_DA_NO_TARGET_CE"
@@ -139,13 +140,19 @@ SUPPORT="$(
     --no_sync_discriminator_lr \
     --report_strategy last \
     --checkpoint_dir "$CHECKPOINT_ROOT" \
+    --efficiency_output_dir "$EFFICIENCY_ROOT" \
+    --efficiency_warmup_iterations 20 \
+    --efficiency_benchmark_iterations 100 \
+    --require_efficiency_flops \
     --no_auto_ablation_hparams
 ) 2>&1 | tee "$TRAIN_LOG"
 
 "$PYTHON" "$HERE/tools/audit_jmda_label_guided_log.py" \
   --log "$TRAIN_LOG" \
-  --expected-iterations "$NUM_ITERATIONS"
+  --expected-iterations "$NUM_ITERATIONS" \
+  --require-efficiency
 
 echo "[OK] label-guided one-weather run completed"
 echo "training_log=$TRAIN_LOG"
 echo "checkpoints=$CHECKPOINT_ROOT"
+echo "efficiency=$EFFICIENCY_ROOT"

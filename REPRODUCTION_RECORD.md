@@ -1,5 +1,25 @@
 # 域适应方法在 JMDA-Net 数据集上的复现操作记录
 
+VDS2Raw v2 的独立三模态跨日协议、训练入口和输出说明见
+[`VDS2RAW_PROTOCOL.md`](VDS2RAW_PROTOCOL.md)。
+
+## CCSA / d-SNE / MCFT 顺序训练入口
+
+三种官方方法移植版可以用一个命令按 `CCSA -> d-SNE -> MCFT` 的顺序训练、
+记录并汇总：
+
+```bash
+export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data
+bash scripts/run_ccsa_dsne_mcft_background.sh formal
+```
+
+将 `formal` 换成 `smoke` 可执行“一轮、一批次”的端到端预检。可通过
+`JMDA_TARGETS` 选择目标天气，通过 `JMDA_SEEDS` 指定训练随机种子。默认源域为
+晴天、目标域为全部四种天气、训练种子为 42；CCSA 和 d-SNE 固定共享 10-shot、
+seed 42 的有标签目标子集。每个运行目录保存原始日志、模型、逐轮指标 CSV/JSON、
+效率记录、总表 `results/runs.csv` 以及按协议生成的 CSV/Markdown 汇总。三种方法
+均不需要真实类别名称文件 `class.txt`。
+
 ## 1. 任务概述
 
 本任务在 JMDA-Net 跨天气场景数据集上完成对比方法的代码下载、数据适配、冒烟测试与结果记录。
@@ -712,7 +732,7 @@ python tools/extract_epoch_curves.py \
 
 **接入范围**：`DANN/train_dann.py`、`DeepCORAL/train_deepcoral.py`、`CDAN/train_cdan.py`、`MDD/train_mdd.py`、`MCC/train_mcc.py`、`PDA/train_pda.py`（这 6 个是 UDA 协议）。每处原有的本地 `ImageListDataset` 类已删除，改用 `uda_data` 的类；`classification_metrics(...)` 调用改为显式传入 `num_classes=|T|`（否则默认 14 的范围校验会拒绝）。PDA 的 CLIP 占位类名由 `class_1..class_14` 改为 `class_1..class_{|T|}`。
 
-**未接入**：`CCSA`、`d-SNE`（SDA 协议，用带标签的目标域子集，标签空间未变）、`MCFT`（VIS+IR 监督分类）、各 `*_sda.py` 变体。这些方法的训练代码与结果本次**完全未改动**。
+**当时未接入**：`CCSA`、`d-SNE`、`MCFT` 与各 `*_sda.py` 变体。CCSA、d-SNE、MCFT 后续已在第17节接入同一目标驱动标签空间；本句只描述第14节改动发生时的状态。
 
 **可比性提醒**：过滤后各目标域的类别数不同（6/8/9/9），因此**跨目标域的准确率绝对值不能直接比较**，随机基线也不同；与第 8 节、第 13.2 节的历史数值不可直接对比。
 
@@ -940,6 +960,34 @@ python tools/extract_epoch_curves.py \
   文件；默认使用上述独立预算。仅当显式传 `-Epochs N` 时，才以统一 N 轮进行
   冒烟测试（CDAN 仍保持迭代制）。
 - 目标域类别集合裁剪、源域过滤、连续标签重映射及全量 VIS 清单规则均未改变。
+
+---
+
+## 17. 2026-10-23 CCSA、d-SNE、MCFT 官方训练逻辑修正
+
+经重新逐项对照三个官方仓库，修复此前仅保留核心损失/网络、但训练协议不等价的问题：
+
+- **共同数据口径**：三者均调用 `uda_label_space(data_dir, target)`，按目标天气
+  train∪val 的类别支持过滤晴天源域并紧凑重映射标签；分类头宽度改为 `|T|`。
+- **CCSA**：恢复全训练池穷举正样本对、3:1负样本对；pair表只在训练前生成并
+  打乱；每个pair batch严格执行“源分支CE+CSA更新一次，再反转同一批pair执行
+  目标分支CE+CSA更新一次”；Adadelta参数恢复Keras默认语义
+  `lr=1, rho=0.95, eps=1e-7`，默认80轮、pair batch=256。
+- **d-SNE**：恢复官方默认预激活ResNetV2-101与4096→512 embedding head；恢复穷举正样本
+  对及1:1负样本对；默认只执行“目标CE + 目标→源d-SNE”更新，只有显式
+  `--train-src`才增加官方可选的源方向更新；默认20轮、batch=32、SGD配置不变。
+- **MCFT**：维持官方MViT、ITA、ITM以及`CE+0.1*ITA+ITM`；输入明确映射为
+  VIS RGB三通道与IR灰度单通道（对应官方HSI多通道+LiDAR单通道的可用数据适配），
+  取消非官方默认水平翻转和ImageNet归一化；默认500轮、每10轮评估、Adam与StepLR
+  恢复官方配方。MCFT仍是源域监督多模态分类，不宣称为域适应。
+- **评价指标保存**：新增 `tools/metrics_io.py`。每个目标域都会在checkpoint目录写
+  `<method>_<target>_seed<seed>_metrics.csv` 与同名JSON，显式保存 ACC、macro Precision、
+  macro Recall、macro F1、末次结果、ACC最佳轮及完整评估历史；同时保存last/best模型。
+- **启动预算**：`run_server.sh sda` 未显式传轮数时为CCSA/d-SNE分别使用80/20；
+  `run_server.sh supervised` 默认MCFT 500轮。第二个位置参数或对应环境变量仍可覆盖。
+
+验证：Python语法编译通过；12项协议/结果单元测试通过；CCSA双更新、d-SNE官方默认
+方向更新、MCFT VIS3+IR1 的前向与反向传播均通过；Git Bash `bash -n`检查通过。
 
 
 

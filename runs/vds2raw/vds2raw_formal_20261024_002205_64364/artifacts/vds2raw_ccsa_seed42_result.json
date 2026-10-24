@@ -1,0 +1,67 @@
+{
+  "protocol": "cross-day supervised domain adaptation",
+  "model_selection": "best target_val ACC, macro-F1 tie-break",
+  "test_evaluations": 1,
+  "selected_epoch": 6,
+  "target_val": {
+    "accuracy": 0.5357142857142857,
+    "precision_macro": 0.36410256410256414,
+    "recall_macro": 0.47321428571428575,
+    "f1_macro": 0.3887147335423198,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28
+  },
+  "target_test": {
+    "accuracy": 0.5454545454545454,
+    "precision_macro": 0.505982905982906,
+    "recall_macro": 0.5005347593582887,
+    "f1_macro": 0.5013888888888889,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 33
+  },
+  "metadata": {
+    "method": "CCSA",
+    "seed": 42,
+    "epochs": 80,
+    "data_root": "D:\\Downloads\\VDS2Raw\\threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "selection_partition": "target_val",
+    "final_partition": "target_test",
+    "modalities": [
+      "RGB"
+    ],
+    "num_classes": 3,
+    "pair_protocol": "all positives + 3x negatives; source and target updates",
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted on source_train + target_train only"
+    }
+  },
+  "validation_history_csv": "D:\\Code\\JMDA_Com\\runs\\vds2raw\\vds2raw_formal_20261024_002205_64364\\artifacts\\vds2raw_ccsa_seed42_target_val_metrics.csv",
+  "validation_history_json": "D:\\Code\\JMDA_Com\\runs\\vds2raw\\vds2raw_formal_20261024_002205_64364\\artifacts\\vds2raw_ccsa_seed42_target_val_metrics.json"
+}

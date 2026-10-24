@@ -1,7 +1,9 @@
 import os
+import csv
 import json
 import math
 import hashlib
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -148,6 +150,371 @@ def training_code_fingerprint():
 
 def count_trainable_parameters(module):
     return sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad)
+
+
+def _cuda_synchronize(device):
+    if device.type == 'cuda':
+        torch.cuda.synchronize(device)
+
+
+def _unique_model_statistics(modules):
+    """Count each shared parameter/buffer exactly once across several modules."""
+    parameters = {}
+    buffers = {}
+    for module in modules:
+        if module is None:
+            continue
+        for parameter in module.parameters():
+            parameters.setdefault(id(parameter), parameter)
+        for buffer in module.buffers():
+            buffers.setdefault(id(buffer), buffer)
+    parameter_values = list(parameters.values())
+    buffer_values = list(buffers.values())
+    return {
+        'total_params': int(sum(value.numel() for value in parameter_values)),
+        'trainable_params': int(sum(
+            value.numel() for value in parameter_values if value.requires_grad
+        )),
+        'parameter_bytes': int(sum(
+            value.numel() * value.element_size() for value in parameter_values
+        )),
+        'buffer_elements': int(sum(value.numel() for value in buffer_values)),
+        'buffer_bytes': int(sum(
+            value.numel() * value.element_size() for value in buffer_values
+        )),
+    }
+
+
+class _JMDAInferenceGraph(nn.Module):
+    """Exact target-side inference graph used for FLOPs/latency measurement."""
+
+    def __init__(self, net_vis, net_ir, tal_module, classifier,
+                 use_tensor_module):
+        super().__init__()
+        self.net_vis = net_vis
+        self.net_ir = net_ir
+        self.classifier = classifier
+        self.use_tensor_module = bool(use_tensor_module)
+        if self.use_tensor_module:
+            vis_projection = tal_module.V_matrices[0].detach()
+            ir_projection = tal_module.V_matrices[1].detach()
+            self.vis_projection = nn.Linear(
+                vis_projection.shape[0], vis_projection.shape[1], bias=False
+            ).to(device=vis_projection.device, dtype=vis_projection.dtype)
+            self.ir_projection = nn.Linear(
+                ir_projection.shape[0], ir_projection.shape[1], bias=False
+            ).to(device=ir_projection.device, dtype=ir_projection.dtype)
+            with torch.no_grad():
+                self.vis_projection.weight.copy_(vis_projection.transpose(0, 1))
+                self.ir_projection.weight.copy_(ir_projection.transpose(0, 1))
+            self.vis_projection.requires_grad_(False)
+            self.ir_projection.requires_grad_(False)
+
+    def forward(self, vis_input, ir_input):
+        vis_features = self.net_vis(vis_input)
+        ir_features = self.net_ir(ir_input)
+        if self.use_tensor_module:
+            vis_features = self.vis_projection(vis_features)
+            ir_features = self.ir_projection(ir_features)
+        return self.classifier(torch.cat([vis_features, ir_features], dim=1))
+
+
+def _remove_thop_buffers(module):
+    for child in module.modules():
+        for name in ('total_ops', 'total_params'):
+            if name in child._buffers:
+                del child._buffers[name]
+
+
+@torch.no_grad()
+def measure_final_model_efficiency(
+    *,
+    net_vis,
+    net_ir,
+    tal_module,
+    generator,
+    classifier,
+    discriminator,
+    val_loader,
+    device,
+    use_tensor_module,
+    warmup_iterations,
+    benchmark_iterations,
+    require_flops,
+):
+    """Measure the trained model without including data-loading latency.
+
+    FLOPs and latency cover the deployed target-side inference graph only.
+    Generator, discriminator and Sinkhorn are training-only and are included
+    in training parameter/memory/time statistics instead.
+    """
+    training_modules = [
+        net_vis,
+        net_ir,
+        tal_module,
+        generator,
+        classifier,
+        discriminator,
+    ]
+    inference_modules = [net_vis, net_ir, classifier]
+    training_stats = _unique_model_statistics(training_modules)
+    inference_stats = _unique_model_statistics(inference_modules)
+    if use_tensor_module:
+        target_projection_buffers = list(tal_module.V_matrices)
+        inference_stats['buffer_elements'] += int(sum(
+            value.numel() for value in target_projection_buffers
+        ))
+        inference_stats['buffer_bytes'] += int(sum(
+            value.numel() * value.element_size()
+            for value in target_projection_buffers
+        ))
+
+    try:
+        sample = next(iter(val_loader))
+    except StopIteration as error:
+        raise RuntimeError(
+            'Cannot benchmark inference with an empty validation loader.'
+        ) from error
+    vis_input = sample['vis'][:1].to(device)
+    ir_input = sample['ir'][:1].to(device)
+
+    graph = _JMDAInferenceGraph(
+        net_vis=net_vis,
+        net_ir=net_ir,
+        tal_module=tal_module,
+        classifier=classifier,
+        use_tensor_module=use_tensor_module,
+    ).to(device)
+    graph.eval()
+
+    macs = None
+    flops_error = None
+    try:
+        from thop import profile
+        macs_value, _ = profile(
+            graph,
+            inputs=(vis_input, ir_input),
+            verbose=False,
+        )
+        macs = int(round(float(macs_value)))
+    except Exception as error:  # pragma: no cover - depends on server packages
+        flops_error = f'{type(error).__name__}: {error}'
+        if require_flops:
+            raise RuntimeError(
+                'FLOPs profiling failed; install/repair thop before the formal run: '
+                + flops_error
+            ) from error
+    finally:
+        _remove_thop_buffers(graph)
+
+    for _ in range(warmup_iterations):
+        graph(vis_input, ir_input)
+    _cuda_synchronize(device)
+    baseline_inference_allocated = (
+        torch.cuda.memory_allocated(device) if device.type == 'cuda' else 0
+    )
+    baseline_inference_reserved = (
+        torch.cuda.memory_reserved(device) if device.type == 'cuda' else 0
+    )
+    if device.type == 'cuda':
+        torch.cuda.reset_peak_memory_stats(device)
+
+    latencies_ms = []
+    for _ in range(benchmark_iterations):
+        _cuda_synchronize(device)
+        started = time.perf_counter()
+        graph(vis_input, ir_input)
+        _cuda_synchronize(device)
+        latencies_ms.append((time.perf_counter() - started) * 1000.0)
+
+    latency_array = np.asarray(latencies_ms, dtype=np.float64)
+    process_peak_inference_allocated = (
+        torch.cuda.max_memory_allocated(device) if device.type == 'cuda' else 0
+    )
+    process_peak_inference_reserved = (
+        torch.cuda.max_memory_reserved(device) if device.type == 'cuda' else 0
+    )
+    latency_mean = float(latency_array.mean())
+    gib = float(1024 ** 3)
+    inference_state_bytes = (
+        inference_stats['parameter_bytes'] + inference_stats['buffer_bytes']
+    )
+    # Optimizer state and training-only modules remain alive while the final
+    # checkpoint is prepared.  Subtract that process baseline and add back the
+    # deployed inference state, otherwise "inference memory" would incorrectly
+    # include Adam, TransNet and the discriminator.
+    incremental_inference_allocated = max(
+        process_peak_inference_allocated - baseline_inference_allocated,
+        0,
+    )
+    incremental_inference_reserved = max(
+        process_peak_inference_reserved - baseline_inference_reserved,
+        0,
+    )
+    peak_inference_allocated = (
+        inference_state_bytes + incremental_inference_allocated
+    )
+    peak_inference_reserved = (
+        inference_state_bytes + incremental_inference_reserved
+    )
+    result = {
+        'training_total_params': training_stats['total_params'],
+        'training_trainable_params': training_stats['trainable_params'],
+        'training_parameter_mb': training_stats['parameter_bytes'] / (1024 ** 2),
+        'training_buffer_mb': training_stats['buffer_bytes'] / (1024 ** 2),
+        'inference_total_params': inference_stats['total_params'],
+        'inference_trainable_params': inference_stats['trainable_params'],
+        'inference_parameter_mb': inference_stats['parameter_bytes'] / (1024 ** 2),
+        'inference_buffer_mb': inference_stats['buffer_bytes'] / (1024 ** 2),
+        'inference_macs': macs,
+        'inference_gflops': (
+            2.0 * macs / 1e9 if macs is not None else None
+        ),
+        'flops_convention': '1 MAC = 2 FLOPs',
+        'flops_error': flops_error,
+        'inference_batch_size': 1,
+        'inference_warmup_iterations': int(warmup_iterations),
+        'inference_benchmark_iterations': int(benchmark_iterations),
+        'inference_latency_mean_ms': latency_mean,
+        'inference_latency_std_ms': float(latency_array.std()),
+        'inference_latency_p50_ms': float(np.percentile(latency_array, 50)),
+        'inference_latency_p95_ms': float(np.percentile(latency_array, 95)),
+        'inference_throughput_samples_s': 1000.0 / max(latency_mean, 1e-12),
+        'peak_inference_allocated_gb': peak_inference_allocated / gib,
+        'peak_inference_reserved_gb': peak_inference_reserved / gib,
+        'process_baseline_allocated_gb': baseline_inference_allocated / gib,
+        'process_baseline_reserved_gb': baseline_inference_reserved / gib,
+        'process_peak_inference_allocated_gb': (
+            process_peak_inference_allocated / gib
+        ),
+        'process_peak_inference_reserved_gb': (
+            process_peak_inference_reserved / gib
+        ),
+        'inference_memory_measurement': (
+            'deployed model state plus incremental batch-1 inference allocation'
+        ),
+        'inference_data_loading_included': False,
+        'training_only_modules_excluded_from_inference': [
+            'TransNet/OT generator',
+            'domain discriminator',
+            'Sinkhorn iterations',
+        ],
+    }
+    del graph, vis_input, ir_input
+    return result
+
+
+def write_iteration_efficiency_artifacts(
+    output_dir,
+    target_weather,
+    seed,
+    protocol,
+    epoch_records,
+    metrics,
+):
+    os.makedirs(output_dir, exist_ok=True)
+    safe_target = str(target_weather).replace('/', '_').replace('\\', '_')
+    stem = f'{safe_target}_seed{seed}'
+    json_path = os.path.join(output_dir, f'{stem}_efficiency.json')
+    epoch_path = os.path.join(output_dir, f'{stem}_epoch_timing.csv')
+    with open(json_path, 'w', encoding='utf-8') as handle:
+        json.dump(
+            {
+                'target': target_weather,
+                'seed': int(seed),
+                'protocol': protocol,
+                'metrics': metrics,
+            },
+            handle,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    epoch_fields = [
+        'epoch',
+        'epoch_time_s',
+        'svd_update_time_s',
+        'peak_allocated_gb',
+        'peak_reserved_gb',
+    ]
+    with open(epoch_path, 'w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=epoch_fields)
+        writer.writeheader()
+        writer.writerows(epoch_records)
+    return json_path, epoch_path
+
+
+EFFICIENCY_SUMMARY_FIELDS = (
+    'training_total_params',
+    'training_trainable_params',
+    'inference_total_params',
+    'inference_gflops',
+    'total_training_time_s',
+    'train_epoch_mean_s',
+    'train_epoch_std_s',
+    'svd_update_total_s',
+    'svd_update_mean_s',
+    'inference_latency_mean_ms',
+    'inference_latency_p50_ms',
+    'inference_latency_p95_ms',
+    'inference_throughput_samples_s',
+    'peak_train_allocated_gb',
+    'peak_train_reserved_gb',
+    'peak_inference_allocated_gb',
+    'peak_inference_reserved_gb',
+)
+
+
+def summarize_efficiency_runs(runs):
+    aggregate = {}
+    for field in EFFICIENCY_SUMMARY_FIELDS:
+        values = [
+            float(run[field]) for run in runs
+            if run.get(field) is not None
+        ]
+        if values:
+            aggregate[field] = {
+                'values': values,
+                'mean': float(np.mean(values)),
+                'std': float(np.std(values)),
+            }
+    return aggregate
+
+
+def write_target_efficiency_summary(
+    output_dir,
+    target_weather,
+    protocol,
+    runs,
+    aggregate,
+):
+    os.makedirs(output_dir, exist_ok=True)
+    safe_target = str(target_weather).replace('/', '_').replace('\\', '_')
+    json_path = os.path.join(output_dir, f'{safe_target}_efficiency_summary.json')
+    csv_path = os.path.join(output_dir, f'{safe_target}_efficiency_runs.csv')
+    with open(json_path, 'w', encoding='utf-8') as handle:
+        json.dump(
+            {
+                'target': target_weather,
+                'protocol': protocol,
+                'num_iterations': len(runs),
+                'runs': runs,
+                'aggregate': aggregate,
+            },
+            handle,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    csv_fields = ['target_weather', 'seed', 'gpu_name', 'precision'] + list(
+        EFFICIENCY_SUMMARY_FIELDS
+    )
+    with open(csv_path, 'w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=csv_fields)
+        writer.writeheader()
+        for run in runs:
+            writer.writerow({name: run.get(name, '') for name in csv_fields})
+    return json_path, csv_path
 
 
 def compute_joint_ot_scale(epoch, warmup_epochs, ramp_epochs, enabled):
@@ -1416,16 +1783,20 @@ def run_single_iteration(args, seed, logger):
                 "Classifier label map must be contiguous from zero; got "
                 f"{global_map}."
             )
+        label_space_prefix = (
+            "LABEL-GUIDED SHARED CLASS SPACE. "
+            if args.label_guided_alignment
+            else "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. "
+        )
         logger.warning(
-            "TARGET LABEL SUPPORT ORACLE; NOT STRICT UDA. "
-            "support supplied by independent cohort preprocessing; no labelled "
-            "target-support probe exists in the optimization process. "
-            f"reported_protocol={experiment_protocol}; shared original labels="
-            f"{oracle_shared_labels}; source samples {source_count_before_filter}->"
-            f"{len(src_train_ds)}; target samples retained without filtering="
-            f"{len(tgt_train_ds)}/{target_count_before_filter}; classifier classes="
-            f"{len(global_map)}; label-free pair manifest sha256="
-            f"{target_pair_manifest_sha256}."
+            label_space_prefix
+            + "support supplied by independent cohort preprocessing. "
+            + f"reported_protocol={experiment_protocol}; shared original labels="
+            + f"{oracle_shared_labels}; source samples {source_count_before_filter}->"
+            + f"{len(src_train_ds)}; target samples retained without filtering="
+            + f"{len(tgt_train_ds)}/{target_count_before_filter}; classifier classes="
+            + f"{len(global_map)}; label-free pair manifest sha256="
+            + f"{target_pair_manifest_sha256}."
         )
     else:
         tgt_train_ds = MultiModalDomainDataset(
@@ -1581,8 +1952,8 @@ def run_single_iteration(args, seed, logger):
         paired_loader = PairedClassSampler(src_train_ds, tgt_train_ds, BATCH_SIZE)
         logger.info("Training mode: full target-label supervision (class-paired batches).")
     elif use_pseudo_class_pairing:
-        # Constructed at every epoch after either label-free source-prototype
-        # inference or an explicitly marked oracle-pairing diagnostic.
+        # Constructed every epoch from prototype inference, formal label-guided
+        # correspondence, or an explicitly marked oracle-pairing diagnostic.
         paired_loader = None
         source_warmup_loader = UnpairedDomainSampler(
             src_train_ds,
@@ -1795,8 +2166,13 @@ def run_single_iteration(args, seed, logger):
             statistics_description = "complete class-paired target-training bank"
         elif oracle_pairing_active:
             statistics_description = (
-                "complete natural-distribution source/target oracle-paired "
-                "diagnostic bank after source-only warm-up"
+                "complete natural-distribution source/target label-guided bank "
+                "after source-only warm-up"
+                if args.label_guided_alignment
+                else (
+                    "complete natural-distribution source/target oracle-paired "
+                    "diagnostic bank after source-only warm-up"
+                )
             )
         elif use_pseudo_class_pairing:
             statistics_description = (
@@ -1879,8 +2255,22 @@ def run_single_iteration(args, seed, logger):
     best_epoch = None
     metric_history = []
     previous_target_pseudo_labels = None
+    efficiency_enabled = bool(getattr(args, 'efficiency_output_dir', ''))
+    epoch_efficiency_records = []
+    if efficiency_enabled:
+        _cuda_synchronize(DEVICE)
+        iteration_training_started = time.perf_counter()
+    else:
+        iteration_training_started = None
 
     for epoch in range(EPOCHS):
+        svd_update_time_s = 0.0
+        efficiency_epoch_record = None
+        if efficiency_enabled:
+            _cuda_synchronize(DEVICE)
+            if DEVICE.type == 'cuda':
+                torch.cuda.reset_peak_memory_stats(DEVICE)
+            epoch_started = time.perf_counter()
         uda_source_warmup_active = bool(
             source_only_diagnostic
             or is_uda_source_warmup(
@@ -2018,6 +2408,9 @@ def run_single_iteration(args, seed, logger):
             )
 
         if args.use_tensor_module and not uda_source_warmup_active:
+            if efficiency_enabled:
+                _cuda_synchronize(DEVICE)
+                svd_started = time.perf_counter()
             old_source_projections = [
                 projection.detach().clone()
                 for projection in tal_module.U_matrices
@@ -2090,6 +2483,9 @@ def run_single_iteration(args, seed, logger):
                 )
                 svd_info.update(basis_info)
             logger.info(f"Epoch [{epoch + 1}/{EPOCHS}] | {format_svd_update(svd_info)}")
+            if efficiency_enabled:
+                _cuda_synchronize(DEVICE)
+                svd_update_time_s = time.perf_counter() - svd_started
             epoch_projection_update_count = int(
                 tal_module.projection_update_count.item()
             )
@@ -2526,6 +2922,26 @@ def run_single_iteration(args, seed, logger):
             args.use_tensor_module,
             non_blocking=non_blocking,
         )
+        if efficiency_enabled:
+            _cuda_synchronize(DEVICE)
+            epoch_time_s = time.perf_counter() - epoch_started
+            gib = float(1024 ** 3)
+            peak_allocated_gb = (
+                torch.cuda.max_memory_allocated(DEVICE) / gib
+                if DEVICE.type == 'cuda' else 0.0
+            )
+            peak_reserved_gb = (
+                torch.cuda.max_memory_reserved(DEVICE) / gib
+                if DEVICE.type == 'cuda' else 0.0
+            )
+            efficiency_epoch_record = {
+                'epoch': int(epoch + 1),
+                'epoch_time_s': float(epoch_time_s),
+                'svd_update_time_s': float(svd_update_time_s),
+                'peak_allocated_gb': float(peak_allocated_gb),
+                'peak_reserved_gb': float(peak_reserved_gb),
+            }
+            epoch_efficiency_records.append(efficiency_epoch_record)
         train_acc = train_correct / train_total if train_total > 0 else 0
         val_acc = val_metrics['accuracy']
 
@@ -2620,6 +3036,14 @@ def run_single_iteration(args, seed, logger):
                 f"{mean_target_confidence:.4f}/{mean_target_entropy:.4f}/"
                 f"{predicted_class_count}/{len(global_map)}"
             )
+        if efficiency_epoch_record is not None:
+            log_msg += (
+                " | Efficiency epoch/SVD/peak-alloc/peak-reserved: "
+                f"{efficiency_epoch_record['epoch_time_s']:.3f}s/"
+                f"{efficiency_epoch_record['svd_update_time_s']:.3f}s/"
+                f"{efficiency_epoch_record['peak_allocated_gb']:.3f}GB/"
+                f"{efficiency_epoch_record['peak_reserved_gb']:.3f}GB"
+            )
 
         logger.info(log_msg)
 
@@ -2635,6 +3059,14 @@ def run_single_iteration(args, seed, logger):
                 )
             else:
                 logger.info(f"  >>> New Best Val Acc: {best_val_acc:.4f}")
+
+    if efficiency_enabled:
+        _cuda_synchronize(DEVICE)
+        iteration_training_total_s = (
+            time.perf_counter() - iteration_training_started
+        )
+    else:
+        iteration_training_total_s = None
 
     report_metrics = select_report_metrics(
         metric_history,
@@ -2679,6 +3111,89 @@ def run_single_iteration(args, seed, logger):
         'code_fingerprint',
         None,
     )
+    if efficiency_enabled:
+        model_efficiency = measure_final_model_efficiency(
+            net_vis=net_vis,
+            net_ir=net_ir,
+            tal_module=tal_module,
+            generator=generator,
+            classifier=classifier,
+            discriminator=discriminator,
+            val_loader=val_loader,
+            device=DEVICE,
+            use_tensor_module=args.use_tensor_module,
+            warmup_iterations=args.efficiency_warmup_iterations,
+            benchmark_iterations=args.efficiency_benchmark_iterations,
+            require_flops=args.require_efficiency_flops,
+        )
+        epoch_times = np.asarray(
+            [row['epoch_time_s'] for row in epoch_efficiency_records],
+            dtype=np.float64,
+        )
+        svd_times = np.asarray(
+            [row['svd_update_time_s'] for row in epoch_efficiency_records],
+            dtype=np.float64,
+        )
+        model_efficiency.update({
+            'target_weather': target_weather,
+            'seed': int(seed),
+            'device': str(DEVICE),
+            'gpu_name': (
+                torch.cuda.get_device_name(DEVICE)
+                if DEVICE.type == 'cuda' else 'CPU'
+            ),
+            'precision': 'float32',
+            'training_batch_size': int(BATCH_SIZE),
+            'training_epochs': int(EPOCHS),
+            'total_training_time_s': float(iteration_training_total_s),
+            'train_epoch_mean_s': float(epoch_times.mean()),
+            'train_epoch_std_s': float(epoch_times.std()),
+            'train_epoch_median_s': float(np.median(epoch_times)),
+            'svd_update_total_s': float(svd_times.sum()),
+            'svd_update_mean_s': float(svd_times[svd_times > 0].mean())
+                if bool((svd_times > 0).any()) else 0.0,
+            'peak_train_allocated_gb': float(max(
+                row['peak_allocated_gb'] for row in epoch_efficiency_records
+            )),
+            'peak_train_reserved_gb': float(max(
+                row['peak_reserved_gb'] for row in epoch_efficiency_records
+            )),
+            'training_time_includes': (
+                'pairing, epoch SVD, Tensor/OT optimization, validation'
+            ),
+        })
+        json_path, epoch_path = write_iteration_efficiency_artifacts(
+            output_dir=args.efficiency_output_dir,
+            target_weather=target_weather,
+            seed=seed,
+            protocol=experiment_protocol,
+            epoch_records=epoch_efficiency_records,
+            metrics=model_efficiency,
+        )
+        model_efficiency['metrics_json'] = os.path.abspath(json_path)
+        model_efficiency['epoch_timing_csv'] = os.path.abspath(epoch_path)
+        report_metrics['efficiency'] = model_efficiency
+        inference_gflops_text = (
+            f"{model_efficiency['inference_gflops']:.4f}"
+            if model_efficiency['inference_gflops'] is not None
+            else 'unavailable'
+        )
+        logger.info(
+            "Efficiency: params(total/trainable)="
+            f"{model_efficiency['training_total_params']:,}/"
+            f"{model_efficiency['training_trainable_params']:,}, "
+            f"inference_GFLOPs={inference_gflops_text}, "
+            f"training_time={model_efficiency['total_training_time_s']:.2f}s, "
+            f"inference_latency={model_efficiency['inference_latency_mean_ms']:.4f}ms, "
+            "inference_throughput="
+            f"{model_efficiency['inference_throughput_samples_s']:.2f} samples/s, "
+            "peak_train_allocated/reserved="
+            f"{model_efficiency['peak_train_allocated_gb']:.4f}/"
+            f"{model_efficiency['peak_train_reserved_gb']:.4f}GB"
+        )
+        logger.info(
+            f"Efficiency artifacts: metrics={json_path}, epochs={epoch_path}"
+        )
     if args.checkpoint_dir:
         os.makedirs(args.checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(
@@ -2958,6 +3473,24 @@ def run_ablation_experiment(args):
                 f"({best_metrics['val_class_coverage']:.4f}), "
                 f"samples={best_metrics['val_samples']:.0f}"
             )
+            if best_metrics.get('efficiency'):
+                efficiency = best_metrics['efficiency']
+                inference_gflops_text = (
+                    f"{efficiency['inference_gflops']:.4f}"
+                    if efficiency['inference_gflops'] is not None
+                    else 'unavailable'
+                )
+                logger.info(
+                    "  Efficiency: Params(total/trainable)="
+                    f"{efficiency['training_total_params']:,}/"
+                    f"{efficiency['training_trainable_params']:,}; "
+                    f"FLOPs={inference_gflops_text} GFLOPs; "
+                    f"Train={efficiency['total_training_time_s']:.2f}s; "
+                    f"Latency={efficiency['inference_latency_mean_ms']:.4f}ms; "
+                    "Throughput="
+                    f"{efficiency['inference_throughput_samples_s']:.2f} samples/s; "
+                    f"Peak GPU={efficiency['peak_train_allocated_gb']:.4f}GB"
+                )
 
     logger.info("\n" + "=" * 80)
     logger.info(f"{NUM_ITERATIONS}次迭代统计结果")
@@ -3018,6 +3551,25 @@ def run_ablation_experiment(args):
         if all_iteration_results
         else True
     )
+    efficiency_runs = [
+        dict(result['efficiency'])
+        for result in all_iteration_results
+        if result.get('efficiency')
+    ]
+    efficiency_aggregate = summarize_efficiency_runs(efficiency_runs)
+    efficiency_summary_files = None
+    if efficiency_runs:
+        efficiency_summary_files = write_target_efficiency_summary(
+            output_dir=args.efficiency_output_dir,
+            target_weather=target_weather,
+            protocol=experiment_protocol,
+            runs=efficiency_runs,
+            aggregate=efficiency_aggregate,
+        )
+        logger.info(
+            "Efficiency target summary: metrics="
+            f"{efficiency_summary_files[0]}, runs={efficiency_summary_files[1]}"
+        )
     machine_summary = {
         'protocol': experiment_protocol,
         'adaptation_protocol': (
@@ -3100,6 +3652,19 @@ def run_ablation_experiment(args):
         },
         'num_iterations': len(all_iteration_results),
         'seeds': iteration_seeds[:len(all_iteration_results)],
+        'efficiency': {
+            'enabled': bool(efficiency_runs),
+            'per_iteration': efficiency_runs,
+            'aggregate': efficiency_aggregate,
+            'summary_json': (
+                os.path.abspath(efficiency_summary_files[0])
+                if efficiency_summary_files else None
+            ),
+            'runs_csv': (
+                os.path.abspath(efficiency_summary_files[1])
+                if efficiency_summary_files else None
+            ),
+        },
         'metrics': {
             metric_name: {
                 'values': [
@@ -3331,6 +3896,22 @@ def main():
                        help='number of final epochs averaged when report_strategy=last_window')
     parser.add_argument('--checkpoint_dir', type=str, default='',
                        help='directory for per-seed final checkpoints; empty disables saving')
+    parser.add_argument(
+        '--efficiency_output_dir',
+        type=str,
+        default='',
+        help=(
+            'directory for per-seed parameter/FLOPs/time/latency/GPU-memory '
+            'artifacts; empty disables efficiency measurement'
+        ),
+    )
+    parser.add_argument('--efficiency_warmup_iterations', type=int, default=20,
+                       help='warm-up forwards before inference timing')
+    parser.add_argument('--efficiency_benchmark_iterations', type=int, default=100,
+                       help='timed batch-1 forwards used for latency statistics')
+    parser.add_argument('--require_efficiency_flops', action='store_true',
+                       default=False,
+                       help='fail the run if exact-model THOP FLOPs profiling fails')
     parser.add_argument('--auto_ablation_hparams', action='store_true', default=False,
                        help='enable the historical SSDA target-label schedule explicitly')
     parser.add_argument('--no_auto_ablation_hparams', dest='auto_ablation_hparams',
@@ -3363,6 +3944,10 @@ def main():
         parser.error('--ot_ramp_epochs must be at least 1')
     if args.num_iterations < 1:
         parser.error('--num_iterations must be at least 1')
+    if args.efficiency_warmup_iterations < 1:
+        parser.error('--efficiency_warmup_iterations must be at least 1')
+    if args.efficiency_benchmark_iterations < 1:
+        parser.error('--efficiency_benchmark_iterations must be at least 1')
     if not 0.0 <= args.target_label_ratio <= 1.0:
         parser.error('--target_label_ratio must be in [0, 1]')
     if args.target_cls_weight < 0.0:
@@ -3467,6 +4052,16 @@ def main():
             parser.error(
                 '--label_guided_alignment uses true target correspondence and '
                 'cannot be combined with --uda_pseudo_class_pairing'
+            )
+        if not str(args.efficiency_output_dir).strip():
+            parser.error(
+                '--label_guided_alignment formal runs require '
+                '--efficiency_output_dir so complexity evidence is preserved'
+            )
+        if not args.require_efficiency_flops:
+            parser.error(
+                '--label_guided_alignment formal runs require '
+                '--require_efficiency_flops'
             )
     if args.diagnostic_oracle_pairing and args.diagnostic_source_only:
         parser.error(

@@ -31,6 +31,8 @@
 #   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  各方法训练轮数；默认分别为
 #     100 / 20 / 20 / 20 / 20，与当前采用的各自发布配方一致
 #   CDAN_NUM_ITERATIONS  CDAN 总迭代数（默认官方 100004）
+#   SDA_CCSA_EPOCHS / SDA_DSNE_EPOCHS  有监督域适应官方预算（默认80/20）
+#   SUPERVISED_MCFT_EPOCHS  MCFT官方预算（默认500）
 #
 # 本仓库 JMDA-Net/ 子目录为本文方法（JMDA-Net）的源码镜像，与对比方法目录区分。
 # 每次运行的日志 -> server_logs/<protocol>/，效率结果 -> efficiency_results/<protocol>/
@@ -38,7 +40,15 @@
 set -uo pipefail
 
 PROTOCOL="${1:-}"
-EPOCHS="${2:-100}"
+EPOCHS_WAS_EXPLICIT=0
+if [ "$#" -ge 2 ]; then
+  EPOCHS="$2"
+  EPOCHS_WAS_EXPLICIT=1
+elif [ "$PROTOCOL" = "supervised" ]; then
+  EPOCHS=500
+else
+  EPOCHS=100
+fi
 if ! [[ "$EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
   echo "epochs 必须是正整数: $EPOCHS"
   exit 1
@@ -73,10 +83,19 @@ UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
 UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
 UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
 CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
+if [ "$EPOCHS_WAS_EXPLICIT" = "1" ]; then
+  SDA_CCSA_EPOCHS="${SDA_CCSA_EPOCHS:-$EPOCHS}"
+  SDA_DSNE_EPOCHS="${SDA_DSNE_EPOCHS:-$EPOCHS}"
+  SUPERVISED_MCFT_EPOCHS="${SUPERVISED_MCFT_EPOCHS:-$EPOCHS}"
+else
+  SDA_CCSA_EPOCHS="${SDA_CCSA_EPOCHS:-80}"
+  SDA_DSNE_EPOCHS="${SDA_DSNE_EPOCHS:-20}"
+  SUPERVISED_MCFT_EPOCHS="${SUPERVISED_MCFT_EPOCHS:-500}"
+fi
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="83cf8634a962df2f"
+JMDA_EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 
 require_positive_integer() {
@@ -102,6 +121,13 @@ if [[ "$PROTOCOL" = "uda" ]]; then
   require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
   require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
   require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
+fi
+if [[ "$PROTOCOL" = "sda" ]]; then
+  require_positive_integer "SDA_CCSA_EPOCHS" "$SDA_CCSA_EPOCHS"
+  require_positive_integer "SDA_DSNE_EPOCHS" "$SDA_DSNE_EPOCHS"
+fi
+if [[ "$PROTOCOL" = "supervised" ]]; then
+  require_positive_integer "SUPERVISED_MCFT_EPOCHS" "$SUPERVISED_MCFT_EPOCHS"
 fi
 
 if [[ "$PROTOCOL" = "jmda_uda" || "$PROTOCOL" = "jmda_oracle_shared_uda" ]]; then
@@ -278,9 +304,14 @@ FAILURES=0
 run() {  # run "<log-tag>" <cmd...>
   local tag="$1"; shift
   local log_path="$LOG_ROOT/${tag}_${RUN_ID}.log"
-  local started finished elapsed exit_code status record_protocol
+  local started finished elapsed exit_code status record_protocol run_epochs
   local input_modalities model_selection label_space_relation
   local audit_protocol audit_exit audit_status
+  run_epochs="$EPOCHS"
+  if [ "${1:-}" = "--record-epochs" ]; then
+    run_epochs="$2"
+    shift 2
+  fi
   echo ">>> [$tag]"
   started="$(date +%s)"
   exit_code=0
@@ -351,6 +382,9 @@ run() {  # run "<log-tag>" <cmd...>
     uda|oracle_shared_uda|supervised) model_selection="final_checkpoint" ;;
     *) model_selection="method_declared" ;;
   esac
+  case "$tag" in
+    mcft_*) model_selection="official_target_best" ;;
+  esac
   if ! "$PYTHON" "$HERE/tools/collect_run_result.py" \
     --log "$log_path" \
     --suite-id "$SUITE_ID" \
@@ -360,7 +394,7 @@ run() {  # run "<log-tag>" <cmd...>
     --status "$status" \
     --exit-code "$exit_code" \
     --duration-seconds "$elapsed" \
-    --epochs "$EPOCHS" \
+    --epochs "$run_epochs" \
     --seed "$SEED" \
     --efficiency-dir "$EFF_DIR" \
     --input-modalities "$input_modalities" \
@@ -374,6 +408,7 @@ run() {  # run "<log-tag>" <cmd...>
 
 # 通用参数（各方法脚本一致）
 COMMON=(--epochs "$EPOCHS" --seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
+METHOD_COMMON=(--seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
 
 if [ "$PROTOCOL" = "sda" ]; then
   # ---- SDA：所有方法使用同一源标签 + 同一目标标注子集（共享 list）----
@@ -384,8 +419,14 @@ if [ "$PROTOCOL" = "sda" ]; then
     run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd_sda.py"               --target "$t" "${COMMON[@]}"
     run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc_sda.py"               --target "$t" "${COMMON[@]}"
     # CCSA / d-SNE 原作即为有监督域适应，使用同一目标标注子集
-    run "ccsa_$t"         "$PYTHON" "$HERE/CCSA/train_ccsa.py"                 --target "$t" "${COMMON[@]}" --target-labels-per-class "$SDA_LABELS_PER_CLASS" --sda-seed "$SEED"
-    run "dsne_$t"         "$PYTHON" "$HERE/d-SNE/train_dsne.py"                --target "$t" "${COMMON[@]}" --target-labels-per-class "$SDA_LABELS_PER_CLASS" --sda-seed "$SEED"
+    run "ccsa_$t" --record-epochs "$SDA_CCSA_EPOCHS" \
+      "$PYTHON" "$HERE/CCSA/train_ccsa.py" --target "$t" \
+      --epochs "$SDA_CCSA_EPOCHS" "${METHOD_COMMON[@]}" \
+      --target-labels-per-class "$SDA_LABELS_PER_CLASS" --sda-seed "$SEED"
+    run "dsne_$t" --record-epochs "$SDA_DSNE_EPOCHS" \
+      "$PYTHON" "$HERE/d-SNE/train_dsne.py" --target "$t" \
+      --epochs "$SDA_DSNE_EPOCHS" "${METHOD_COMMON[@]}" \
+      --target-labels-per-class "$SDA_LABELS_PER_CLASS" --sda-seed "$SEED"
     # JMDA-Net-SDA（本文方法，仓库内 JMDA-Net/ 目录）
     run "jmda_net_sda_$t" bash -c \
       "cd '$JMDA_NET_DIR' && JMDA_SDA_LIST_DIR='$FAIR_LIST_DIR' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS' --num-iterations '${JMDA_NUM_ITERATIONS:-5}' --sda-seed '$SEED'"
@@ -503,7 +544,9 @@ elif [ "$PROTOCOL" = "uda" ]; then
 else
   # ---- Supervised 独立表：MCFT 是源域监督多模态分类，不是域适应方法 ----
   for t in "${TARGETS[@]}"; do
-    run "mcft_$t" "$PYTHON" "$HERE/MCFT/train_mcft.py" --target "$t" "${COMMON[@]}"
+    run "mcft_$t" --record-epochs "$SUPERVISED_MCFT_EPOCHS" \
+      "$PYTHON" "$HERE/MCFT/train_mcft.py" --target "$t" \
+      --epochs "$SUPERVISED_MCFT_EPOCHS" "${METHOD_COMMON[@]}"
   done
 fi
 

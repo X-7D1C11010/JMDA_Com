@@ -45,6 +45,41 @@ class ComparisonReproducibilityTests(unittest.TestCase):
                 source = (ROOT / relative_path).read_text(encoding="utf-8")
                 self.assertIn("_sda_{args.target_labels_per_class}shot_seed", source)
 
+    def test_requested_methods_use_target_driven_class_space_and_save_metrics(self):
+        for relative_path in (
+            "CCSA/train_ccsa.py", "d-SNE/train_dsne.py", "MCFT/train_mcft.py"
+        ):
+            with self.subTest(entrypoint=relative_path):
+                source = (ROOT / relative_path).read_text(encoding="utf-8")
+                self.assertIn("uda_label_space(args.data_dir, args.target)", source)
+                self.assertIn("save_metric_history(", source)
+                self.assertIn("num_classes = len(class_ids)", source)
+
+    def test_released_default_training_protocols_are_explicit(self):
+        ccsa = (ROOT / "CCSA/train_ccsa.py").read_text(encoding="utf-8")
+        dsne = (ROOT / "d-SNE/train_dsne.py").read_text(encoding="utf-8")
+        mcft = (ROOT / "MCFT/train_mcft.py").read_text(encoding="utf-8")
+        self.assertIn("default=80", ccsa)
+        self.assertIn("negative_ratio=3", ccsa)
+        self.assertIn("default=101", dsne)
+        self.assertIn("class ResNetV2Features", dsne)
+        self.assertIn("--train-src", dsne)
+        self.assertIn("default=500", mcft)
+        self.assertIn("num_patches=[3, 1]", mcft)
+
+    def test_per_seed_artifacts_cannot_overwrite_each_other(self):
+        for relative_path, prefix in (
+            ("CCSA/train_ccsa.py", "ccsa"),
+            ("d-SNE/train_dsne.py", "dsne"),
+            ("MCFT/train_mcft.py", "mcft"),
+        ):
+            with self.subTest(entrypoint=relative_path):
+                source = (ROOT / relative_path).read_text(encoding="utf-8")
+                self.assertIn(
+                    f"run_stem = f'{prefix}_{{args.target}}_seed{{args.seed}}'",
+                    source,
+                )
+
     def test_cdan_relative_optimizer_metadata_is_materialized(self):
         module_path = ROOT / "CDAN/optimizer_utils.py"
         spec = importlib.util.spec_from_file_location(

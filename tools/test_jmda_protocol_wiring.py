@@ -34,6 +34,12 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         cls.label_guided = (
             ROOT / "scripts" / "run_jmda_label_guided_weather.sh"
         ).read_text(encoding="utf-8")
+        cls.label_guided_formal = (
+            ROOT / "scripts" / "run_jmda_label_guided_formal.sh"
+        ).read_text(encoding="utf-8")
+        cls.label_guided_formal_summary = (
+            ROOT / "tools" / "summarize_jmda_label_guided_formal.py"
+        ).read_text(encoding="utf-8")
 
     def test_strict_and_oracle_launchers_are_separate(self):
         strict_start = self.launcher.index(
@@ -240,7 +246,7 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--diagnostic_source_only", self.screening)
         self.assertIn("summarize_jmda_screening.py", self.screening)
         self.assertIn(
-            'EXPECTED_CODE_FINGERPRINT="83cf8634a962df2f"', self.screening
+            'EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"', self.screening
         )
         self.assertIn("print_jmda_code_fingerprint.py", self.screening)
         self.assertIn("target_ce_max", self.screening_summary)
@@ -262,6 +268,34 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn(
             "(args.use_target_labels or oracle_pairing_active)", self.module
         )
+
+    def test_formal_label_guided_suite_is_complete_and_records_efficiency(self):
+        self.assertIn("EPOCHS=100", self.label_guided_formal)
+        self.assertIn("NUM_ITERATIONS=5", self.label_guided_formal)
+        self.assertIn("TARGETS=(backlight rainy foggy dark)", self.label_guided_formal)
+        self.assertIn("--efficiency_output_dir", self.label_guided_formal)
+        self.assertIn("--require_efficiency_flops", self.label_guided_formal)
+        self.assertIn("--require-efficiency", self.label_guided_formal)
+        self.assertIn("summarize_jmda_label_guided_formal.py", self.label_guided_formal)
+        actual = compute_training_code_fingerprint(ROOT / "JMDA-Net")
+        for launcher in (self.label_guided, self.label_guided_formal):
+            match = re.search(
+                r'EXPECTED_CODE_FINGERPRINT="([0-9a-f]{16})"', launcher
+            )
+            self.assertIsNotNone(match)
+            self.assertEqual(match.group(1), actual)
+        for metric in ("accuracy", "precision_macro", "recall_macro", "f1_macro"):
+            self.assertIn(metric, self.label_guided_formal_summary)
+        for field in (
+            "training_total_params",
+            "inference_gflops",
+            "total_training_time_s",
+            "inference_latency_mean_ms",
+            "inference_throughput_samples_s",
+            "peak_train_allocated_gb",
+        ):
+            self.assertIn(field, self.module)
+            self.assertIn(field, self.label_guided_formal_summary)
 
 
 if __name__ == "__main__":

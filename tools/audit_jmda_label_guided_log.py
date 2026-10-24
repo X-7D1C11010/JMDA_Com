@@ -27,7 +27,11 @@ OT_RE = re.compile(
 )
 
 
-def audit_text(text: str, expected_iterations: int) -> tuple[dict, list[str]]:
+def audit_text(
+    text: str,
+    expected_iterations: int,
+    require_efficiency: bool = False,
+) -> tuple[dict, list[str]]:
     errors: list[str] = []
     summaries = SUMMARY_RE.findall(text)
     if not summaries:
@@ -95,6 +99,61 @@ def audit_text(text: str, expected_iterations: int) -> tuple[dict, list[str]]:
             errors.append("non-finite OT objective or marginal residual detected")
             break
 
+    if require_efficiency:
+        efficiency = summary.get("efficiency")
+        if not isinstance(efficiency, dict) or not efficiency.get("enabled"):
+            errors.append("formal efficiency summary is missing or disabled")
+        else:
+            runs = efficiency.get("per_iteration") or []
+            if len(runs) != expected_iterations:
+                errors.append(
+                    f"efficiency runs={len(runs)}, expected {expected_iterations}"
+                )
+            positive_fields = (
+                "training_total_params",
+                "training_trainable_params",
+                "inference_total_params",
+                "inference_gflops",
+                "total_training_time_s",
+                "train_epoch_mean_s",
+                "inference_latency_mean_ms",
+                "inference_latency_p50_ms",
+                "inference_latency_p95_ms",
+                "inference_throughput_samples_s",
+                "peak_train_allocated_gb",
+                "peak_train_reserved_gb",
+                "peak_inference_allocated_gb",
+                "peak_inference_reserved_gb",
+            )
+            for index, run in enumerate(runs, start=1):
+                for field in positive_fields:
+                    value = run.get(field)
+                    if (
+                        not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        or float(value) <= 0.0
+                    ):
+                        errors.append(
+                            f"efficiency run {index} has invalid {field}={value!r}"
+                        )
+                if run.get("inference_data_loading_included") is not False:
+                    errors.append(
+                        f"efficiency run {index} must exclude data-loading latency"
+                    )
+                if run.get("flops_convention") != "1 MAC = 2 FLOPs":
+                    errors.append(
+                        f"efficiency run {index} has no FLOPs convention"
+                    )
+            aggregate = efficiency.get("aggregate") or {}
+            for field in positive_fields:
+                stats = aggregate.get(field)
+                if not isinstance(stats, dict) or len(stats.get("values", [])) != expected_iterations:
+                    errors.append(
+                        f"efficiency aggregate {field} is incomplete"
+                    )
+            if not efficiency.get("summary_json") or not efficiency.get("runs_csv"):
+                errors.append("efficiency summary artifact paths are missing")
+
     return summary, errors
 
 
@@ -102,10 +161,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--expected-iterations", type=int, default=1)
+    parser.add_argument("--require-efficiency", action="store_true")
     args = parser.parse_args()
 
     text = args.log.read_text(encoding="utf-8", errors="replace")
-    summary, errors = audit_text(text, args.expected_iterations)
+    summary, errors = audit_text(
+        text,
+        args.expected_iterations,
+        require_efficiency=args.require_efficiency,
+    )
     for error in errors:
         print(f"[ERROR] {error}")
     if errors:
