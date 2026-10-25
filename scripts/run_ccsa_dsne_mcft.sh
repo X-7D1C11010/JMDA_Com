@@ -8,6 +8,7 @@
 # Formal mode keeps the released budgets (80/20/500 epochs). Smoke mode runs
 # one batch for one epoch to validate the complete data/training/result path.
 set -uo pipefail
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-formal}"

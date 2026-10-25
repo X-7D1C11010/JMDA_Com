@@ -5,6 +5,10 @@ import json
 import sys
 from pathlib import Path
 
+import timm
+import torch
+import torchvision
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -25,7 +29,16 @@ def main():
 
     audit = audit_dataset(args.data_root, check_every_sample=not args.sampled_check)
     statistics = load_or_compute_statistics(args.data_root, args.stats_file)
-    payload = {"audit": audit, "normalization": statistics.to_dict()}
+    payload = {
+        "audit": audit,
+        "normalization": statistics.to_dict(),
+        "runtime": {
+            "torch": torch.__version__,
+            "torchvision": torchvision.__version__,
+            "timm": timm.__version__,
+            "cuda_available": torch.cuda.is_available(),
+        },
+    }
     report_path = Path(args.report_file).expanduser().resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(

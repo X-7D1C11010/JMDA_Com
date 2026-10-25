@@ -27,6 +27,11 @@
 #   JMDA_MIN_FREE_GPU_MEMORY_MIB  可选的启动前空闲显存门禁（MiB；默认不启用）
 #   JMDA_CLASS_NAMES_FILE  14类真实英文名称文件（PDA 文本提示必需）
 #   CLIP_CACHE_DIR  CLIP 权重缓存目录（PDA；默认 ~/.cache/clip）
+#   JMDA_GPU_SCHEDULER  是否在每个方法前等待合适GPU（0/1，默认1）
+#   JMDA_GPU_MAX_UTIL_PERCENT  允许启动时的最高GPU利用率（默认10）
+#   JMDA_GPU_STABLE_CHECKS / JMDA_GPU_POLL_SECONDS  连续空闲检查次数/间隔（默认3/30）
+#   JMDA_GPU_CANDIDATES  可选物理GPU编号或UUID，逗号分隔（默认全部）
+#   GPU_MIN_FREE_<METHOD>_MIB  覆盖各方法最低空闲显存门槛
 #   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_MDD_EPOCHS /
 #   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  各方法训练轮数；默认分别为
 #     100 / 20 / 20 / 20 / 20，与当前采用的各自发布配方一致
@@ -38,6 +43,7 @@
 # 每次运行的日志 -> server_logs/<protocol>/，效率结果 -> efficiency_results/<protocol>/
 # =============================================================================
 set -uo pipefail
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
 PROTOCOL="${1:-}"
 EPOCHS_WAS_EXPLICIT=0
@@ -97,6 +103,21 @@ fi
 # source changes; it is intentionally not overridable from the environment.
 JMDA_EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
+JMDA_GPU_SCHEDULER="${JMDA_GPU_SCHEDULER:-1}"
+JMDA_GPU_MAX_UTIL_PERCENT="${JMDA_GPU_MAX_UTIL_PERCENT:-10}"
+JMDA_GPU_STABLE_CHECKS="${JMDA_GPU_STABLE_CHECKS:-3}"
+JMDA_GPU_POLL_SECONDS="${JMDA_GPU_POLL_SECONDS:-30}"
+JMDA_GPU_CANDIDATES="${JMDA_GPU_CANDIDATES:-}"
+GPU_MIN_FREE_DANN_MIB="${GPU_MIN_FREE_DANN_MIB:-16000}"
+GPU_MIN_FREE_DEEPCORAL_MIB="${GPU_MIN_FREE_DEEPCORAL_MIB:-16000}"
+GPU_MIN_FREE_CDAN_MIB="${GPU_MIN_FREE_CDAN_MIB:-18000}"
+GPU_MIN_FREE_MDD_MIB="${GPU_MIN_FREE_MDD_MIB:-20000}"
+GPU_MIN_FREE_MCC_MIB="${GPU_MIN_FREE_MCC_MIB:-18000}"
+GPU_MIN_FREE_PDA_MIB="${GPU_MIN_FREE_PDA_MIB:-16000}"
+GPU_MIN_FREE_CCSA_MIB="${GPU_MIN_FREE_CCSA_MIB:-18000}"
+GPU_MIN_FREE_DSNE_MIB="${GPU_MIN_FREE_DSNE_MIB:-30000}"
+GPU_MIN_FREE_JMDA_MIB="${GPU_MIN_FREE_JMDA_MIB:-20000}"
+GPU_MIN_FREE_MCFT_MIB="${GPU_MIN_FREE_MCFT_MIB:-10000}"
 
 require_positive_integer() {
   local name="$1" value="$2"
@@ -301,22 +322,55 @@ fi
 
 FAILURES=0
 
+gpu_min_free_for_tag() {
+  case "$1" in
+    dann_*)      echo "$GPU_MIN_FREE_DANN_MIB" ;;
+    deepcoral_*) echo "$GPU_MIN_FREE_DEEPCORAL_MIB" ;;
+    cdan_*)      echo "$GPU_MIN_FREE_CDAN_MIB" ;;
+    mdd_*)       echo "$GPU_MIN_FREE_MDD_MIB" ;;
+    mcc_*)       echo "$GPU_MIN_FREE_MCC_MIB" ;;
+    pda_*)       echo "$GPU_MIN_FREE_PDA_MIB" ;;
+    ccsa_*)      echo "$GPU_MIN_FREE_CCSA_MIB" ;;
+    dsne_*)      echo "$GPU_MIN_FREE_DSNE_MIB" ;;
+    jmda_net_*)  echo "$GPU_MIN_FREE_JMDA_MIB" ;;
+    mcft_*)      echo "$GPU_MIN_FREE_MCFT_MIB" ;;
+    *)           echo "16000" ;;
+  esac
+}
+
 run() {  # run "<log-tag>" <cmd...>
   local tag="$1"; shift
   local log_path="$LOG_ROOT/${tag}_${RUN_ID}.log"
   local started finished elapsed exit_code status record_protocol run_epochs
   local input_modalities model_selection label_space_relation
   local audit_protocol audit_exit audit_status
+  local min_free_mib
+  local -a launch_command gpu_args
   run_epochs="$EPOCHS"
   if [ "${1:-}" = "--record-epochs" ]; then
     run_epochs="$2"
     shift 2
   fi
-  echo ">>> [$tag]"
+  launch_command=("$@")
+  min_free_mib="$(gpu_min_free_for_tag "$tag")"
+  if [ "$JMDA_GPU_SCHEDULER" = "1" ]; then
+    gpu_args=(--min-free-mib "$min_free_mib" \
+      --max-util-percent "$JMDA_GPU_MAX_UTIL_PERCENT" \
+      --stable-checks "$JMDA_GPU_STABLE_CHECKS" \
+      --poll-seconds "$JMDA_GPU_POLL_SECONDS" --tag "$tag")
+    if [ -n "$JMDA_GPU_CANDIDATES" ]; then
+      gpu_args+=(--gpus "$JMDA_GPU_CANDIDATES")
+    fi
+    launch_command=("$PYTHON" "$HERE/tools/run_on_available_gpu.py" \
+      "${gpu_args[@]}" -- "${launch_command[@]}")
+    echo ">>> [$tag] GPU门禁: free>=${min_free_mib}MiB, util<=${JMDA_GPU_MAX_UTIL_PERCENT}% (日志=$log_path)"
+  else
+    echo ">>> [$tag] GPU门禁已禁用"
+  fi
   started="$(date +%s)"
   exit_code=0
   status="success"
-  if "$@" > "$log_path" 2>&1; then
+  if "${launch_command[@]}" > "$log_path" 2>&1; then
     echo "    done: $tag"
   else
     exit_code=$?

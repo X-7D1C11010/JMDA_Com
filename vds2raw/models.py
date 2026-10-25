@@ -2,13 +2,38 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
+import timm
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torchvision.models import (
+    VGG16_Weights,
+    vgg16,
+)
 
 from MCFT.mcft_model import MViT
+
+
+def _load_backbone_state(module, checkpoint, prefix=""):
+    """Load a portable backbone state dict, optionally from a full model."""
+    source = Path(checkpoint).expanduser().resolve()
+    payload = torch.load(source, map_location="cpu", weights_only=False)
+    state = payload.get("state_dict", payload.get("model_state", payload))
+    if not isinstance(state, dict):
+        raise TypeError(f"backbone checkpoint does not contain a state dict: {source}")
+    if prefix:
+        prefixed = {
+            key[len(prefix) :]: value
+            for key, value in state.items()
+            if key.startswith(prefix)
+        }
+        if prefixed:
+            state = prefixed
+    module.load_state_dict(state, strict=True)
+    print(f"Loaded pretrained backbone from {source}")
 
 
 def euclidean_distance(first, second, eps=1e-8):
@@ -56,6 +81,67 @@ class CCSA96(nn.Module):
         second_features = self.embed(second)
         second_logits = self.classifier(second_features)
         return first_logits, second_logits, first_features, second_features
+
+
+class CCSAOfficeModel(nn.Module):
+    """Natural-image CCSA architecture reported for Office-31.
+
+    The paper uses ImageNet-pretrained VGG-16 convolutional layers followed by
+    1024- and 128-dimensional fully connected embedding layers and a softmax
+    classifier.  Softmax is intentionally omitted here because
+    ``CrossEntropyLoss`` consumes logits.
+    """
+
+    def __init__(
+        self, num_classes=3, pretrained=True, pretrained_backbone_checkpoint=""
+    ):
+        super().__init__()
+        weights = (
+            VGG16_Weights.IMAGENET1K_V1
+            if pretrained and not pretrained_backbone_checkpoint
+            else None
+        )
+        backbone = vgg16(weights=weights)
+        self.features = backbone.features
+        if pretrained_backbone_checkpoint:
+            _load_backbone_state(
+                self.features, pretrained_backbone_checkpoint, prefix="features."
+            )
+        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        self.embedding = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 7 * 7, 1024),
+            nn.ReLU(inplace=True),
+            nn.Linear(1024, 128),
+            nn.ReLU(inplace=True),
+        )
+        self.classifier = nn.Linear(128, num_classes)
+        for module in self.embedding.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                nn.init.zeros_(module.bias)
+        nn.init.normal_(self.classifier.weight, mean=0.0, std=0.01)
+        nn.init.zeros_(self.classifier.bias)
+
+    def embed(self, images):
+        return self.embedding(self.avgpool(self.features(images)))
+
+    def forward(self, first, second=None):
+        first_features = self.embed(first)
+        first_logits = self.classifier(first_features)
+        if second is None:
+            return first_logits
+        second_features = self.embed(second)
+        second_logits = self.classifier(second_features)
+        return first_logits, second_logits, first_features, second_features
+
+    def set_source_initialization_stage(self, enabled):
+        """Freeze VGG convolutions while initializing the new FC layers."""
+        for parameter in self.features.parameters():
+            parameter.requires_grad = not enabled
+
+    def source_initialization_parameters(self):
+        return list(self.embedding.parameters()) + list(self.classifier.parameters())
 
 
 def dsne_loss(
@@ -232,6 +318,64 @@ class DSNE96(nn.Module):
         print(f"Loaded {len(compatible)} d-SNE backbone tensors from {path}")
 
 
+class DSNEOfficeModel(nn.Module):
+    """PyTorch port of the official natural-image d-SNE model.
+
+    The released model is a ResNetV2-101 backbone followed by a 4096-unit dense
+    layer and a 512-dimensional latent layer.  The ImageNet-initialized timm
+    ResNetV2 keeps that pre-activation architecture in current PyTorch; the
+    d-SNE-specific dense layers retain the release's normal/zero initialization.
+    """
+
+    def __init__(
+        self,
+        num_classes=3,
+        embed_size=512,
+        pretrained=True,
+        pretrained_backbone_checkpoint="",
+        dropout=False,
+        l2_normalize=False,
+    ):
+        super().__init__()
+        self.features = timm.create_model(
+            "resnetv2_101.a1h_in1k",
+            pretrained=pretrained and not pretrained_backbone_checkpoint,
+            num_classes=0,
+            global_pool="avg",
+        )
+        if pretrained_backbone_checkpoint:
+            _load_backbone_state(
+                self.features, pretrained_backbone_checkpoint, prefix="features."
+            )
+        layers = [nn.Flatten(), nn.Linear(2048, 4096), nn.ReLU(inplace=True)]
+        if dropout:
+            layers.append(nn.Dropout(0.5))
+        layers.extend([nn.Linear(4096, embed_size), nn.ReLU(inplace=True)])
+        if dropout:
+            layers.append(nn.Dropout(0.5))
+        self.embeds = nn.Sequential(*layers)
+        self.l2_normalize = l2_normalize
+        self.output = nn.Linear(embed_size, num_classes)
+        for module in self.embeds.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                nn.init.zeros_(module.bias)
+        nn.init.xavier_uniform_(self.output.weight)
+        nn.init.zeros_(self.output.bias)
+
+    def forward(self, images, return_embedding=False):
+        features = self.embeds(self.features(images))
+        if self.l2_normalize:
+            features = F.normalize(features, p=2, dim=1)
+        logits = self.output(features)
+        return (logits, features) if return_embedding else logits
+
+    def load_source_checkpoint(self, path):
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        state = payload.get("model_state", payload.get("state_dict", payload))
+        self.load_state_dict(state)
+
+
 class MCFTWithAIS(nn.Module):
     """Official RGB+NIR MCFT trunk plus an explicit AIS/mask late-fusion branch."""
 
@@ -283,6 +427,8 @@ class MCFTWithAIS(nn.Module):
 __all__ = [
     "CCSA96",
     "DSNE96",
+    "CCSAOfficeModel",
+    "DSNEOfficeModel",
     "MCFTWithAIS",
     "ccsa_contrastive_loss",
     "dsne_loss",

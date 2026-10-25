@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+from torchvision import transforms
 
 CLASS_NAMES = ("Cargo", "Fishing", "Sailing_Pleasure")
 DISPLAY_CLASS_NAMES = ("Cargo", "Fishing", "Sailing & Pleasure")
@@ -300,17 +301,120 @@ class RGBView(Dataset):
         return item["rgb"], item["label"]
 
 
+class NaturalImageRGBDataset(Dataset):
+    """RGB view for ImageNet-initialized CCSA and d-SNE backbones.
+
+    The d-SNE release resizes to 256, crops to 224, applies horizontal flip
+    and colour jitter, then normalizes around 0.5.  A vertical flip is added
+    for this overhead-imagery dataset; it does not change band semantics.
+    """
+
+    def __init__(self, root, partition, augment=False, normalization="half"):
+        self.root = Path(root).expanduser().resolve()
+        self.partition = partition
+        self.paths = partition_files(self.root, partition)
+        self.samples = [
+            (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
+        ]
+        if normalization == "half":
+            mean, std = (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
+        elif normalization == "imagenet":
+            mean = (0.485, 0.456, 0.406)
+            std = (0.229, 0.224, 0.225)
+        else:
+            raise ValueError(f"unknown RGB normalization {normalization!r}")
+        if augment:
+            spatial = [
+                transforms.Resize(256, antialias=True),
+                transforms.RandomResizedCrop(
+                    224,
+                    scale=(0.8, 1.0),
+                    ratio=(0.9, 1.1),
+                    antialias=True,
+                ),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomVerticalFlip(),
+                transforms.ColorJitter(
+                    brightness=0.2,
+                    contrast=0.2,
+                    saturation=0.2,
+                    hue=0.1,
+                ),
+            ]
+        else:
+            spatial = [
+                transforms.Resize(256, antialias=True),
+                transforms.CenterCrop(224),
+            ]
+        self.transform = transforms.Compose(
+            spatial + [transforms.Normalize(mean=mean, std=std)]
+        )
+        self.normalization = normalization
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        path = self.paths[index]
+        with np.load(path, allow_pickle=False) as item:
+            rgb = torch.from_numpy(item["rgb"].astype(np.float32)).div_(255.0)
+            label = int(item["label"])
+        rgb = self.transform(rgb.clamp_(0.0, 1.0))
+        return rgb, label
+
+
+class FixedPerClassSubset(Dataset):
+    """Deterministic, class-balanced subset that keeps ``samples`` visible."""
+
+    def __init__(self, dataset, indices):
+        self.dataset = dataset
+        self.indices = tuple(map(int, indices))
+        self.samples = [dataset.samples[index] for index in self.indices]
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, index):
+        return self.dataset[self.indices[index]]
+
+
+def fixed_samples_per_class(dataset, samples_per_class, seed):
+    """Select exactly ``samples_per_class`` examples from every present class."""
+    import random
+
+    if samples_per_class <= 0:
+        return dataset
+    by_class = {}
+    for index, (_, label) in enumerate(dataset.samples):
+        by_class.setdefault(int(label), []).append(index)
+    rng = random.Random(int(seed))
+    chosen = []
+    for label in sorted(by_class):
+        candidates = by_class[label]
+        if len(candidates) < samples_per_class:
+            raise ValueError(
+                f"class {label} has {len(candidates)} samples, fewer than "
+                f"requested {samples_per_class}"
+            )
+        chosen.extend(rng.sample(candidates, samples_per_class))
+    chosen.sort()
+    return FixedPerClassSubset(dataset, chosen)
+
+
 __all__ = [
     "CLASS_NAMES",
     "DISPLAY_CLASS_NAMES",
     "EXPECTED_COUNTS",
     "PARTITIONS",
     "TRAIN_PARTITIONS",
+    "FixedPerClassSubset",
     "ImageStatistics",
+    "NaturalImageRGBDataset",
     "RGBView",
     "VDS2RawDataset",
     "audit_dataset",
     "compute_image_statistics",
+    "fixed_samples_per_class",
     "load_or_compute_statistics",
     "partition_files",
 ]

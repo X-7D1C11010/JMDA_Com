@@ -23,20 +23,21 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
 Usage:
     python train_mcc.py --target backlight
 """
+import argparse
 import os
 import sys
-import argparse
+
 import torch
 import torch.nn.functional as F
+from PIL import Image
 from torch.optim import SGD
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
-from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 '..', 'Transfer-Learning-Library'))
-from tllib.self_training.mcc import MinimumClassConfusionLoss, ImageClassifier
+from tllib.self_training.mcc import ImageClassifier, MinimumClassConfusionLoss
 from tllib.utils.data import ForeverDataIterator
 from tllib.utils.metric import accuracy
 from tllib.vision.models import resnet18
@@ -45,8 +46,14 @@ from tllib.vision.models import resnet18
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
+
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
-from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from uda_data import (
+    UdaImageListDataset,
+    format_class_space,
+    format_dropped,
+    uda_label_space,
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -111,7 +118,7 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
 
         # tllib 官方 mcc.py:166-168：拼接后一次前向，再 chunk 回源/目标。
         x = torch.cat((x_s, x_t), dim=0)
-        y, f = classifier(x)
+        y, _ = classifier(x)
         y_s, y_t = y.chunk(2, dim=0)
         cls_loss = F.cross_entropy(y_s, labels_s)
         transfer_loss = mcc(y_t)
@@ -126,7 +133,8 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
             acc = accuracy(y_s, labels_s)[0]
             print(f'  Epoch [{epoch}/{args.epochs}] iter [{i + 1}/{args.iters_per_epoch}] '
                   f'loss={loss.item():.4f} cls={cls_loss.item():.4f} '
-                  f'mcc={transfer_loss.item():.4f} src_acc={acc.item():.2f}')
+                  f'mcc={transfer_loss.item():.4f} src_acc={acc.item():.2f}',
+                  flush=True)
 
 
 def main():
@@ -211,8 +219,9 @@ def main():
         acc = val_metrics['accuracy']
         final_acc = acc
         best_acc = max(best_acc, acc)
-        print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}')
-        print(format_classification_metrics(val_metrics))
+        print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}',
+              flush=True)
+        print(format_classification_metrics(val_metrics), flush=True)
         if eff:
             eff.epoch_end(epoch)
 
