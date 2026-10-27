@@ -7,9 +7,9 @@ ACTION="${1:-status}"
 PROTOCOL="${2:-uda}"
 
 case "$ACTION" in
-  pause|hold|resume|status) ;;
+  pause|hold|resume|terminate|status) ;;
   *)
-    echo "usage: bash scripts/control_server_run.sh {pause|hold|resume|status} [protocol]" >&2
+    echo "usage: bash scripts/control_server_run.sh {pause|hold|resume|terminate|status} [protocol]" >&2
     exit 2
     ;;
 esac
@@ -80,6 +80,38 @@ show_tree() {
 }
 
 case "$ACTION" in
+  terminate)
+    # Stop the orchestrator before terminating descendants so it cannot launch
+    # another method while the current process tree is being removed.
+    kill -STOP "$ROOT_PID" 2>/dev/null || true
+    mapfile -t TREE_PIDS < <(collect_tree "$ROOT_PID")
+    for pid in "${TREE_PIDS[@]}"; do
+      [ "$pid" = "$ROOT_PID" ] || kill -TERM "$pid" 2>/dev/null || true
+    done
+
+    # Allow normal CUDA/Python cleanup, excluding zombies which retain no
+    # resources and will be reaped when the stopped orchestrator is removed.
+    for _ in $(seq 1 20); do
+      remaining=0
+      for pid in "${TREE_PIDS[@]}"; do
+        [ "$pid" = "$ROOT_PID" ] && continue
+        stat="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]' || true)"
+        if [ -n "$stat" ] && [[ "$stat" != Z* ]]; then
+          remaining=1
+          break
+        fi
+      done
+      [ "$remaining" -eq 0 ] && break
+      sleep 0.5
+    done
+
+    for pid in "${TREE_PIDS[@]}"; do
+      [ "$pid" = "$ROOT_PID" ] || kill -KILL "$pid" 2>/dev/null || true
+    done
+    kill -KILL "$ROOT_PID" 2>/dev/null || true
+    echo "[TERMINATED] $PROTOCOL run and descendants"
+    echo "Logs and checkpoints already written on disk were preserved."
+    ;;
   hold)
     # Freeze only the sequential orchestrator. The current trainer may finish
     # and release CUDA memory, but no following method can be launched.
