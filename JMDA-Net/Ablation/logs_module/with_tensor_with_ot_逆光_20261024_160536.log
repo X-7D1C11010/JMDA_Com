@@ -1,0 +1,75 @@
+================================================================================
+模块消融实验 - with_tensor_with_ot
+目标域天气: 逆光
+训练开始时间: 2026-10-24 16:05:36
+训练代码指纹: 8de7896a76fce67b
+设备: cuda
+协议: LABEL_GUIDED_DA_NO_TARGET_CE (adaptation=LABEL_GUIDED_DA, classification=source-only CE)
+标签空间模式: oracle_shared
+LABEL_GUIDED_DA_NO_TARGET_CE uses target truth for Tensor/SVD correspondence and class-conditional OT, while target classification CE is fixed to zero.
+源域: /mnt/data/lixiang/data/Data/晴天
+目标域: /mnt/data/lixiang/data/Data/逆光
+批次大小: 32
+数据加载: workers=4, prefetch_factor=2, pin_memory(requested/active)=True/True
+总轮数: 100
+迭代次数: 5; seeds=[42, 43, 44, 45, 46]
+使用Tensor模块: 是
+使用OT模块: 是
+特征融合方式: Tensor对齐
+域对齐方式: 最优传输
+目标标签比例/权重: 0.0/0.0
+Tensor/Adv损失权重: 0.12/0.08
+Tensor投影维度/更新: 64/每epoch一次; SVD统计批次=128; SVD投影模式=legacy_supervised; 基变换模式=legacy_supervised
+学习率: feature=5e-06, other=0.0002, weight_decay=0.0005
+VIS训练/BN模式: legacy_supervised; Sinkhorn自适应迭代=False
+判别器学习率调度: 固定学习率
+报告策略: last, 窗口: 10
+Label-guided DA without target CE: true target classes enter Tensor pairing/SVD and class-conditional OT; target classification ratio/weight=0/0; source_only_warmup=10
+================================================================================
+
+================================================================================
+迭代 1/5
+随机种子: 42
+================================================================================
+LABEL-GUIDED SHARED CLASS SPACE. support supplied by independent cohort preprocessing. reported_protocol=LABEL_GUIDED_DA_NO_TARGET_CE; shared original labels=[1, 5, 6, 7, 8, 9, 11, 13, 14]; source samples 760->515; target samples retained without filtering=113/113; classifier classes=9; label-free pair manifest sha256=283862861d42b84860a38202da10ab71962356de2aa1531243c7aa8c259ab3ec.
+LABEL-GUIDED ALIGNMENT ACTIVE: target truth enters Tensor pairing/SVD and class-conditional OT; target classification CE remains exactly zero.
+Dataset audit: source_train=515, target_train=113, target_val=36
+Class counts (original labels): source={1: 120, 5: 53, 6: 53, 7: 83, 8: 44, 9: 45, 11: 47, 13: 40, 14: 30}; target_train=<class support inspected once; per-class counts withheld>; target_val={1: 6, 5: 4, 6: 4, 7: 8, 8: 1, 9: 5, 11: 3, 13: 4, 14: 1}
+Classifier label map (original->index): {1: 0, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5, 11: 6, 13: 7, 14: 8}
+Exact VIS/IR pairing audit: source={'union_vis_files': 1136, 'union_ir_files': 966, 'matched_pairs_all': 958, 'selected_phase_pairs': 515, 'dropped_unpaired_vis': 178, 'dropped_unpaired_ir': 8, 'selected_phase_pairs_before_filter': 760, 'filtered_out_pairs': 245, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}; target_train={'source': 'independent_label_free_pair_manifest', 'selected_phase_pairs_before_filter': 113, 'filtered_out_pairs': 0, 'selected_phase_pairs': 113, 'retained_original_labels': 'withheld_from_training_dataset'}; target_val={'union_vis_files': 164, 'union_ir_files': 169, 'matched_pairs_all': 149, 'selected_phase_pairs': 36, 'dropped_unpaired_vis': 15, 'dropped_unpaired_ir': 20, 'selected_phase_pairs_before_filter': 36, 'filtered_out_pairs': 0, 'retained_original_labels': [1, 5, 6, 7, 8, 9, 11, 13, 14]}
+Target training item label exposure: include_label=False; UDA must be False (oracle class support, if enabled, comes from the independent preprocessing manifest).
+Training mode: target-label-guided Tensor/SVD and class-conditional OT; target classification CE is disabled.
+Training batches per epoch: source loader during warm-up, then one natural-distribution pass over all target paired-label samples; batch_size=32.
+Trainable parameters: VIS=262,656/11,439,168, IR=4,951,872/4,951,872. VIS fine-tuning stages=projection only (actual supervised-reference behavior).
+Feature fusion: Tensor alignment (512+512 -> 64+64); fused_dim=128
+Domain adaptation: Neural OT generator with 3-domain discriminator
+Loss weights: tensor=0.12, adv=0.08
+Transport: mode=sinkhorn, epsilon=0.1, Sinkhorn iterations(min/max)=50/50, tolerance=0.0001, correction scale=0.1, correction regularization weight=0.001, class conditional=True
+Joint optimization schedule: source-only warm-up for 10 epochs, then Tensor/SVD-only warm-up for 10 epochs, followed by an OT loss ramp over 5 epochs.
+Tensor projection update: once per epoch from the complete natural-distribution source/target label-guided bank after source-only warm-up; projection_dim=64, max_sweeps=10, relative singular-value tolerance=0.001, projection_mode=legacy_supervised, basis_transport=legacy_supervised
+Epoch [1/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+VIS BatchNorm behavior: supervised-reference train mode (running statistics update even in the frozen backbone).
+Epoch [1/100] | Loss: 1.8647 (Cls: 1.8647 [src/tgt/mid=1.8647/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.3732 | Val Acc: 0.2778 | Val P/R/F1 (Macro): 0.0632/0.2000/0.0954 | LR feature/other/discriminator: 4.99889e-06/0.000199956/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.799s/0.000s/3.796GB/6.033GB
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.2778
+Epoch [2/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [2/100] | Loss: 1.2902 (Cls: 1.2902 [src/tgt/mid=1.2902/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.6599 | Val Acc: 0.1667 | Val P/R/F1 (Macro): 0.0859/0.1333/0.0990 | LR feature/other/discriminator: 4.99556e-06/0.000199822/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 3.852s/0.000s/3.795GB/3.957GB
+Epoch [3/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [3/100] | Loss: 1.0390 (Cls: 1.0390 [src/tgt/mid=1.0390/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.7831 | Val Acc: 0.2778 | Val P/R/F1 (Macro): 0.2519/0.3611/0.2725 | LR feature/other/discriminator: 4.99001e-06/0.000199601/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.156s/0.000s/3.795GB/3.957GB
+Epoch [4/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [4/100] | Loss: 0.8929 (Cls: 0.8929 [src/tgt/mid=0.8929/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.8676 | Val Acc: 0.3611 | Val P/R/F1 (Macro): 0.2725/0.3981/0.3045 | LR feature/other/discriminator: 4.98226e-06/0.00019929/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.134s/0.000s/3.795GB/3.957GB
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.3611
+Epoch [5/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [5/100] | Loss: 0.8625 (Cls: 0.8625 [src/tgt/mid=0.8625/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.8529 | Val Acc: 0.4167 | Val P/R/F1 (Macro): 0.4407/0.4759/0.4429 | LR feature/other/discriminator: 4.9723e-06/0.000198892/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.081s/0.000s/3.795GB/3.957GB
+  >>> Diagnostic target-val peak updated (not used for model selection): 0.4167
+Epoch [6/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [6/100] | Loss: 0.8112 (Cls: 0.8112 [src/tgt/mid=0.8112/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.8732 | Val Acc: 0.2778 | Val P/R/F1 (Macro): 0.2619/0.4259/0.2910 | LR feature/other/discriminator: 4.96015e-06/0.000198406/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 3.769s/0.000s/3.795GB/3.957GB
+Epoch [7/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [7/100] | Loss: 0.7775 (Cls: 0.7775 [src/tgt/mid=0.7775/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9099 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.3322/0.5185/0.3797 | LR feature/other/discriminator: 4.94581e-06/0.000197833/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.235s/0.000s/3.795GB/3.957GB
+Epoch [8/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [8/100] | Loss: 0.7386 (Cls: 0.7386 [src/tgt/mid=0.7386/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9173 | Val Acc: 0.4167 | Val P/R/F1 (Macro): 0.4094/0.5463/0.4147 | LR feature/other/discriminator: 4.92931e-06/0.000197172/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.402s/0.000s/3.795GB/3.957GB
+Epoch [9/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [9/100] | Loss: 0.7124 (Cls: 0.7124 [src/tgt/mid=0.7124/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9357 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.2638/0.3796/0.2990 | LR feature/other/discriminator: 4.91066e-06/0.000196426/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 4.346s/0.000s/3.795GB/3.957GB
+Epoch [10/100] | UDA source-only warm-up: cross-domain SVD/Tensor/OT updates are disabled.
+Epoch [10/100] | Loss: 0.7093 (Cls: 0.7093 [src/tgt/mid=0.7093/0.0000/0.0000; labeled-target-observations=0], TAL: 0.0000, Adv: 0.0000, D: 0.0000, OT-Reg: 0.000000) | OT scale: 0.00 | OT inner objective: 0.0000 | Marginal residual row/col/max: 0.00e+00/0.00e+00/0.00e+00 | Sinkhorn iters(avg): 0.0 | Off-class mass: 0.00e+00 | Source Train Acc: 0.9375 | Val Acc: 0.3333 | Val P/R/F1 (Macro): 0.4074/0.4981/0.4123 | LR feature/other/discriminator: 4.88988e-06/0.000195595/0.0002 | unlabeled source-prior min/max/entropy: 1.111e-01/1.111e-01/2.1972 | unlabeled target confidence/entropy/classes: 0.0000/0.0000/0/9 | Efficiency epoch/SVD/peak-alloc/peak-reserved: 3.963s/0.000s/3.795GB/3.957GB
+Epoch [11/100] | label-guided target-class pairing: target_label_source=target-ground-truth-label-guided, pseudo_feature_space=target-ground-truth-label-guided, class_counts=[20, 8, 16, 29, 4, 10, 12, 12, 2], coverage_repairs=0, assigned_confidence=1.0000, repaired-vs-nearest agreement=1.0000, modality_source_bal_acc=[], modality_weights=[], modality_reliability_estimator=not-applicable-oracle, change_rate=n/a, target_samples=113, epoch_samples=113, training_batches=4
+Epoch [11/100] | SVD update #1: pairs=261, sweeps=10, converged=False, rel_change=5.796e-03, effective_ranks=(111, 25), stabilized_null_dims=(0, 0), rank_thresholds=(0.0010587269207462668, 0.0017541155684739351), class_paired=True, class_balanced=True, target_labels_source=target-ground-truth-label-guided, basis_overlap_src/tgt=0.155/0.156, basis_min_cos_src/tgt=0.000/0.001, basis_nonorth=9.219e-01, basis_nonorth_src/tgt=8.611e-01/8.601e-01, transport_nonorth=9.219e-01, basis_domain_gap=5.291e-01, shared_transport_ranks=(64, 64), shared_transport_rank_thresholds=(3.7705215163441608e-06, 5.939755737927044e-06), classifier_basis=shared, basis_transport=legacy_supervised
