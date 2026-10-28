@@ -26,7 +26,8 @@
 #   JMDA_RUN_INVARIANT_TESTS  JMDA 训练前运行 Tensor/OT 数值门禁（0/1，默认 1）
 #   JMDA_MIN_FREE_GPU_MEMORY_MIB  可选的启动前空闲显存门禁（MiB；默认不启用）
 #   JMDA_CLASS_NAMES_FILE  14类真实英文名称文件（PDA 文本提示必需）
-#   CLIP_CACHE_DIR  CLIP 权重缓存目录（PDA；默认 ~/.cache/clip）
+#   CLIP_CACHE_DIR  CLIP 权重缓存目录（PDA；默认 pretrained_weights/clip）
+#   TORCH_HOME      torchvision/tllib 权重根目录（默认 pretrained_weights/torch）
 #   JMDA_GPU_SCHEDULER  是否在每个方法前等待合适GPU（0/1，默认1）
 #   JMDA_GPU_MAX_UTIL_PERCENT  允许启动时的最高GPU利用率（默认10）
 #   JMDA_GPU_STABLE_CHECKS / JMDA_GPU_POLL_SECONDS  连续空闲检查次数/间隔（默认3/30）
@@ -36,6 +37,9 @@
 #   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  各方法训练轮数；默认分别为
 #     100 / 20 / 20 / 20 / 20，与当前采用的各自发布配方一致
 #   CDAN_NUM_ITERATIONS  CDAN 总迭代数（默认官方 100004）
+#   UDA_NUM_WORKERS / UDA_PREFETCH_FACTOR  对比方法加载进程/每进程预取（默认8/4）
+#   UDA_PIN_MEMORY / UDA_PERSISTENT_WORKERS  对比方法 pinned/persistent worker（默认1/1）
+#   DEEPCORAL_ALEXNET_WEIGHTS  可选的离线 torchvision AlexNet 权重文件
 #   SDA_CCSA_EPOCHS / SDA_DSNE_EPOCHS  有监督域适应官方预算（默认80/20）
 #   SUPERVISED_MCFT_EPOCHS  MCFT官方预算（默认500）
 #
@@ -89,6 +93,11 @@ UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
 UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
 UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
 CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
+UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"
+UDA_PREFETCH_FACTOR="${UDA_PREFETCH_FACTOR:-4}"
+UDA_PIN_MEMORY="${UDA_PIN_MEMORY:-1}"
+UDA_PERSISTENT_WORKERS="${UDA_PERSISTENT_WORKERS:-1}"
+DEEPCORAL_ALEXNET_WEIGHTS="${DEEPCORAL_ALEXNET_WEIGHTS:-}"
 if [ "$EPOCHS_WAS_EXPLICIT" = "1" ]; then
   SDA_CCSA_EPOCHS="${SDA_CCSA_EPOCHS:-$EPOCHS}"
   SDA_DSNE_EPOCHS="${SDA_DSNE_EPOCHS:-$EPOCHS}"
@@ -101,7 +110,7 @@ fi
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"
+JMDA_EXPECTED_CODE_FINGERPRINT="90f74dbbad2a858e"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 JMDA_GPU_SCHEDULER="${JMDA_GPU_SCHEDULER:-1}"
 JMDA_GPU_MAX_UTIL_PERCENT="${JMDA_GPU_MAX_UTIL_PERCENT:-10}"
@@ -142,6 +151,16 @@ if [[ "$PROTOCOL" = "uda" ]]; then
   require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
   require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
   require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
+  require_nonnegative_integer "UDA_NUM_WORKERS" "$UDA_NUM_WORKERS"
+  require_positive_integer "UDA_PREFETCH_FACTOR" "$UDA_PREFETCH_FACTOR"
+  if [[ "$UDA_PIN_MEMORY" != "0" && "$UDA_PIN_MEMORY" != "1" ]]; then
+    echo "UDA_PIN_MEMORY 必须是 0 或 1: $UDA_PIN_MEMORY"
+    exit 1
+  fi
+  if [[ "$UDA_PERSISTENT_WORKERS" != "0" && "$UDA_PERSISTENT_WORKERS" != "1" ]]; then
+    echo "UDA_PERSISTENT_WORKERS 必须是 0 或 1: $UDA_PERSISTENT_WORKERS"
+    exit 1
+  fi
 fi
 if [[ "$PROTOCOL" = "sda" ]]; then
   require_positive_integer "SDA_CCSA_EPOCHS" "$SDA_CCSA_EPOCHS"
@@ -231,8 +250,14 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 SUITE_ID="${JMDA_SUITE_ID:-$RUN_ID}"
 CHECKPOINT_ROOT="$HERE/checkpoints/$PROTOCOL/$RUN_ID"
 FAIR_LIST_DIR="$HERE/prepared_lists/$SUITE_ID"
-CLASS_NAMES_FILE="${JMDA_CLASS_NAMES_FILE:-}"
-CLIP_CACHE_DIR="${CLIP_CACHE_DIR:-}"
+CLASS_NAMES_FILE="${JMDA_CLASS_NAMES_FILE:-$HERE/class.txt}"
+CLIP_CACHE_DIR="${CLIP_CACHE_DIR:-$HERE/pretrained_weights/clip}"
+TORCH_HOME="${TORCH_HOME:-$HERE/pretrained_weights/torch}"
+export TORCH_HOME
+if [ -z "$DEEPCORAL_ALEXNET_WEIGHTS" ] \
+    && [ -f "$HERE/pretrained_weights/deepcoral_alexnet_owt_4df8aa71.pth" ]; then
+  DEEPCORAL_ALEXNET_WEIGHTS="$HERE/pretrained_weights/deepcoral_alexnet_owt_4df8aa71.pth"
+fi
 # SDA 目标标注预算（每类样本数），CCSA / d-SNE 与子集生成共用同一数值
 SDA_LABELS_PER_CLASS="${JMDA_SDA_LABELS_PER_CLASS:-10}"
 export JMDA_DATA_ROOT="$DATA_ROOT"
@@ -438,6 +463,7 @@ run() {  # run "<log-tag>" <cmd...>
   esac
   case "$tag" in
     mcft_*) model_selection="official_target_best" ;;
+    mdd_*|mcc_*|pda_*) model_selection="official_target_best" ;;
   esac
   if ! "$PYTHON" "$HERE/tools/collect_run_result.py" \
     --log "$log_path" \
@@ -583,10 +609,25 @@ elif [ "$PROTOCOL" = "uda" ]; then
     echo "VIS 清单生成失败；尚未启动训练。"
     exit 1
   fi
-  UDA_COMMON=(--seed "$SEED" --data-dir "$VIS_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
+  UDA_COMMON=(--seed "$SEED" --data-dir "$VIS_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT" --num-workers "$UDA_NUM_WORKERS" --prefetch-factor "$UDA_PREFETCH_FACTOR")
+  if [ "$UDA_PIN_MEMORY" = "1" ]; then
+    UDA_COMMON+=(--pin-memory)
+  else
+    UDA_COMMON+=(--no-pin-memory)
+  fi
+  if [ "$UDA_PERSISTENT_WORKERS" = "1" ]; then
+    UDA_COMMON+=(--persistent-workers)
+  else
+    UDA_COMMON+=(--no-persistent-workers)
+  fi
+  echo "UDA DataLoader: workers=$UDA_NUM_WORKERS prefetch=$UDA_PREFETCH_FACTOR pin_memory=$UDA_PIN_MEMORY persistent_workers=$UDA_PERSISTENT_WORKERS"
   for t in "${TARGETS[@]}"; do
     run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$UDA_DANN_EPOCHS" "${UDA_COMMON[@]}"
-    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" "${UDA_COMMON[@]}"
+    if [ -n "$DEEPCORAL_ALEXNET_WEIGHTS" ]; then
+      run "deepcoral_$t"  "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" "${UDA_COMMON[@]}" --alexnet-weights "$DEEPCORAL_ALEXNET_WEIGHTS"
+    else
+      run "deepcoral_$t"  "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" "${UDA_COMMON[@]}"
+    fi
     # CDAN 官方配置为迭代制（train_image.py: num_iterations=100004），不用 --epochs
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" "${UDA_COMMON[@]}"
     run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$UDA_MDD_EPOCHS" "${UDA_COMMON[@]}"

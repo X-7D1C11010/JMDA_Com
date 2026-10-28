@@ -73,6 +73,11 @@ def summarize(log_dir: Path, targets: list[str], expected_iterations: int):
                 f"{target}: iterations={summary.get('num_iterations')}, "
                 f"expected={expected_iterations}"
             )
+        if summary.get("report_strategy") != "best":
+            errors.append(
+                f"{target}: report_strategy={summary.get('report_strategy')!r}, "
+                "expected 'best'"
+            )
 
         row = {"target": target, "target_cn": TARGET_CN[target]}
         for key, label in METRICS:
@@ -134,6 +139,8 @@ def write_outputs(output_dir: Path, rows: list[dict], full: dict):
         overall_metrics[key] = _stats(values)
     payload = {
         "protocol": "LABEL_GUIDED_DA_NO_TARGET_CE",
+        "report_strategy": "best_validation_accuracy_epoch",
+        "metric_coherence": "precision/recall/F1 come from the ACC-selected epoch",
         "weather_count": len(rows),
         "weather_results": rows,
         "weather_mean_metrics": overall_metrics,
@@ -146,6 +153,9 @@ def write_outputs(output_dir: Path, rows: list[dict], full: dict):
 
     lines = [
         "# JMDA formal label-guided experiment",
+        "",
+        "> Each seed reports the epoch with maximum validation ACC; Precision, "
+        "Recall and F1 are taken from that same epoch.",
         "",
         "## Classification metrics",
         "",
@@ -164,7 +174,10 @@ def write_outputs(output_dir: Path, rows: list[dict], full: dict):
     for key, _ in METRICS:
         stats = overall_metrics[key]
         overall.append(f"{100 * stats['mean']:.2f} ± {100 * stats['std']:.2f}")
-    lines.append("| Four-weather mean | " + " | ".join(overall) + " |")
+    aggregate_label = (
+        "Four-weather mean" if len(rows) == 4 else "Selected-target mean"
+    )
+    lines.append(f"| {aggregate_label} | " + " | ".join(overall) + " |")
 
     lines.extend([
         "",

@@ -30,6 +30,7 @@ class FormalLabelGuidedSummaryTests(unittest.TestCase):
         return {
             "protocol": "LABEL_GUIDED_DA_NO_TARGET_CE",
             "num_iterations": 5,
+            "report_strategy": "best",
             "metrics": {
                 key: {
                     "values": [0.7, 0.71, 0.72, 0.73, 0.74],

@@ -3078,7 +3078,7 @@ def run_single_iteration(args, seed, logger):
         if args.report_strategy == 'best'
         else ""
     )
-    if protocol == 'UDA':
+    if protocol == 'UDA' and not args.label_guided_alignment:
         logger.info(
             f"Report strategy: {args.report_strategy}, window={args.report_window}, "
             f"reported_acc={report_metrics['accuracy']:.4f}; target-label best "
@@ -3282,7 +3282,11 @@ def run_ablation_experiment(args):
     NUM_ITERATIONS = args.num_iterations
     protocol = adaptation_protocol(args)
     experiment_protocol = reported_protocol(args)
-    if protocol == 'UDA' and args.report_strategy not in ('last', 'last_window'):
+    if (
+        protocol == 'UDA'
+        and not args.label_guided_alignment
+        and args.report_strategy not in ('last', 'last_window')
+    ):
         raise ValueError(
             "Strict UDA cannot select a checkpoint using target validation "
             "labels; use --report_strategy last or last_window."
@@ -4175,7 +4179,11 @@ def main():
         require_parity('lr_feature', args.lr_feature, 5e-6)
         require_parity('lr_other', args.lr_other, 2e-4)
         require_parity('weight_decay', args.weight_decay, 5e-4)
-        require_parity('report_strategy', args.report_strategy, 'last')
+        require_parity(
+            'report_strategy',
+            args.report_strategy,
+            'best' if args.label_guided_alignment else 'last',
+        )
         allowed_pairing_ablation_modes = (
             ('full', 'with_tensor_with_ot', 'with_tensor_no_ot')
             if args.diagnostic_screening

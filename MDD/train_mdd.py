@@ -10,7 +10,7 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
     (tools/uda_data.py: only target-domain classes are kept, labels remapped
     to 0..|T|-1, so the classifier head width equals that target's class count);
   * ResizeImage implemented locally (tllib.vision.transforms not downloaded);
-  * Windows: DataLoader num_workers=0.
+  * DataLoader workers/prefetch/pinned memory 可配置；训练超参保持官方值。
 
 2026-10-21 修复（逐项核对 tllib 官方 mdd.py 后）：
   * bottleneck_dim 恢复官方默认 1024（mdd.py:227），原为 256；
@@ -48,6 +48,11 @@ from classification_metrics import classification_metrics, format_classification
 from reproducibility import seed_everything
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
 from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from data_loader_options import (
+    add_data_loader_args,
+    data_loader_kwargs,
+    evaluation_loader_kwargs,
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -159,6 +164,7 @@ def main():
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
                         help='Directory for efficiency logging output')
     parser.add_argument('--seed', type=int, default=42)
+    add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
@@ -179,12 +185,15 @@ def main():
     print(f'Source train: {len(src_ds)}, target train: {len(tgt_ds)}, target val: {len(tgt_val_ds)}')
     print(format_dropped('source train', src_ds))
 
+    loader_kwargs = data_loader_kwargs(args)
+    eval_loader_kwargs = evaluation_loader_kwargs(args)
+    print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
-                            num_workers=0, drop_last=True)
+                            drop_last=True, **loader_kwargs)
     tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
-                            num_workers=0, drop_last=True)
+                            drop_last=True, **loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
-                                shuffle=False, num_workers=0)
+                                shuffle=False, **eval_loader_kwargs)
     train_source_iter = ForeverDataIterator(src_loader)
     train_target_iter = ForeverDataIterator(tgt_loader)
 
@@ -197,6 +206,9 @@ def main():
     lr_scheduler = LambdaLR(optimizer, lambda x: args.lr * (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
 
     best_acc = -float('inf')
+    best_epoch = 0
+    best_path = os.path.join(args.save_dir, f'mdd_{args.target}_best.pth')
+    last_path = os.path.join(args.save_dir, f'mdd_{args.target}_last.pth')
     final_acc = None
     # Efficiency logging (optional, does not affect training)
     eff = None
@@ -215,19 +227,39 @@ def main():
         val_metrics = validate(tgt_val_loader, classifier, num_classes)
         acc = val_metrics['accuracy']
         final_acc = acc
-        best_acc = max(best_acc, acc)
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}')
         print(format_classification_metrics(val_metrics))
+        if acc > best_acc:
+            best_acc = acc
+            best_epoch = epoch
+            torch.save({
+                'epoch': epoch,
+                'state_dict': classifier.state_dict(),
+                'metrics': dict(val_metrics),
+                'target': args.target,
+            }, best_path)
+            print(f'Saved new official target-best checkpoint: {best_path}')
         if eff:
             eff.epoch_end(epoch)
 
-    torch.save(classifier.state_dict(), os.path.join(args.save_dir, f'mdd_{args.target}_last.pth'))
+    torch.save({'epoch': args.epochs, 'state_dict': classifier.state_dict(),
+                'metrics': val_metrics, 'target': args.target}, last_path)
+    try:
+        checkpoint = torch.load(best_path, map_location=device, weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(best_path, map_location=device)
+    classifier.load_state_dict(checkpoint['state_dict'])
+    selected_metrics = validate(tgt_val_loader, classifier, num_classes)
+    print(f'Loaded official target-best checkpoint from epoch {best_epoch}: {best_path}')
+    print(format_classification_metrics(selected_metrics))
     if eff:
-        eff.finalize(extra_metrics={'final_acc': final_acc,
-                                    'diagnostic_peak_acc': best_acc,
+        eff.finalize(extra_metrics={'final_acc': selected_metrics['accuracy'],
+                                    'best_acc': best_acc,
+                                    'best_epoch': best_epoch,
                                     'target': args.target})
-    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
-    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
+    print(f'Best checkpoint epoch ({args.target}): {best_epoch}')
+    print(f'Final target val accuracy ({args.target}, official target-best checkpoint): '
+          f'{selected_metrics["accuracy"]:.4f}')
 
 
 if __name__ == '__main__':

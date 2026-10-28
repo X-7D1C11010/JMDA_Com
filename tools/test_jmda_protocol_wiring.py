@@ -245,8 +245,9 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         self.assertIn("--diagnostic_oracle_pairing", self.screening)
         self.assertIn("--diagnostic_source_only", self.screening)
         self.assertIn("summarize_jmda_screening.py", self.screening)
+        actual = compute_training_code_fingerprint(ROOT / "JMDA-Net")
         self.assertIn(
-            'EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"', self.screening
+            f'EXPECTED_CODE_FINGERPRINT="{actual}"', self.screening
         )
         self.assertIn("print_jmda_code_fingerprint.py", self.screening)
         self.assertIn("target_ce_max", self.screening_summary)
@@ -270,9 +271,19 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         )
 
     def test_formal_label_guided_suite_is_complete_and_records_efficiency(self):
-        self.assertIn("EPOCHS=100", self.label_guided_formal)
-        self.assertIn("NUM_ITERATIONS=5", self.label_guided_formal)
-        self.assertIn("TARGETS=(backlight rainy foggy dark)", self.label_guided_formal)
+        self.assertIn('EPOCHS="${JMDA_EPOCHS:-100}"', self.label_guided_formal)
+        self.assertIn(
+            'NUM_ITERATIONS="${JMDA_NUM_ITERATIONS:-5}"',
+            self.label_guided_formal,
+        )
+        self.assertIn(
+            '${JMDA_TARGETS:-backlight rainy foggy dark}',
+            self.label_guided_formal,
+        )
+        self.assertIn(
+            'REPORT_STRATEGY="${JMDA_REPORT_STRATEGY:-best}"',
+            self.label_guided_formal,
+        )
         self.assertIn("--efficiency_output_dir", self.label_guided_formal)
         self.assertIn("--require_efficiency_flops", self.label_guided_formal)
         self.assertIn("--require-efficiency", self.label_guided_formal)

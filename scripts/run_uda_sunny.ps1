@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # UDA experiments: source = 晴天 (sunny), targets = 逆光/雨天/雾天/黑天
 #
 # Methods (each keeps its ORIGINAL single-modal / multi-modal setting):
@@ -24,6 +24,7 @@ param(
     [int]$Epochs = 0,
     [int[]]$Seeds = @(42, 43, 44, 45, 46),
     [string[]]$Targets = @('backlight', 'rainy', 'foggy', 'dark'),
+    [string[]]$IncludeMethods = @(),
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
     [string]$DataDir = '',
@@ -35,6 +36,12 @@ param(
     [int]$PDAEpochs = 20,
     [string]$ClassNamesFile = $env:JMDA_CLASS_NAMES_FILE,
     [string]$ClipCacheDir = '',
+    [string]$DeepCoralWeights = '',
+    [int]$NumWorkers = 4,
+    [int]$EvalNumWorkers = 0,
+    [int]$PrefetchFactor = 4,
+    [int]$WorkerTimeoutSeconds = 300,
+    [int]$WindowsWorkerCap = 2,
     [int]$BenchRepeats = 5,
     [switch]$SkipBenchmark
 )
@@ -44,6 +51,13 @@ $ErrorActionPreference = 'Continue'
 $Repo = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $Repo 'efficiency_results\uda_sunny' }
 if (-not $DataDir) { $DataDir = Join-Path $Repo 'data_lists_vis' }
+if (-not $ClassNamesFile) { $ClassNamesFile = Join-Path $Repo 'class.txt' }
+if (-not $ClipCacheDir) { $ClipCacheDir = Join-Path $Repo 'pretrained_weights\clip' }
+if (-not $DeepCoralWeights) {
+    $candidate = Join-Path $Repo 'pretrained_weights\deepcoral_alexnet_owt_4df8aa71.pth'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { $DeepCoralWeights = $candidate }
+}
+$env:TORCH_HOME = Join-Path $Repo 'pretrained_weights\torch'
 $LogDir = Join-Path $OutDir 'logs'
 New-Item -ItemType Directory -Force -Path $OutDir, $LogDir | Out-Null
 
@@ -55,6 +69,20 @@ $Methods = [ordered]@{
     'MDD'       = 'MDD\train_mdd.py'
     'MCC'       = 'MCC\train_mcc.py'
     'PDA'       = 'PDA\train_pda.py'
+}
+if ($IncludeMethods.Count -gt 0) {
+    $selected = [ordered]@{}
+    foreach ($requested in $IncludeMethods) {
+        $canonical = @($Methods.Keys | Where-Object { $_ -ieq $requested })
+        if ($canonical.Count -ne 1) {
+            Write-Host ("Unknown method '{0}'. Valid methods: {1}" -f `
+                       $requested, ($Methods.Keys -join ', ')) -ForegroundColor Red
+            exit 1
+        }
+        $name = $canonical[0]
+        $selected[$name] = $Methods[$name]
+    }
+    $Methods = $selected
 }
 
 # 默认使用每种方法发布配方中的训练预算。-Epochs > 0 仅用于用户明确要求的
@@ -74,6 +102,34 @@ if (-not (Test-Path $Python)) {
     Write-Host "Python interpreter not found: $Python" -ForegroundColor Red
     exit 1
 }
+if ($NumWorkers -lt 0 -or $EvalNumWorkers -lt 0 -or
+    $PrefetchFactor -lt 1 -or $WorkerTimeoutSeconds -lt 1) {
+    Write-Host 'Invalid DataLoader settings.' -ForegroundColor Red
+    exit 1
+}
+
+# Windows uses multiprocessing spawn. Every worker imports PyTorch and CUDA
+# DLLs, so two domain loaders with four workers each can consume over 10 GiB of
+# committed host memory. Cap only the local Windows launcher; Linux/server
+# launchers keep their independently configured worker budget.
+$EffectiveNumWorkers = $NumWorkers
+$UsePersistentWorkers = $true
+if ($env:OS -eq 'Windows_NT') {
+    if ($WindowsWorkerCap -lt 0) {
+        Write-Host 'WindowsWorkerCap must be >= 0.' -ForegroundColor Red
+        exit 1
+    }
+    if ($EffectiveNumWorkers -gt $WindowsWorkerCap) {
+        Write-Host ("Windows safety: capping training workers from {0} to {1}." -f `
+                   $EffectiveNumWorkers, $WindowsWorkerCap) -ForegroundColor Yellow
+        $EffectiveNumWorkers = $WindowsWorkerCap
+    }
+    # With only two workers per training domain and zero evaluation workers,
+    # persistence is safe and avoids repeatedly spawning PyTorch for the
+    # cycling loaders used by CDAN/MDD/MCC.
+    $UsePersistentWorkers = ($EffectiveNumWorkers -gt 0)
+}
+$env:PYTHONUNBUFFERED = '1'
 if (-not $ClassNamesFile -or -not (Test-Path -LiteralPath $ClassNamesFile -PathType Leaf)) {
     Write-Host 'PDA requires a real ordered 14-class English name file. Pass -ClassNamesFile or set JMDA_CLASS_NAMES_FILE.' -ForegroundColor Red
     exit 1
@@ -89,6 +145,11 @@ Write-Host " Seeds   : $($Seeds -join ', ')"
 Write-Host " Targets : $($Targets -join ', ')"
 Write-Host " Methods : $($Methods.Keys -join ', ')"
 Write-Host " OutDir  : $OutDir"
+Write-Host ((" Loader  : train_workers={0}, eval_workers={1}, prefetch={2}, " +
+             "persistent={3}, timeout={4}s") -f $EffectiveNumWorkers,
+             $EvalNumWorkers, $PrefetchFactor, $UsePersistentWorkers,
+             $WorkerTimeoutSeconds)
+Write-Host " TORCH_HOME: $env:TORCH_HOME"
 Write-Host "=============================================================="
 
 # ── 1) efficiency micro-benchmark (params / FLOPs / latency / memory) ────────
@@ -96,7 +157,7 @@ if (-not $SkipBenchmark) {
     Write-Host "`n[1/2] Efficiency micro-benchmark ..."
     $benchLog = Join-Path $LogDir 'benchmark.log'
     $benchScript = Join-Path $Repo 'tools\benchmark_efficiency.py'
-    & $Python -B $benchScript `
+    & $Python -B -u $benchScript `
         --methods 'dann,deepcoral,cdan,mdd,mcc,pda' `
         --protocol UDA `
         --benchmark_repeats $BenchRepeats `
@@ -122,33 +183,35 @@ foreach ($method in $Methods.Keys) {
             Write-Host ("[{0}/{1}] {2}  target={3}  seed={4}" -f $idx, $total, $method, $target, $seed)
 
             # CDAN 按官方配置为迭代制（num_iterations=100004），不用 --epochs。
-            if ($method -eq 'CDAN') {
-                & $Python -B $scriptPath `
-                    --target $target `
-                    --num-iterations $CdanIterations `
-                    --seed $seed `
-                    --data-dir $DataDir `
-                    --efficiency_output_dir $OutDir `
-                    --save-dir $checkpointDir *> $log
-            } elseif ($method -eq 'PDA') {
-                & $Python -B $scriptPath `
-                    --target $target `
-                    --epochs $MethodEpochs[$method] `
-                    --seed $seed `
-                    --data-dir $DataDir `
-                    --efficiency_output_dir $OutDir `
-                    --save-dir $checkpointDir `
-                    --class-names-file $ClassNamesFile `
-                    --clip-cache-dir $ClipCacheDir *> $log
+            $cli = @('-B', '-u', $scriptPath,
+                     '--target', $target,
+                     '--seed', $seed,
+                     '--data-dir', $DataDir,
+                     '--efficiency_output_dir', $OutDir,
+                     '--save-dir', $checkpointDir,
+                     '--num-workers', $EffectiveNumWorkers,
+                     '--prefetch-factor', $PrefetchFactor,
+                     '--pin-memory')
+            if ($UsePersistentWorkers) {
+                $cli += '--persistent-workers'
             } else {
-                & $Python -B $scriptPath `
-                    --target $target `
-                    --epochs $MethodEpochs[$method] `
-                    --seed $seed `
-                    --data-dir $DataDir `
-                    --efficiency_output_dir $OutDir `
-                    --save-dir $checkpointDir *> $log
+                $cli += '--no-persistent-workers'
             }
+            $cli += @('--eval-num-workers', $EvalNumWorkers,
+                      '--worker-timeout-seconds', $WorkerTimeoutSeconds)
+            if ($method -eq 'CDAN') {
+                $cli += @('--num-iterations', $CdanIterations)
+            } else {
+                $cli += @('--epochs', $MethodEpochs[$method])
+            }
+            if ($method -eq 'PDA') {
+                $cli += @('--class-names-file', $ClassNamesFile,
+                          '--clip-cache-dir', $ClipCacheDir)
+            }
+            if ($method -eq 'DeepCORAL' -and $DeepCoralWeights) {
+                $cli += @('--alexnet-weights', $DeepCoralWeights)
+            }
+            & $Python @cli *> $log
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Host ("      FAILED (exit={0})  log={1}" -f $LASTEXITCODE, $log) -ForegroundColor Red
@@ -165,7 +228,7 @@ Write-Host "`n[2/2] Regenerating summary ..."
 $pyCode = "import sys; sys.path.insert(0, r'$Repo\tools'); " +
           "from efficiency_common import generate_summary_files; " +
           "generate_summary_files(r'$OutDir')"
-& $Python -B -c $pyCode
+& $Python -B -u -c $pyCode
 
 Write-Host "`n=============================================================="
 Write-Host " Done."

@@ -989,6 +989,68 @@ python tools/extract_epoch_curves.py \
 验证：Python语法编译通过；12项协议/结果单元测试通过；CCSA双更新、d-SNE官方默认
 方向更新、MCFT VIS3+IR1 的前向与反向传播均通过；Git Bash `bash -n`检查通过。
 
+---
+
+## 18. 2026-10-27 六个 UDA 基线的官方网络、Dassl 与选模流程恢复
+
+本节覆盖第 15--16 节中 DANN/DeepCORAL 主干替换和 PDA 手工移植等旧状态。
+
+- **DANN**：训练入口现直接实例化随附发布代码 `DANN/models/model.py::CNNModel`，
+  输入固定为 28×28，使用官方 Adam(1e-3)、batch=128、NLLLoss、100 epochs 和
+  逐迭代 GRL 系数。唯一结构变化是末层由固定 10 类改为当前目标域 `|T|` 类；
+  另将发布代码在全连接张量上误用且新 PyTorch 已弃用的 `Dropout2d` 换成等价意图的
+  `Dropout`。
+- **Deep CORAL**：恢复随附发布代码的 AlexNet（4096 维）、ImageNet AlexNet 初始化、
+  source/target batch=200/56，以及 Resize(227)+ToTensor+ImageNet Normalize（无随机
+  增广）。优化器按发布代码的实际执行路径设置：base lr=1e-3、末层10×、momentum=0.9，
+  发布代码虽定义 weight decay 但未传给 SGD，故默认0。CORAL 协方差仍采用论文
+  Eq. (1)--(3) 的已修正实现。
+- **CDAN**：确认并固定 `CDAN/pytorch/network.py::ResNetFc('ResNet18')`；保留发布代码
+  的 batch=36、CDAN+E、100004 iterations、10-crop、逐迭代 inv scheduler。
+- **MDD/MCC**：每轮目标验证后真正写入 `*_best.pth`，训练结束另存 last，再回载
+  best 并重新评价。日志和启动器将其显式标为 `official_target_best`，不与严格
+  final-checkpoint UDA 主表混淆。
+- **PDA**：不再使用仓库原先的手工 trainer 移植；已固定并随仓库保存 PDA upstream
+  commit `21b0f444...` 和 Dassl commit `c61a1b57...`。新入口注册 `JMDAUda` 到官方
+  Dassl `TrainerXU`：晴天为有标签 `train_x`，目标训练为 `train_u`，并在送入
+  Dassl 前把目标训练标签全部改为 `-1`。官方 PDA 目标分支只使用图像产生伪标签；
+  目标真实标签仅在独立 val/test loader 中用于发布代码的逐轮 best-checkpoint 选择
+  和最终 ACC/Precision/Recall/F1。因此 PDA 属于 UDA，不是目标域有监督训练，但其
+  官方报告流程确实使用目标验证标签选模。
+- **加载性能**：六个入口支持 workers、prefetch、persistent workers、pinned memory；
+  服务器 UDA 启动器默认 8 workers、prefetch=4、pin/persistent 开启。该优化减少
+  CPU/I/O 等待，但不会把小网络/小官方 batch 强行填满 32 GB 显存，也不会缩短
+  CDAN 100004 或 MDD/MCC 20000 次官方更新预算本身。
+- **离线权重**：`tools/download_official_uda_weights.py` 可在本地下载并校验 CDAN/MDD/MCC
+  共用的 ResNet-18、Deep CORAL AlexNet 与 PDA CLIP ViT-B/16，上传整个
+  `pretrained_weights` 后，Linux 与 PowerShell 启动器会通过 `TORCH_HOME`、显式
+  AlexNet 路径和 CLIP cache 自动使用。
+
+验证：全部改动入口 `py_compile` 通过；DANN 真实清单1轮、CDAN 1 iteration+10-crop、
+MDD/MCC 1 iteration+best保存/回载均完成；官方 DANN/DeepCORAL 前向、PDA Dassl
+DataManager 与目标标签擦除测试通过；`tools` 下69项单元测试全部通过。
+
+---
+
+## 19. 2026-10-28 Windows DataLoader 停滞修复
+
+- **CDAN 十裁剪**：十个裁剪视角改为顺序建立和消费 DataLoader，仍对十个视角的
+  softmax 概率求和，评估数学定义不变；默认评估 worker 为0，避免 Windows 同时
+  启动 `10 × 4` 个会重复加载 PyTorch/CUDA DLL 的进程。
+- **统一验证加载器**：DANN、DeepCORAL、MDD、MCC、PDA 的验证加载器使用独立
+  `--eval-num-workers`（默认0），不再与源域、目标域训练加载器各自叠加进程池。
+- **故障超时**：多进程训练 DataLoader 默认设置300秒超时；worker 初始化或读取
+  异常会使任务失败并进入下一个方法，而不是无限等待。
+- **Windows 本地启动器**：训练 worker 默认最多2个、验证 worker 为0；训练 worker
+  保持持久化，避免CDAN/MDD/MCC循环加载器反复启动PyTorch进程。另启用Python
+  无缓冲输出；Linux服务器启动器的训练 worker 配置保持独立。
+- **DeepCORAL 离线权重**：先严格校验官方 AlexNet SHA256，再兼容加载 PyTorch
+  legacy tar 权重；不对未知哈希文件启用非 `weights_only` 反序列化。
+
+验证：PowerShell 7及Windows PowerShell 5.1解析通过；六个入口参数解析通过；
+9项官方接线/加载器防护测试通过；官方AlexNet权重实际加载通过；CDAN 1次训练更新
+加完整十裁剪验证在5.7秒内正常退出。
+
 
 
 

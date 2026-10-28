@@ -49,32 +49,60 @@ from classification_metrics import classification_metrics, format_classification
 from reproducibility import seed_everything
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
 from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from data_loader_options import add_data_loader_args, data_loader_kwargs
 
 
-def evaluate_10crop(model, list_path, label_map, device, num_classes, batch_size=4):
+def evaluate_10crop(model, list_path, label_map, device, num_classes,
+                    batch_size=4, num_workers=4, prefetch_factor=2,
+                    pin_memory=True, worker_timeout_seconds=300):
     """官方 train_image.py:22-45 的十裁剪测试协议（test_10crop=True 默认）：
-    10 个裁剪视角分别前向，softmax 概率求和后取 argmax。"""
+    10 个裁剪视角分别前向，softmax 概率求和后取 argmax。
+
+    The released implementation creates ten loaders at once.  On Windows each
+    loader's workers are independent spawned PyTorch processes, so 10 crops x
+    4 workers can exhaust committed memory.  Processing the views sequentially
+    is mathematically identical and bounds the active worker pool to one view.
+    """
     model.eval()
     transform_list = prep.image_test_10crop(resize_size=256, crop_size=224)
-    loaders = [
-        DataLoader(UdaImageListDataset(list_path, transform=tf, label_map=label_map),
-                   batch_size=batch_size, shuffle=False, num_workers=0)
-        for tf in transform_list
-    ]
-    all_labels, all_predictions = [], []
+    eval_loader_kwargs = {
+        'num_workers': num_workers,
+        'pin_memory': pin_memory,
+    }
+    if num_workers > 0:
+        eval_loader_kwargs['prefetch_factor'] = prefetch_factor
+        eval_loader_kwargs['timeout'] = worker_timeout_seconds
+
+    summed_probabilities = None
+    reference_labels = None
     with torch.no_grad():
-        iterators = [iter(loader) for loader in loaders]
-        for _ in range(len(loaders[0])):
-            summed, labels = None, None
-            for it in iterators:
-                imgs, lbl = next(it)
+        for transform in transform_list:
+            loader = DataLoader(
+                UdaImageListDataset(list_path, transform=transform,
+                                    label_map=label_map),
+                batch_size=batch_size, shuffle=False, **eval_loader_kwargs,
+            )
+            view_probabilities = []
+            view_labels = []
+            for imgs, labels in loader:
                 _, out = model(imgs.to(device))
-                prob = nn.Softmax(dim=1)(out)
-                summed = prob if summed is None else summed + prob
-                labels = lbl
-            all_labels.extend(labels.tolist())
-            all_predictions.extend(summed.argmax(1).cpu().tolist())
-    return classification_metrics(all_labels, all_predictions, num_classes=num_classes)
+                view_probabilities.append(nn.Softmax(dim=1)(out).cpu())
+                view_labels.append(labels.cpu())
+
+            probabilities = torch.cat(view_probabilities, dim=0)
+            labels = torch.cat(view_labels, dim=0)
+            if reference_labels is None:
+                reference_labels = labels
+                summed_probabilities = probabilities
+            else:
+                if not torch.equal(reference_labels, labels):
+                    raise RuntimeError('10-crop loaders returned inconsistent sample order')
+                summed_probabilities += probabilities
+
+    all_labels = reference_labels.tolist()
+    all_predictions = summed_probabilities.argmax(1).tolist()
+    return classification_metrics(all_labels, all_predictions,
+                                  num_classes=num_classes)
 
 
 def main():
@@ -106,6 +134,7 @@ def main():
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
                         help='Directory for efficiency logging output')
     parser.add_argument('--seed', type=int, default=42)
+    add_data_loader_args(parser, default_workers=4, default_eval_workers=0)
     args = parser.parse_args()
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
@@ -133,14 +162,18 @@ def main():
     print(f'Target train: {len(tgt_ds)} images')
     print(format_dropped('source train', src_ds))
 
+    loader_kwargs = data_loader_kwargs(args)
+    print(f'DataLoader settings: train={loader_kwargs}, '
+          f'10-crop workers/view={args.eval_num_workers}')
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
-                            num_workers=2, drop_last=True)
+                            drop_last=True, **loader_kwargs)
     tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
-                            num_workers=2, drop_last=True)
+                            drop_last=True, **loader_kwargs)
 
     # ResNet-18 backbone with bottleneck（官方 ResNetFc 配置：bottleneck_dim=256）
     model = ResNetFc(resnet_name='ResNet18', use_bottleneck=True,
                      bottleneck_dim=256, new_cls=True, class_num=num_classes).to(device)
+    print('CDAN backbone: official CDAN/pytorch/network.py ResNetFc(ResNet18)')
     # 原参考实现 train_image.py:113-118：--random 默认 False 时不建 RandomLayer，
     # 判别器输入 = bottleneck×类别数 的外积；仅 --random 时用 1024 维随机映射。
     if args.random:
@@ -236,7 +269,8 @@ def main():
         if eff:
             eff.step_end()
 
-        if (iter_num + 1) % 100 == 0:
+        if ((iter_num + 1) % 100 == 0 or
+                iter_num == args.num_iterations - 1):
             print(f'  iter [{iter_num + 1}/{args.num_iterations}] '
                   f'loss_cls={loss_cls.item():.4f} loss_transfer={loss_transfer.item():.4f} '
                   f'coeff={calc_coeff(iter_num):.4f} '
@@ -245,7 +279,11 @@ def main():
         if (iter_num % args.test_interval == args.test_interval - 1 or
                 iter_num == args.num_iterations - 1):
             val_metrics = evaluate_10crop(model, tgt_val_list, label_map,
-                                          device, num_classes)
+                                          device, num_classes,
+                                          num_workers=args.eval_num_workers,
+                                          prefetch_factor=args.prefetch_factor,
+                                          pin_memory=args.pin_memory,
+                                          worker_timeout_seconds=args.worker_timeout_seconds)
             acc = val_metrics['accuracy']
             final_acc = acc
             print(f'iter [{iter_num + 1}/{args.num_iterations}] '

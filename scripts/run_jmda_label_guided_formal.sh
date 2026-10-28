@@ -12,14 +12,28 @@ PREFETCH_FACTOR="${JMDA_PREFETCH_FACTOR:-2}"
 PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
 RUN_INVARIANTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 
-EPOCHS=100
-NUM_ITERATIONS=5
-BASE_SEED=42
-TARGETS=(backlight rainy foggy dark)
+EPOCHS="${JMDA_EPOCHS:-100}"
+NUM_ITERATIONS="${JMDA_NUM_ITERATIONS:-5}"
+BASE_SEED="${JMDA_SEED:-42}"
+read -r -a TARGETS <<< "${JMDA_TARGETS:-backlight rainy foggy dark}"
+REPORT_STRATEGY="${JMDA_REPORT_STRATEGY:-best}"
 BATCH_SIZE=32
 PROJECTION_DIM=64
 SVD_BATCH_SIZE=128
-EXPECTED_CODE_FINGERPRINT="8de7896a76fce67b"
+EXPECTED_CODE_FINGERPRINT="90f74dbbad2a858e"
+
+if [[ "${#TARGETS[@]}" -eq 0 ]]; then
+  echo "JMDA_TARGETS 不能为空"; exit 1
+fi
+for target in "${TARGETS[@]}"; do
+  case "$target" in
+    backlight|rainy|foggy|dark) ;;
+    *) echo "JMDA_TARGETS 包含未知天气: $target"; exit 1 ;;
+  esac
+done
+if [[ "$REPORT_STRATEGY" != "best" ]]; then
+  echo "正式标签引导实验要求 JMDA_REPORT_STRATEGY=best"; exit 1
+fi
 
 case "$PIN_MEMORY" in
   1) PIN_ARG="--pin_memory" ;;
@@ -142,7 +156,7 @@ for target in "${TARGETS[@]}"; do
       --weight_decay 5e-4 \
       --visual_finetuning_mode legacy_supervised \
       --no_sync_discriminator_lr \
-      --report_strategy last \
+      --report_strategy "$REPORT_STRATEGY" \
       --checkpoint_dir "$target_checkpoints" \
       --efficiency_output_dir "$target_efficiency" \
       --efficiency_warmup_iterations 20 \
@@ -154,6 +168,7 @@ for target in "${TARGETS[@]}"; do
   "$PYTHON" "$HERE/tools/audit_jmda_label_guided_log.py" \
     --log "$train_log" \
     --expected-iterations "$NUM_ITERATIONS" \
+    --expected-report-strategy "$REPORT_STRATEGY" \
     --require-efficiency | tee -a "$train_log"
   echo "[$target] completed"
 done
@@ -164,7 +179,7 @@ done
   --targets "${TARGETS[@]}" \
   --expected-iterations "$NUM_ITERATIONS"
 
-echo "[OK] formal four-weather JMDA experiment completed"
+echo "[OK] formal JMDA experiment completed: targets=${TARGETS[*]}"
 echo "logs=$RUN_ROOT"
 echo "checkpoints=$CHECKPOINT_ROOT"
 echo "efficiency=$EFFICIENCY_ROOT"

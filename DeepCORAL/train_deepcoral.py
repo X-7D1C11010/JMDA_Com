@@ -19,23 +19,32 @@ Usage:
   * 每轮步数改为 min(len(source), len(target))（main.py:29），不再对较短
     一侧循环取样。
 
-2026-10-23 变更（以论文公式覆盖第三方 PyTorch 端口的偏差）：
+2026-10-27 官方网络/数据流程恢复：
+  * 直接使用随附官方端口 models.py 的 AlexNet + 4096 维分类器；
+  * 从官方 AlexNet ImageNet 权重加载 features 与前两层全连接层；
+  * source/target batch 恢复为 200/56，输入恢复为 Resize(227) +
+    ToTensor + ImageNet Normalize，不额外做随机增强。
+
+论文公式修正（保留）：
   * models.py 的 CORAL 公式按论文 Eq. (1)--(3) 计算无偏协方差及 Frobenius
     范数；不沿用第三方 PyTorch 端口遗漏 1/(n-1) 且重复除 d² 的实现；
-  * 恢复论文的 weight_decay=5e-4，并将默认训练预算设为 20 epochs。
+  * 默认训练预算为官方端口的 20 epochs。优化器严格复现其实际执行路径：
+    虽然源码定义 WEIGHT_DECAY=5e-4，但构造 SGD 时没有传入，故默认值为 0。
 """
 import os
 import sys
 import argparse
+import hashlib
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import transforms, models
+from torch.utils import model_zoo
+from torchvision import transforms
 
 # Import CORAL loss from original repo
 sys.path.insert(0, os.path.dirname(__file__))
-from models import CORAL
+from models import CORAL, DeepCORAL
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
@@ -43,38 +52,73 @@ from classification_metrics import classification_metrics, format_classification
 from reproducibility import seed_everything
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
 from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from data_loader_options import (
+    add_data_loader_args,
+    data_loader_kwargs,
+    evaluation_loader_kwargs,
+)
 
 
-class DeepCORAL(nn.Module):
-    """Deep CORAL with ResNet-18 backbone."""
+ALEXNET_URL = 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth'
+ALEXNET_SHA256 = '4df8aa717fd11ab2d34e9483c5984ef7cdbefd732366a836076020db08909c9a'
 
-    def __init__(self, num_classes=14):
-        super(DeepCORAL, self).__init__()
-        resnet = models.resnet18(pretrained=True)
-        self.sharedNet = nn.Sequential(*list(resnet.children())[:-1])
-        feat_dim = resnet.fc.in_features
-        self.fc = nn.Linear(feat_dim, num_classes)
-        self.fc.weight.data.normal_(0, 0.005)
 
-    def forward(self, source, target=None):
-        source_feat = self.sharedNet(source).view(source.size(0), -1)
-        source_out = self.fc(source_feat)
-        if target is not None:
-            target_feat = self.sharedNet(target).view(target.size(0), -1)
-            target_out = self.fc(target_feat)
-            return source_out, target_out, source_feat, target_feat
-        return source_out
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_pretrained_alexnet(backbone, weights_path=''):
+    """Official main.py:107-117, with an optional offline checkpoint path."""
+    if weights_path:
+        actual_sha256 = _sha256(weights_path)
+        if actual_sha256 != ALEXNET_SHA256:
+            raise RuntimeError(
+                'Refusing legacy AlexNet checkpoint deserialization because its '
+                f'SHA256 is not the official value: {actual_sha256}'
+            )
+        try:
+            state_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
+        except (TypeError, RuntimeError) as exc:
+            # torchvision's official AlexNet file is a legacy tar checkpoint,
+            # which PyTorch cannot open with weights_only=True.  Unsafe pickle
+            # loading is allowed only after the exact official SHA256 check.
+            if isinstance(exc, RuntimeError) and 'legacy .tar format' not in str(exc):
+                raise
+            if isinstance(exc, TypeError):
+                # PyTorch < 2.0 does not expose the weights_only keyword.
+                state_dict = torch.load(weights_path, map_location='cpu')
+            else:
+                state_dict = torch.load(weights_path, map_location='cpu',
+                                        weights_only=False)
+        source = weights_path
+    else:
+        state_dict = model_zoo.load_url(ALEXNET_URL)
+        source = ALEXNET_URL
+    own = backbone.state_dict()
+    compatible = {
+        key: value for key, value in state_dict.items()
+        if key in own and own[key].shape == value.shape
+    }
+    missing = sorted(set(own) - set(compatible))
+    backbone.load_state_dict(compatible, strict=False)
+    print(f'Loaded official AlexNet ImageNet initialization from {source}; '
+          f'compatible tensors={len(compatible)}, randomly initialized={missing}')
 
 
 def get_transforms():
+    # DeepCORAL/data_loader.py:get_office31_dataloader: Scale(227), ToTensor,
+    # ImageNet Normalize. Scale is replaced by its current torchvision name.
     train_tf = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.RandomHorizontalFlip(),
+        transforms.Resize((227, 227)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
     val_tf = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((227, 227)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
@@ -87,7 +131,7 @@ def evaluate(model, loader, device, num_classes):
     with torch.no_grad():
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
-            out = model(imgs)
+            out = model.fc(model.sharedNet(imgs))
             pred = out.argmax(1)
             all_labels.extend(labels.cpu().tolist())
             all_predictions.extend(pred.cpu().tolist())
@@ -100,10 +144,16 @@ def main():
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
     parser.add_argument('--epochs', type=int, default=20,
                         help='训练轮数（Deep CORAL 参考实验为 20）')
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--source-batch-size', type=int, default=200,
+                        help='官方 main.py BATCH_SIZE[0]')
+    parser.add_argument('--target-batch-size', type=int, default=56,
+                        help='官方 main.py BATCH_SIZE[1]')
+    parser.add_argument('--test-batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--weight-decay', type=float, default=5e-4,
-                        help='Deep CORAL 论文实验设置为 5e-4')
+    parser.add_argument('--weight-decay', type=float, default=0.0,
+                        help='官方 main.py 定义 5e-4 但实际未传给 SGD，故默认 0')
+    parser.add_argument('--alexnet-weights', type=str, default='',
+                        help='离线 torchvision AlexNet ImageNet state_dict；为空则使用官方 URL/cache')
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists_vis'))
@@ -112,6 +162,7 @@ def main():
     parser.add_argument('--efficiency_output_dir', type=str, default=None,
                         help='Directory for efficiency logging output')
     parser.add_argument('--seed', type=int, default=42)
+    add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
@@ -139,17 +190,20 @@ def main():
     print(f'Target val:   {len(tgt_val_ds)} images')
     print(format_dropped('source train', src_ds))
 
-    src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
-                            num_workers=2, drop_last=True)
-    tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
-                            num_workers=2, drop_last=True)
-    tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
-                                shuffle=False, num_workers=2)
+    loader_kwargs = data_loader_kwargs(args)
+    eval_loader_kwargs = evaluation_loader_kwargs(args)
+    print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
+    src_loader = DataLoader(src_ds, batch_size=args.source_batch_size, shuffle=True,
+                            drop_last=True, **loader_kwargs)
+    tgt_loader = DataLoader(tgt_ds, batch_size=args.target_batch_size, shuffle=True,
+                            drop_last=True, **loader_kwargs)
+    tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
+                                shuffle=False, **eval_loader_kwargs)
 
     model = DeepCORAL(num_classes=num_classes).to(device)
-    # Deep CORAL 论文：新分类层使用 10× 学习率，momentum=0.9，
-    # weight decay=5e-4。第三方 PyTorch 端口遗漏了 weight_decay，不能作为
-    # 论文公式/配方的依据。
+    load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
+    print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
+    # 官方 main.py：新分类层为 10x lr，主干为 base lr，momentum=0.9。
     optimizer = optim.SGD([
         {'params': model.sharedNet.parameters()},
         {'params': model.fc.parameters(), 'lr': 10 * args.lr},
@@ -193,7 +247,7 @@ def main():
             if eff:
                 eff.dataloader_done()
 
-            src_out, tgt_out, _, _ = model(src_imgs, tgt_imgs)
+            src_out, tgt_out = model(src_imgs, tgt_imgs)
 
             loss_cls = criterion(src_out, src_labels)
             # 原参考实现 main.py:46：CORAL 作用于 fc 输出（softmax 前 logits）。

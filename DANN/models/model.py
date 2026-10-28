@@ -4,7 +4,7 @@ from functions import ReverseLayerF
 
 class CNNModel(nn.Module):
 
-    def __init__(self):
+    def __init__(self, num_classes=10):
         super(CNNModel, self).__init__()
         self.feature = nn.Sequential()
         self.feature.add_module('f_conv1', nn.Conv2d(3, 64, kernel_size=5))
@@ -21,12 +21,15 @@ class CNNModel(nn.Module):
         self.class_classifier.add_module('c_fc1', nn.Linear(50 * 4 * 4, 100))
         self.class_classifier.add_module('c_bn1', nn.BatchNorm1d(100))
         self.class_classifier.add_module('c_relu1', nn.ReLU(True))
-        self.class_classifier.add_module('c_drop1', nn.Dropout2d())
+        # The released Python-2 implementation used Dropout2d on a 2-D FC
+        # tensor. Modern PyTorch deprecates (and newer releases reject) that
+        # call, so use the intended element-wise Dropout equivalent here.
+        self.class_classifier.add_module('c_drop1', nn.Dropout())
         self.class_classifier.add_module('c_fc2', nn.Linear(100, 100))
         self.class_classifier.add_module('c_bn2', nn.BatchNorm1d(100))
         self.class_classifier.add_module('c_relu2', nn.ReLU(True))
-        self.class_classifier.add_module('c_fc3', nn.Linear(100, 10))
-        self.class_classifier.add_module('c_softmax', nn.LogSoftmax())
+        self.class_classifier.add_module('c_fc3', nn.Linear(100, num_classes))
+        self.class_classifier.add_module('c_softmax', nn.LogSoftmax(dim=1))
 
         self.domain_classifier = nn.Sequential()
         self.domain_classifier.add_module('d_fc1', nn.Linear(50 * 4 * 4, 100))

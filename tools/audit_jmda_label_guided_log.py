@@ -31,6 +31,7 @@ def audit_text(
     text: str,
     expected_iterations: int,
     require_efficiency: bool = False,
+    expected_report_strategy: str | None = None,
 ) -> tuple[dict, list[str]]:
     errors: list[str] = []
     summaries = SUMMARY_RE.findall(text)
@@ -60,6 +61,15 @@ def audit_text(
         errors.append(
             "summary num_iterations="
             f"{summary.get('num_iterations')!r}, expected {expected_iterations}"
+        )
+    if (
+        expected_report_strategy is not None
+        and summary.get("report_strategy") != expected_report_strategy
+    ):
+        errors.append(
+            "summary report_strategy="
+            f"{summary.get('report_strategy')!r}, "
+            f"expected {expected_report_strategy!r}"
         )
 
     epochs = list(EPOCH_RE.finditer(text))
@@ -161,6 +171,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--expected-iterations", type=int, default=1)
+    parser.add_argument(
+        "--expected-report-strategy",
+        choices=("best", "last", "last_window"),
+        default=None,
+    )
     parser.add_argument("--require-efficiency", action="store_true")
     args = parser.parse_args()
 
@@ -169,6 +184,7 @@ def main() -> int:
         text,
         args.expected_iterations,
         require_efficiency=args.require_efficiency,
+        expected_report_strategy=args.expected_report_strategy,
     )
     for error in errors:
         print(f"[ERROR] {error}")
@@ -178,7 +194,7 @@ def main() -> int:
     metrics = summary["metrics"]
     print("[OK] label-guided protocol audit passed")
     print(
-        "final mean ACC/P/R/F1="
+        f"{summary.get('report_strategy', 'unspecified')} mean ACC/P/R/F1="
         f"{metrics['accuracy']['mean']:.6f}/"
         f"{metrics['precision_macro']['mean']:.6f}/"
         f"{metrics['recall_macro']['mean']:.6f}/"

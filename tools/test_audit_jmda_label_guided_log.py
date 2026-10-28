@@ -19,6 +19,7 @@ class LabelGuidedLogAuditTests(unittest.TestCase):
             "balance_svd_classes": True,
             "transport_mode": "sinkhorn",
             "num_iterations": 1,
+            "report_strategy": "best",
             "metrics": {
                 "accuracy": {"mean": 0.75},
                 "precision_macro": {"mean": 0.78},
@@ -81,6 +82,28 @@ class LabelGuidedLogAuditTests(unittest.TestCase):
     def test_valid_efficiency_evidence_passes(self):
         _, errors = audit_text(self._log(), 1, require_efficiency=True)
         self.assertEqual(errors, [])
+
+    def test_expected_best_report_strategy_passes(self):
+        _, errors = audit_text(
+            self._log(),
+            1,
+            expected_report_strategy="best",
+        )
+        self.assertEqual(errors, [])
+
+    def test_unexpected_report_strategy_is_rejected(self):
+        summary = self._summary()
+        summary["report_strategy"] = "last"
+        text = self._log().replace(
+            json.dumps(self._summary()),
+            json.dumps(summary),
+        )
+        _, errors = audit_text(
+            text,
+            1,
+            expected_report_strategy="best",
+        )
+        self.assertTrue(any("report_strategy" in item for item in errors))
 
     def test_missing_efficiency_evidence_is_rejected(self):
         summary = self._summary()
