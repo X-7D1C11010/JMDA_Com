@@ -1,0 +1,86 @@
+{
+  "protocol": "cross-day supervised domain adaptation",
+  "model_selection": "best target_val ACC, macro-F1 tie-break",
+  "test_evaluations": 1,
+  "selected_epoch": 10,
+  "target_val": {
+    "accuracy": 0.9642857142857143,
+    "precision_macro": 0.9583333333333334,
+    "recall_macro": 0.9791666666666666,
+    "f1_macro": 0.9670250896057349,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28
+  },
+  "target_test": {
+    "accuracy": 1.0,
+    "precision_macro": 1.0,
+    "recall_macro": 1.0,
+    "f1_macro": 1.0,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 33
+  },
+  "metadata": {
+    "method": "MCFT-RGB-NIR-AIS",
+    "seed": 42,
+    "epochs": 500,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "selection_partition": "target_val",
+    "final_partition": "target_test",
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS",
+      "AIS_mask"
+    ],
+    "num_classes": 3,
+    "adaptation_note": "official two-image MCFT trunk plus explicit AIS/mask late-fusion branch",
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted on source_train + target_train only"
+    }
+  },
+  "validation_history_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv",
+  "validation_history_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json"
+}

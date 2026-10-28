@@ -1,0 +1,62 @@
+{
+  "protocol": "cross-day supervised domain adaptation",
+  "model_selection": "best target_val ACC, macro-F1 tie-break",
+  "test_evaluations": 1,
+  "selected_epoch": 10,
+  "target_val": {
+    "accuracy": 0.25,
+    "precision_macro": 0.2888888888888889,
+    "recall_macro": 0.42857142857142855,
+    "f1_macro": 0.24444444444444446,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28
+  },
+  "target_test": {
+    "accuracy": 0.18181818181818182,
+    "precision_macro": 0.16666666666666666,
+    "recall_macro": 0.3636363636363636,
+    "f1_macro": 0.14285714285714288,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 33
+  },
+  "metadata": {
+    "method": "d-SNE@10",
+    "implementation": "official natural-image configuration, PyTorch port",
+    "seed": 42,
+    "epochs": 20,
+    "source_fine_tune_epochs": 50,
+    "source_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/dsne_resnetv2_101_a1h_in1k_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet ResNetV2-101 followed by source_train fine-tuning",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 10,
+    "selection_partition": "target_val",
+    "final_partition": "target_test",
+    "modalities": [
+      "RGB"
+    ],
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained ResNetV2-101",
+    "embedding": [
+      4096,
+      512
+    ],
+    "feature_normalization_loss": true,
+    "output_l2_normalization": false,
+    "train_source_direction_during_adaptation": false,
+    "pair_protocol": "all positives + equal-count sampled negatives",
+    "batch_size": 32,
+    "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter",
+    "normalization": "0.5 mean / 0.5 std, as released d-SNE defaults",
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before d-SNE normalization",
+    "adaptation_budget_epochs": 10
+  },
+  "validation_history_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_dsne_e10_seed42_target_val_metrics.csv",
+  "validation_history_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_dsne_e10_seed42_target_val_metrics.json"
+}
