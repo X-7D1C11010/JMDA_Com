@@ -32,8 +32,12 @@ REQUIRED_KEYS = {"rgb", "nir", "ais", "ais_mask", "label"}
 class ImageStatistics:
     rgb_mean: tuple[float, float, float]
     rgb_std: tuple[float, float, float]
+    rgb_min: tuple[float, float, float]
+    rgb_max: tuple[float, float, float]
     nir_mean: tuple[float]
     nir_std: tuple[float]
+    nir_min: tuple[float]
+    nir_max: tuple[float]
     fit_partitions: tuple[str, str] = TRAIN_PARTITIONS
     fit_samples: int = 210
 
@@ -41,8 +45,12 @@ class ImageStatistics:
         return {
             "rgb_mean": list(self.rgb_mean),
             "rgb_std": list(self.rgb_std),
+            "rgb_min": list(self.rgb_min),
+            "rgb_max": list(self.rgb_max),
             "nir_mean": list(self.nir_mean),
             "nir_std": list(self.nir_std),
+            "nir_min": list(self.nir_min),
+            "nir_max": list(self.nir_max),
             "fit_partitions": list(self.fit_partitions),
             "fit_samples": self.fit_samples,
             "rule": "statistics fitted on source_train + target_train only",
@@ -54,11 +62,22 @@ class ImageStatistics:
             raise ValueError(
                 "normalization statistics were not fitted on the two training partitions"
             )
+        required_ranges = ("rgb_min", "rgb_max", "nir_min", "nir_max")
+        missing_ranges = [key for key in required_ranges if key not in payload]
+        if missing_ranges:
+            raise ValueError(
+                "normalization statistics predate raw-DN range tracking; "
+                f"regenerate the stats file (missing {missing_ranges})"
+            )
         return cls(
             rgb_mean=tuple(map(float, payload["rgb_mean"])),
             rgb_std=tuple(map(float, payload["rgb_std"])),
+            rgb_min=tuple(map(float, payload["rgb_min"])),
+            rgb_max=tuple(map(float, payload["rgb_max"])),
             nir_mean=tuple(map(float, payload["nir_mean"])),
             nir_std=tuple(map(float, payload["nir_std"])),
+            nir_min=tuple(map(float, payload["nir_min"])),
+            nir_max=tuple(map(float, payload["nir_max"])),
             fit_partitions=tuple(payload["fit_partitions"]),
             fit_samples=int(payload["fit_samples"]),
         )
@@ -82,6 +101,8 @@ def compute_image_statistics(root):
     sums = np.zeros(4, dtype=np.float64)
     squared = np.zeros(4, dtype=np.float64)
     counts = np.zeros(4, dtype=np.int64)
+    minima = np.full(4, np.inf, dtype=np.float64)
+    maxima = np.full(4, -np.inf, dtype=np.float64)
     sample_count = 0
     for partition in TRAIN_PARTITIONS:
         for path in partition_files(root, partition):
@@ -93,6 +114,8 @@ def compute_image_statistics(root):
             sums += channels.sum(axis=1)
             squared += np.square(channels).sum(axis=1)
             counts += channels.shape[1]
+            minima = np.minimum(minima, channels.min(axis=1))
+            maxima = np.maximum(maxima, channels.max(axis=1))
             sample_count += 1
     means = sums / counts
     variances = np.maximum(squared / counts - np.square(means), 1e-12)
@@ -100,8 +123,12 @@ def compute_image_statistics(root):
     return ImageStatistics(
         rgb_mean=tuple(map(float, means[:3])),
         rgb_std=tuple(map(float, stds[:3])),
+        rgb_min=tuple(map(float, minima[:3])),
+        rgb_max=tuple(map(float, maxima[:3])),
         nir_mean=(float(means[3]),),
         nir_std=(float(stds[3]),),
+        nir_min=(float(minima[3]),),
+        nir_max=(float(maxima[3]),),
         fit_samples=sample_count,
     )
 
@@ -309,13 +336,14 @@ class NaturalImageRGBDataset(Dataset):
     for this overhead-imagery dataset; it does not change band semantics.
     """
 
-    def __init__(self, root, partition, augment=False, normalization="half"):
+    def __init__(self, root, partition, statistics, augment=False, normalization="half"):
         self.root = Path(root).expanduser().resolve()
         self.partition = partition
         self.paths = partition_files(self.root, partition)
         self.samples = [
             (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
         ]
+        self.statistics = statistics
         if normalization == "half":
             mean, std = (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
         elif normalization == "imagenet":
@@ -357,8 +385,13 @@ class NaturalImageRGBDataset(Dataset):
     def __getitem__(self, index):
         path = self.paths[index]
         with np.load(path, allow_pickle=False) as item:
-            rgb = torch.from_numpy(item["rgb"].astype(np.float32)).div_(255.0)
+            rgb = torch.from_numpy(item["rgb"].astype(np.float32))
             label = int(item["label"])
+        # More than 98.5% of every training RGB channel remains within the
+        # conventional 8-bit image range.  Preserve RGB colour balance with a
+        # fixed 255 scale and clip the sparse high-DN outliers, rather than
+        # compressing the whole image by a per-channel extreme maximum.
+        rgb = rgb.div_(255.0)
         rgb = self.transform(rgb.clamp_(0.0, 1.0))
         return rgb, label
 

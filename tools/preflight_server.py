@@ -45,7 +45,7 @@ def read_list(path):
     return rows
 
 
-def validate_manifest(list_dir, data_root):
+def validate_manifest(list_dir, data_root, required_modality='paired'):
     manifest_path = list_dir / 'paired_protocol_manifest.json'
     if not manifest_path.is_file():
         fail(f'Paired-cohort manifest is missing: {manifest_path}')
@@ -53,9 +53,16 @@ def validate_manifest(list_dir, data_root):
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError) as exc:
         fail(f'Invalid paired-cohort manifest {manifest_path}: {exc}')
-    expected_rule = (
-        'exact VIS/IR stem match over train+val union; stable hash split'
-    )
+    expected_rules = {
+        'paired': 'exact VIS/IR stem match over train+val union; stable hash split',
+        'vis': 'all VIS images over train+val union; stable hash split (no IR pairing)',
+    }
+    if manifest.get('modality') != required_modality:
+        fail(
+            f'Manifest modality {manifest.get("modality")!r} does not match '
+            f'required modality {required_modality!r}'
+        )
+    expected_rule = expected_rules[required_modality]
     if manifest.get('cohort_rule') != expected_rule:
         fail(
             'Unsupported paired-cohort rule: '
@@ -74,10 +81,13 @@ def validate_manifest(list_dir, data_root):
     pair_entries = manifest.get('unlabeled_pair_lists')
     if not isinstance(entries, dict) or not entries:
         fail(f'No list fingerprints in paired-cohort manifest: {manifest_path}')
-    if not isinstance(pair_entries, dict) or not pair_entries:
+    if required_modality == 'paired' and (
+        not isinstance(pair_entries, dict) or not pair_entries
+    ):
         fail(
             f'No label-free target pair fingerprints in manifest: {manifest_path}'
         )
+    pair_entries = pair_entries if isinstance(pair_entries, dict) else {}
     for group in (entries, pair_entries):
         for name, expected in group.items():
             path = list_dir / name
@@ -94,7 +104,7 @@ def validate_manifest(list_dir, data_root):
                     f'{row_count} != {expected.get("rows")}'
                 )
     print(
-        f'[OK] exact-paired cohort manifest: {manifest_path} '
+        f'[OK] {required_modality} cohort manifest: {manifest_path} '
         f'({len(entries)} labelled lists, {len(pair_entries)} label-free pair lists)'
     )
     return manifest
@@ -110,7 +120,7 @@ def representative_rows(rows):
     return selected
 
 
-def validate_list(path, data_root, check_all):
+def validate_list(path, data_root, check_all, require_ir=True):
     if not path.is_file():
         fail(f'Required list is missing: {path}')
     rows = read_list(path)
@@ -137,7 +147,7 @@ def validate_list(path, data_root, check_all):
             unchanged.append(stored)
         if not os.path.isfile(mapped):
             missing.append(mapped)
-        elif exact_ir_partner(mapped) is None:
+        elif require_ir and exact_ir_partner(mapped) is None:
             missing_ir.append(mapped)
     if unchanged:
         fail(
@@ -151,14 +161,14 @@ def validate_list(path, data_root, check_all):
         )
     if missing:
         fail(f'Mapped image does not exist for {path}: {missing[0]}')
-    if missing_ir:
+    if require_ir and missing_ir:
         fail(
             f'Exact-stem IR mate was not found across train/val for {path}: '
             f'{missing_ir[0]}'
         )
     print(
         f'[OK] {path.name}: {len(rows)} rows, checked {len(selected)} '
-        'VIS paths and exact IR mates'
+        + ('VIS paths and exact IR mates' if require_ir else 'VIS paths')
     )
     return rows
 
@@ -225,6 +235,7 @@ def parse_args():
     parser.add_argument('--jmda-net-dir', required=True)
     parser.add_argument('--list-dir', required=True)
     parser.add_argument('--targets', nargs='+', choices=TARGETS, required=True)
+    parser.add_argument('--required-modality', choices=('paired', 'vis'), default='paired')
     parser.add_argument('--require-cuda', action='store_true')
     parser.add_argument('--check-all-paths', action='store_true')
     parser.add_argument(
@@ -255,7 +266,7 @@ def main():
             'JMDA_DATA_ROOT and --data-root disagree: '
             f'{os.environ.get("JMDA_DATA_ROOT")!r} != {str(data_root)!r}'
         )
-    manifest = validate_manifest(list_dir, data_root)
+    manifest = validate_manifest(list_dir, data_root, args.required_modality)
 
     sunny = data_root / '晴天'
     if not sunny.is_dir():
@@ -314,7 +325,8 @@ def main():
     validated = {}
     for path in lists:
         validated[path.name] = validate_list(
-            path, data_root, args.check_all_paths
+            path, data_root, args.check_all_paths,
+            require_ir=args.required_modality == 'paired',
         )
     validated_pairs = {}
     if args.protocol in ('jmda_oracle_shared_uda', 'jmda_label_guided_da'):

@@ -25,6 +25,7 @@ from vds2raw.dataset import (
     NaturalImageRGBDataset,
     audit_dataset,
     fixed_samples_per_class,
+    load_or_compute_statistics,
 )
 from vds2raw.models import DSNEOfficeModel, dsne_loss
 
@@ -102,13 +103,14 @@ def evaluate_budget(
     history,
     metadata,
     data_root,
+    statistics,
     save_dir,
     device,
     args,
 ):
     selected = load_selected_checkpoint(checkpoint, model, device)
     target_test = NaturalImageRGBDataset(
-        data_root, "target_test", augment=False, normalization="half"
+        data_root, "target_test", statistics, augment=False, normalization="half"
     )
     test_loader = DataLoader(
         target_test,
@@ -190,18 +192,19 @@ def main():
     save_dir.mkdir(parents=True, exist_ok=True)
     if not args.skip_audit:
         print("Dataset audit:", audit_dataset(data_root))
+    statistics = load_or_compute_statistics(data_root, args.stats_file or None)
 
     source_train = NaturalImageRGBDataset(
-        data_root, "source_train", augment=True, normalization="half"
+        data_root, "source_train", statistics, augment=True, normalization="half"
     )
     target_full = NaturalImageRGBDataset(
-        data_root, "target_train", augment=True, normalization="half"
+        data_root, "target_train", statistics, augment=True, normalization="half"
     )
     target_train = fixed_samples_per_class(
         target_full, args.target_samples_per_class, args.seed
     )
     target_val = NaturalImageRGBDataset(
-        data_root, "target_val", augment=False, normalization="half"
+        data_root, "target_val", statistics, augment=False, normalization="half"
     )
     print(
         f"d-SNE labelled target subset: {len(target_train)} samples "
@@ -303,6 +306,7 @@ def main():
         "batch_size": args.batch_size,
         "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter",
         "normalization": "0.5 mean / 0.5 std, as released d-SNE defaults",
+        "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before d-SNE normalization",
     }
 
     history = []
@@ -356,6 +360,10 @@ def main():
                     checkpoints[budget], model, epoch, val_metrics, metadata
                 )
 
+    last_checkpoint = save_dir / f"vds2raw_dsne_seed{args.seed}_last.pth"
+    save_checkpoint(
+        last_checkpoint, model, history[-1][0], history[-1][1], metadata
+    )
     for budget in report_budgets:
         evaluate_budget(
             model,
@@ -364,6 +372,7 @@ def main():
             history,
             metadata,
             data_root,
+            statistics,
             save_dir,
             device,
             args,

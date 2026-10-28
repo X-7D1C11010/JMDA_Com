@@ -21,6 +21,16 @@ $Seeds = if ($env:VDS2RAW_SEEDS) {
 } else {
     @('42')
 }
+$MethodOrder = if ($env:VDS2RAW_METHOD_ORDER) {
+    @($env:VDS2RAW_METHOD_ORDER -split '\s+' | Where-Object { $_ })
+} else {
+    @('ccsa', 'dsne', 'mcft3')
+}
+$expectedMethods = @('ccsa', 'dsne', 'mcft3')
+if ($MethodOrder.Count -ne 3 -or
+    (Compare-Object ($MethodOrder | Sort-Object) $expectedMethods)) {
+    throw 'VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once.'
+}
 
 if (-not (Test-Path -LiteralPath $DataRoot -PathType Container)) {
     throw "VDS2Raw data root does not exist: $DataRoot"
@@ -89,6 +99,7 @@ $config = [ordered]@{
     mode = $Mode
     data_root = (Resolve-Path -LiteralPath $DataRoot).Path
     seeds = $Seeds
+    method_order = $MethodOrder
     protocol = 'source_train + fixed-shot target_train; target_val selection; target_test once per predeclared method/budget'
     ccsa_epochs = $CcsaEpochs
     ccsa_source_epochs = $CcsaSourceEpochs
@@ -155,20 +166,36 @@ foreach ($seed in $Seeds) {
         '--batch-size', "$CcsaBatch", '--pairs-per-epoch', "$CcsaPairs",
         '--target-samples-per-class', "$TargetPerClass"
     ) + $common + $smokeArgs + $PretrainedArgs + $ccsaCheckpointArgs + $ccsaBackboneArgs
-    Invoke-Method -Tag "ccsa_seed$seed" -Arguments $ccsaArguments
     $dsneArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_dsne.py'),
         '--epochs', "$DsneEpochs", '--batch-size', "$DsneBatch",
         '--source-epochs', "$DsneSourceEpochs", '--nlayers', "$DsneLayers",
         '--target-samples-per-class', "$TargetPerClass", '--fn'
     ) + $common + $smokeArgs + $PretrainedArgs + $dsneCheckpointArgs + $dsneBackboneArgs
-    Invoke-Method -Tag "dsne_seed$seed" -Arguments $dsneArguments
     $mcftArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_mcft.py'),
         '--epochs', "$McftEpochs", '--batch-size', "$McftBatch",
         '--eval-frequency', "$McftEvalFrequency"
     ) + $common + $smokeArgs
-    Invoke-Method -Tag "mcft3_seed$seed" -Arguments $mcftArguments
+    foreach ($method in $MethodOrder) {
+        switch ($method) {
+            'ccsa' { Invoke-Method -Tag "ccsa_seed$seed" -Arguments $ccsaArguments }
+            'dsne' { Invoke-Method -Tag "dsne_seed$seed" -Arguments $dsneArguments }
+            'mcft3' { Invoke-Method -Tag "mcft3_seed$seed" -Arguments $mcftArguments }
+        }
+    }
+}
+
+if ($env:VDS2RAW_RUN_COMPLEXITY_BENCHMARK -ne '0') {
+    $benchmarkArguments = @(
+        (Join-Path $RepoRoot 'tools\benchmark_efficiency.py'),
+        '--methods', 'vds_ccsa,vds_dsne,vds_mcft3',
+        '--num-classes', '3', '--protocol', 'benchmark',
+        '--benchmark_train_batch_size', '1',
+        '--efficiency_output_dir', (Join-Path $RunDir 'efficiency')
+    )
+    if ($Mode -eq 'smoke') { $benchmarkArguments += '--smoke' }
+    Invoke-Method -Tag 'complexity' -Arguments $benchmarkArguments
 }
 
 & $PythonBin (Join-Path $RepoRoot 'vds2raw\summarize.py') `

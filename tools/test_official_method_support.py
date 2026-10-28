@@ -1,8 +1,12 @@
 import csv
+import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
+
+import torch
+from torch import nn
 
 try:
     from tools.domain_pairing import (
@@ -79,6 +83,26 @@ class OfficialMethodSupportTests(unittest.TestCase):
             payload = json.loads(Path(json_path).read_text(encoding='utf-8'))
             self.assertEqual(payload['final']['ACC'], 0.75)
             self.assertEqual(payload['best_by_ACC']['F1_macro'], 0.67)
+
+    def test_dsne_backbone_loading_is_all_or_nothing(self):
+        script = Path(__file__).resolve().parents[1] / 'd-SNE' / 'train_dsne.py'
+        spec = importlib.util.spec_from_file_location('tested_dsne_train', script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        model = module.DSNE(num_classes=2, nlayers=18)
+        model.features = nn.Sequential(nn.Linear(2, 2))
+        exact = {
+            f'features.{key}': value.detach().clone()
+            for key, value in model.features.state_dict().items()
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            exact_path = Path(directory) / 'exact.pth'
+            partial_path = Path(directory) / 'partial.pth'
+            torch.save({'state_dict': exact}, exact_path)
+            torch.save({'state_dict': {'features.0.weight': exact['features.0.weight']}}, partial_path)
+            model.load_backbone_checkpoint(exact_path)
+            with self.assertRaisesRegex(RuntimeError, 'not structurally compatible'):
+                model.load_backbone_checkpoint(partial_path)
 
 
 if __name__ == '__main__':

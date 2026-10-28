@@ -26,7 +26,9 @@ OUTPUT_ROOT="${JMDA_OFFICIAL_OUTPUT_ROOT:-$HERE/runs/ccsa_dsne_mcft}"
 RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 SUITE_ID="${JMDA_SUITE_ID:-ccsa_dsne_mcft_${MODE}_${RUN_ID}}"
 RUN_ROOT="$OUTPUT_ROOT/$SUITE_ID"
-LIST_DIR="$RUN_ROOT/prepared_lists"
+LIST_ROOT="$RUN_ROOT/prepared_lists"
+VIS_LIST_DIR="$LIST_ROOT/vis"
+PAIRED_LIST_DIR="$LIST_ROOT/paired"
 LOG_DIR="$RUN_ROOT/logs"
 ARTIFACT_DIR="$RUN_ROOT/artifacts"
 EFFICIENCY_DIR="$RUN_ROOT/efficiency"
@@ -67,6 +69,8 @@ fi
 CCSA_EPOCHS="${SDA_CCSA_EPOCHS:-80}"
 DSNE_EPOCHS="${SDA_DSNE_EPOCHS:-20}"
 MCFT_EPOCHS="${SUPERVISED_MCFT_EPOCHS:-500}"
+CCSA_SOURCE_EPOCHS="${SDA_CCSA_SOURCE_EPOCHS:-50}"
+DSNE_SOURCE_EPOCHS="${SDA_DSNE_SOURCE_EPOCHS:-50}"
 DSNE_LAYERS="${SDA_DSNE_LAYERS:-101}"
 NUM_WORKERS="${JMDA_NUM_WORKERS:-2}"
 MCFT_EVAL_FREQUENCY="${MCFT_EVAL_FREQUENCY:-10}"
@@ -75,21 +79,23 @@ SDA_SUBSET_SEED=42
 CCSA_BATCH_SIZE="${SDA_CCSA_BATCH_SIZE:-256}"
 DSNE_BATCH_SIZE="${SDA_DSNE_BATCH_SIZE:-32}"
 MCFT_BATCH_SIZE="${SUPERVISED_MCFT_BATCH_SIZE:-64}"
-CCSA_EXTRA=(--batch-size "$CCSA_BATCH_SIZE")
-DSNE_EXTRA=(--batch-size "$DSNE_BATCH_SIZE" --nlayers "$DSNE_LAYERS")
+CCSA_EXTRA=(--batch-size "$CCSA_BATCH_SIZE" --source-epochs "$CCSA_SOURCE_EPOCHS")
+DSNE_EXTRA=(--batch-size "$DSNE_BATCH_SIZE" --source-epochs "$DSNE_SOURCE_EPOCHS" --nlayers "$DSNE_LAYERS" --fn)
 MCFT_EXTRA=(--batch-size "$MCFT_BATCH_SIZE" --eval-frequency "$MCFT_EVAL_FREQUENCY")
 if [ "$MODE" = "smoke" ]; then
   CCSA_EPOCHS=1
   DSNE_EPOCHS=1
   MCFT_EPOCHS=1
+  CCSA_SOURCE_EPOCHS=1
+  DSNE_SOURCE_EPOCHS=1
   NUM_WORKERS=0
   CCSA_BATCH_SIZE=2
   DSNE_BATCH_SIZE=2
   MCFT_BATCH_SIZE=2
   DSNE_LAYERS=18
   MCFT_EVAL_FREQUENCY=1
-  CCSA_EXTRA=(--batch-size "$CCSA_BATCH_SIZE" --max-train-batches 1)
-  DSNE_EXTRA=(--batch-size "$DSNE_BATCH_SIZE" --max-train-batches 1 --nlayers "$DSNE_LAYERS")
+  CCSA_EXTRA=(--batch-size "$CCSA_BATCH_SIZE" --source-batch-size "$CCSA_BATCH_SIZE" --micro-batch-size 1 --source-epochs "$CCSA_SOURCE_EPOCHS" --max-train-batches 1 --no-pretrained)
+  DSNE_EXTRA=(--batch-size "$DSNE_BATCH_SIZE" --source-batch-size "$DSNE_BATCH_SIZE" --source-epochs "$DSNE_SOURCE_EPOCHS" --max-train-batches 1 --nlayers "$DSNE_LAYERS" --fn --no-pretrained)
   MCFT_EXTRA=(--batch-size "$MCFT_BATCH_SIZE" --max-train-batches 1 --eval-frequency "$MCFT_EVAL_FREQUENCY")
 fi
 
@@ -111,7 +117,7 @@ if [ "$CCSA_BATCH_SIZE" -eq 0 ] || [ "$DSNE_BATCH_SIZE" -eq 0 ] \
   exit 1
 fi
 
-if ! mkdir -p "$LIST_DIR" "$LOG_DIR" "$ARTIFACT_DIR" \
+if ! mkdir -p "$VIS_LIST_DIR" "$PAIRED_LIST_DIR" "$LOG_DIR" "$ARTIFACT_DIR" \
   "$EFFICIENCY_DIR" "$RESULTS_DIR" "$SUMMARY_DIR"; then
   echo "无法创建实验输出目录: $RUN_ROOT"
   exit 1
@@ -129,8 +135,10 @@ export JMDA_EFFICIENCY_OUTPUT_DIR="$EFFICIENCY_DIR"
   echo "target_label_policy=target-known classes filter sunny source"
   echo "sda_subset=10-shot seed42"
   echo "ccsa_epochs=$CCSA_EPOCHS"
+  echo "ccsa_source_epochs=$CCSA_SOURCE_EPOCHS"
   echo "ccsa_batch_size=$CCSA_BATCH_SIZE"
   echo "dsne_epochs=$DSNE_EPOCHS"
+  echo "dsne_source_epochs=$DSNE_SOURCE_EPOCHS"
   echo "dsne_batch_size=$DSNE_BATCH_SIZE"
   echo "dsne_layers=$DSNE_LAYERS"
   echo "mcft_epochs=$MCFT_EPOCHS"
@@ -141,10 +149,20 @@ echo "实验目录: $RUN_ROOT"
 echo "数据根: $DATA_ROOT_CANONICAL"
 echo "目标域: ${TARGETS[*]}"
 echo "随机种子: ${SEEDS[*]}"
-echo "生成三种方法共享的精确 VIS/IR 配对清单..."
+echo "生成单模态完整 VIS 清单（CCSA/d-SNE）和精确 VIS/IR 配对清单（MCFT）..."
 if ! "$PYTHON_BIN" "$HERE/tools/prepare_paired_protocol_lists.py" \
   --data-root "$DATA_ROOT_CANONICAL" \
-  --output-dir "$LIST_DIR" \
+  --output-dir "$VIS_LIST_DIR" \
+  --targets "${TARGETS[@]}" \
+  --modality vis \
+  --sda-shots "$SDA_LABELS_PER_CLASS" \
+  --sda-seed "$SDA_SUBSET_SEED"; then
+  echo "VIS 清单生成失败；尚未启动训练。"
+  exit 1
+fi
+if ! "$PYTHON_BIN" "$HERE/tools/prepare_paired_protocol_lists.py" \
+  --data-root "$DATA_ROOT_CANONICAL" \
+  --output-dir "$PAIRED_LIST_DIR" \
   --targets "${TARGETS[@]}" \
   --modality paired \
   --sda-shots "$SDA_LABELS_PER_CLASS" \
@@ -153,24 +171,29 @@ if ! "$PYTHON_BIN" "$HERE/tools/prepare_paired_protocol_lists.py" \
   exit 1
 fi
 
-PREFLIGHT_ARGS=(
+PREFLIGHT_COMMON=(
   --protocol sda
   --data-root "$DATA_ROOT_CANONICAL"
   --jmda-net-dir "$HERE/JMDA-Net"
-  --list-dir "$LIST_DIR"
   --targets "${TARGETS[@]}"
 )
 if [ "${JMDA_REQUIRE_CUDA:-1}" = "1" ]; then
-  PREFLIGHT_ARGS+=(--require-cuda)
+  PREFLIGHT_COMMON+=(--require-cuda)
 fi
 if [ "${JMDA_CHECK_ALL_PATHS:-1}" = "1" ]; then
-  PREFLIGHT_ARGS+=(--check-all-paths)
+  PREFLIGHT_COMMON+=(--check-all-paths)
 fi
 if [ -n "${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}" ]; then
-  PREFLIGHT_ARGS+=(--min-free-gpu-memory-mib "$JMDA_MIN_FREE_GPU_MEMORY_MIB")
+  PREFLIGHT_COMMON+=(--min-free-gpu-memory-mib "$JMDA_MIN_FREE_GPU_MEMORY_MIB")
 fi
 echo "运行数据、类别空间、路径和 CUDA 预检..."
-if ! "$PYTHON_BIN" "$HERE/tools/preflight_server.py" "${PREFLIGHT_ARGS[@]}"; then
+if ! "$PYTHON_BIN" "$HERE/tools/preflight_server.py" "${PREFLIGHT_COMMON[@]}" \
+  --list-dir "$VIS_LIST_DIR" --required-modality vis; then
+  echo "VIS 预检失败；尚未启动训练。"
+  exit 1
+fi
+if ! "$PYTHON_BIN" "$HERE/tools/preflight_server.py" "${PREFLIGHT_COMMON[@]}" \
+  --list-dir "$PAIRED_LIST_DIR" --required-modality paired; then
   echo "预检失败；尚未启动训练。"
   exit 1
 fi
@@ -207,6 +230,10 @@ run_one() {
   finished="$(date +%s)"
   elapsed=$((finished - started))
 
+  local budget_args=()
+  if [ "$method" = "dsne" ] && [ "$status" = "success" ]; then
+    budget_args=(--budget-results "$ARTIFACT_DIR/dsne_${target}_seed${seed}_budget_results.json")
+  fi
   if ! "$PYTHON_BIN" "$HERE/tools/collect_run_result.py" \
     --log "$log_path" \
     --suite-id "$SUITE_ID" \
@@ -222,18 +249,46 @@ run_one() {
     --input-modalities "$modalities" \
     --label-space-relation "partial-set-target-known" \
     --model-selection "final_checkpoint" \
+    "${budget_args[@]}" \
     >> "$log_path" 2>&1; then
     echo "    结果收集失败: $log_path"
     FAILURES=$((FAILURES + 1))
   fi
 }
 
-COMMON_ARGS=(
-  --data-dir "$LIST_DIR"
+COMMON_VIS_ARGS=(
+  --data-dir "$VIS_LIST_DIR"
   --save-dir "$ARTIFACT_DIR"
   --efficiency_output_dir "$EFFICIENCY_DIR"
   --num-workers "$NUM_WORKERS"
 )
+COMMON_PAIRED_ARGS=(
+  --data-dir "$PAIRED_LIST_DIR"
+  --save-dir "$ARTIFACT_DIR"
+  --efficiency_output_dir "$EFFICIENCY_DIR"
+  --num-workers "$NUM_WORKERS"
+)
+
+CCSA_CHECKPOINT_ARGS=()
+DSNE_CHECKPOINT_ARGS=()
+if [ -n "${CCSA_SOURCE_CHECKPOINT:-}" ] && [ -n "${CCSA_PRETRAINED_BACKBONE:-}" ]; then
+  echo "CCSA_SOURCE_CHECKPOINT 与 CCSA_PRETRAINED_BACKBONE 只能指定一个。"
+  exit 1
+fi
+if [ -n "${DSNE_SOURCE_CHECKPOINT:-}" ] && [ -n "${DSNE_BACKBONE_CHECKPOINT:-}" ]; then
+  echo "DSNE_SOURCE_CHECKPOINT 与 DSNE_BACKBONE_CHECKPOINT 只能指定一个。"
+  exit 1
+fi
+if [ -n "${CCSA_SOURCE_CHECKPOINT:-}" ]; then
+  CCSA_CHECKPOINT_ARGS=(--source-checkpoint "$CCSA_SOURCE_CHECKPOINT")
+elif [ -n "${CCSA_PRETRAINED_BACKBONE:-}" ]; then
+  CCSA_CHECKPOINT_ARGS=(--pretrained-backbone "$CCSA_PRETRAINED_BACKBONE")
+fi
+if [ -n "${DSNE_SOURCE_CHECKPOINT:-}" ]; then
+  DSNE_CHECKPOINT_ARGS=(--source-checkpoint "$DSNE_SOURCE_CHECKPOINT")
+elif [ -n "${DSNE_BACKBONE_CHECKPOINT:-}" ]; then
+  DSNE_CHECKPOINT_ARGS=(--pretrained-backbone "$DSNE_BACKBONE_CHECKPOINT")
+fi
 
 # Method-major order is intentional: CCSA -> d-SNE -> MCFT.
 for target in "${TARGETS[@]}"; do
@@ -243,14 +298,11 @@ for target in "${TARGETS[@]}"; do
       --target "$target" --epochs "$CCSA_EPOCHS" --seed "$seed" \
       --target-labels-per-class "$SDA_LABELS_PER_CLASS" \
       --sda-seed "$SDA_SUBSET_SEED" \
-      "${COMMON_ARGS[@]}" "${CCSA_EXTRA[@]}"
+      "${COMMON_VIS_ARGS[@]}" "${CCSA_EXTRA[@]}" \
+      "${CCSA_CHECKPOINT_ARGS[@]}"
   done
 done
 
-DSNE_BACKBONE_ARGS=()
-if [ -n "${DSNE_BACKBONE_CHECKPOINT:-}" ]; then
-  DSNE_BACKBONE_ARGS=(--backbone-checkpoint "$DSNE_BACKBONE_CHECKPOINT")
-fi
 for target in "${TARGETS[@]}"; do
   for seed in "${SEEDS[@]}"; do
     run_one "dsne" "sda" "$target" "$seed" "$DSNE_EPOCHS" "VIS" \
@@ -258,8 +310,8 @@ for target in "${TARGETS[@]}"; do
       --target "$target" --epochs "$DSNE_EPOCHS" --seed "$seed" \
       --target-labels-per-class "$SDA_LABELS_PER_CLASS" \
       --sda-seed "$SDA_SUBSET_SEED" \
-      "${COMMON_ARGS[@]}" "${DSNE_EXTRA[@]}" \
-      "${DSNE_BACKBONE_ARGS[@]}"
+      "${COMMON_VIS_ARGS[@]}" "${DSNE_EXTRA[@]}" \
+      "${DSNE_CHECKPOINT_ARGS[@]}"
   done
 done
 
@@ -268,9 +320,26 @@ for target in "${TARGETS[@]}"; do
     run_one "mcft" "supervised" "$target" "$seed" "$MCFT_EPOCHS" "VIS+IR" \
       "$PYTHON_BIN" "$HERE/MCFT/train_mcft.py" \
       --target "$target" --epochs "$MCFT_EPOCHS" --seed "$seed" \
-      "${COMMON_ARGS[@]}" "${MCFT_EXTRA[@]}"
+      "${COMMON_PAIRED_ARGS[@]}" "${MCFT_EXTRA[@]}"
   done
 done
+
+COMPLEXITY_ARGS=()
+if [ "$MODE" = "smoke" ]; then
+  COMPLEXITY_ARGS=(--smoke)
+fi
+if [ "${JMDA_RUN_COMPLEXITY_BENCHMARK:-1}" = "1" ]; then
+  echo ">>> [complexity] current CCSA/d-SNE/MCFT implementations"
+  if ! "$PYTHON_BIN" "$HERE/tools/benchmark_efficiency.py" \
+    --methods ccsa,dsne,mcft --protocol benchmark \
+    --benchmark_train_batch_size 1 \
+    --efficiency_output_dir "$EFFICIENCY_DIR/microbenchmark" \
+    "${COMPLEXITY_ARGS[@]}" \
+    > "$LOG_DIR/complexity.log" 2>&1; then
+    echo "复杂度基准失败；日志: $LOG_DIR/complexity.log"
+    FAILURES=$((FAILURES + 1))
+  fi
+fi
 
 RUNS_CSV="$RESULTS_DIR/runs.csv"
 if [ -f "$RUNS_CSV" ]; then

@@ -146,6 +146,10 @@ def main():
                 best_metrics = dict(val_metrics)
                 save_checkpoint(checkpoint, model, epoch, val_metrics, metadata)
 
+    last_checkpoint = save_dir / f"{stem}_last.pth"
+    save_checkpoint(
+        last_checkpoint, model, history[-1][0], history[-1][1], metadata
+    )
     selected = load_selected_checkpoint(checkpoint, model, device)
     del target_val, val_loader
     target_test = VDS2RawDataset(

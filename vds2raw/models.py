@@ -301,21 +301,7 @@ class DSNE96(nn.Module):
         return (logits, features) if return_embedding else logits
 
     def load_backbone_checkpoint(self, path):
-        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            checkpoint = checkpoint["state_dict"]
-        own = self.state_dict()
-        compatible = {
-            key: value
-            for key, value in checkpoint.items()
-            if key.startswith("features.")
-            and key in own
-            and own[key].shape == value.shape
-        }
-        if not compatible:
-            raise ValueError(f"no compatible d-SNE backbone tensors in {path}")
-        self.load_state_dict(compatible, strict=False)
-        print(f"Loaded {len(compatible)} d-SNE backbone tensors from {path}")
+        _load_backbone_state(self.features, path, prefix="features.")
 
 
 class DSNEOfficeModel(nn.Module):

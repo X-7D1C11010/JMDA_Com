@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 from vds2raw.common import evaluate_multimodal
 from vds2raw.dataset import (
     CLASS_NAMES,
+    NaturalImageRGBDataset,
     PARTITIONS,
     VDS2RawDataset,
     compute_image_statistics,
@@ -56,8 +57,32 @@ class VDS2RawStatisticsTests(unittest.TestCase):
             )
             np.testing.assert_allclose(statistics.rgb_mean, [2.0, 2.0, 2.0])
             np.testing.assert_allclose(statistics.rgb_std, [1.0, 1.0, 1.0])
+            np.testing.assert_allclose(statistics.rgb_min, [1.0, 1.0, 1.0])
+            np.testing.assert_allclose(statistics.rgb_max, [3.0, 3.0, 3.0])
             np.testing.assert_allclose(statistics.nir_mean, [12.0])
             np.testing.assert_allclose(statistics.nir_std, [2.0])
+            np.testing.assert_allclose(statistics.nir_min, [10.0])
+            np.testing.assert_allclose(statistics.nir_max, [14.0])
+
+    def test_natural_image_view_uses_train_only_raw_dn_range(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_fixture(root)
+            statistics = compute_image_statistics(root)
+            source = NaturalImageRGBDataset(
+                root, "source_train", statistics,
+                augment=False, normalization="half",
+            )
+            validation = NaturalImageRGBDataset(
+                root, "target_val", statistics,
+                augment=False, normalization="half",
+            )
+            source_rgb, _ = source[0]
+            validation_rgb, _ = validation[0]
+            self.assertAlmostEqual(
+                float(source_rgb.max()), 2.0 / 255.0 - 1.0, places=5
+            )
+            self.assertAlmostEqual(float(validation_rgb.min()), 1.0, places=5)
 
     def test_dataset_returns_float32_and_respects_resize(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -9,9 +9,13 @@ known class support and all labels are compactly remapped.
 """
 
 import argparse
+import json
 import os
 import sys
+import time
+from pathlib import Path
 
+import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,6 +41,8 @@ def get_transforms(args):
         train_steps.append(transforms.CenterCrop(args.size))
     if args.flip:
         train_steps.append(transforms.RandomHorizontalFlip())
+    if args.vertical_flip:
+        train_steps.append(transforms.RandomVerticalFlip())
     if args.random_color:
         train_steps.append(
             transforms.ColorJitter(
@@ -180,18 +186,30 @@ class ResNetV2Features(nn.Module):
 
 
 class DSNE(nn.Module):
-    """Released ResNetV2 plus its 4096 -> embedding -> classifier head."""
+    """Official ResNetV2 head with a strictly loadable PyTorch backbone.
+
+    The repository's portable ImageNet checkpoint was exported from timm's
+    ``resnetv2_101.a1h_in1k``.  Using that exact module is essential: the old
+    hand-written 101-layer feature extractor shared no state-dict keys with the
+    checkpoint and previously allowed a silent partial load.  The lightweight
+    hand-written variants remain available only for smoke tests.
+    """
 
     def __init__(self, num_classes, embed_size=512, nlayers=101,
                  pretrained=False, use_dropout=False, use_l2n=False):
         super().__init__()
-        if pretrained:
-            raise ValueError(
-                'The release preloads a source-domain checkpoint, not generic '
-                'ImageNet weights. Use --backbone-checkpoint.'
+        self.nlayers = int(nlayers)
+        if self.nlayers == 101:
+            self.features = timm.create_model(
+                'resnetv2_101.a1h_in1k', pretrained=pretrained,
+                num_classes=0, global_pool='avg',
             )
-        self.features = ResNetV2Features(nlayers)
-        feature_dim = self.features.output_channels
+            feature_dim = 2048
+        else:
+            if pretrained:
+                raise ValueError('ImageNet initialization is supported only for nlayers=101')
+            self.features = ResNetV2Features(self.nlayers)
+            feature_dim = self.features.output_channels
         embedding_layers = [nn.Linear(feature_dim, 4096), nn.ReLU(inplace=True)]
         if use_dropout:
             embedding_layers.append(nn.Dropout(0.5))
@@ -216,23 +234,44 @@ class DSNE(nn.Module):
         return (logits, features) if return_embedding else logits
 
     def load_backbone_checkpoint(self, path):
-        checkpoint = torch.load(path, map_location='cpu')
-        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
-            checkpoint = checkpoint['state_dict']
-        own_state = self.state_dict()
-        compatible = {
-            key: value for key, value in checkpoint.items()
-            if key.startswith('features.') and key in own_state
-            and own_state[key].shape == value.shape
+        source = Path(path).expanduser().resolve()
+        payload = torch.load(source, map_location='cpu', weights_only=False)
+        state = payload.get('state_dict', payload.get('model_state', payload)) \
+            if isinstance(payload, dict) else payload
+        if not isinstance(state, dict):
+            raise TypeError(f'checkpoint does not contain a state dict: {source}')
+        prefixed = {
+            key[len('features.'):]: value
+            for key, value in state.items() if key.startswith('features.')
         }
-        if not compatible:
-            raise ValueError(f'no compatible ResNetV2 backbone tensors in {path}')
-        missing, unexpected = self.load_state_dict(compatible, strict=False)
-        print(
-            f'Loaded {len(compatible)} backbone tensors from {path}; '
-            f'head remains freshly initialised (missing={len(missing)}, '
-            f'unexpected={len(unexpected)})'
+        if prefixed:
+            state = prefixed
+        expected = self.features.state_dict()
+        missing = sorted(set(expected) - set(state))
+        unexpected = sorted(set(state) - set(expected))
+        mismatched = sorted(
+            key for key in set(expected) & set(state)
+            if tuple(expected[key].shape) != tuple(state[key].shape)
         )
+        if missing or unexpected or mismatched:
+            raise RuntimeError(
+                'ResNetV2 backbone checkpoint is not structurally compatible: '
+                f'expected={len(expected)} supplied={len(state)} '
+                f'missing={missing[:8]} unexpected={unexpected[:8]} '
+                f'shape_mismatch={mismatched[:8]}'
+            )
+        self.features.load_state_dict(state, strict=True)
+        print(f'Loaded all {len(state)} backbone tensors strictly from {source}')
+
+    def load_source_checkpoint(self, path):
+        source = Path(path).expanduser().resolve()
+        payload = torch.load(source, map_location='cpu', weights_only=False)
+        state = payload.get('model_state', payload.get('state_dict', payload)) \
+            if isinstance(payload, dict) else payload
+        if not isinstance(state, dict):
+            raise TypeError(f'source checkpoint does not contain a state dict: {source}')
+        self.load_state_dict(state, strict=True)
+        print(f'Loaded source-tuned d-SNE model strictly from {source}')
 
 
 def evaluate(model, loader, device, num_classes):
@@ -263,6 +302,55 @@ def train_direction(model, optimizer, criterion, first_images, first_labels,
     return xent.detach(), auxiliary.detach(), total.detach()
 
 
+def train_source(model, loader, eval_loader, device, criterion, args, num_classes):
+    """Supervised source fine-tuning used by the released d-SNE pipeline."""
+    optimizer = torch.optim.SGD(
+        model.parameters(), lr=args.lr, momentum=args.momentum,
+        weight_decay=args.weight_decay,
+    )
+    history = []
+    for epoch in range(1, args.source_epochs + 1):
+        model.train()
+        running_loss = 0.0
+        items = 0
+        for batch_index, (images, labels) in enumerate(loader, 1):
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            loss = criterion(model(images), labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item() * images.shape[0]
+            items += images.shape[0]
+            if args.max_train_batches and batch_index >= args.max_train_batches:
+                break
+        metrics = evaluate(model, eval_loader, device, num_classes)
+        history.append((epoch, metrics))
+        print(
+            f'Source fine-tune [{epoch}/{args.source_epochs}] '
+            f'CE={running_loss / max(items, 1):.4f} '
+            f'ACC={metrics["accuracy"]:.4f}'
+        )
+    return history
+
+
+def checkpoint_payload(model, epoch, metrics, metadata):
+    return {
+        'model_state': model.state_dict(),
+        'epoch': int(epoch),
+        'metrics': dict(metrics),
+        'metadata': dict(metadata),
+    }
+
+
+def atomic_json(path, payload):
+    path = Path(path)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8'
+    )
+    os.replace(temporary, path)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Official-recipe d-SNE SDA port')
     parser.add_argument('--target', default='backlight',
@@ -279,23 +367,35 @@ def main():
     parser.add_argument('--embed-size', type=int, default=512)
     parser.add_argument('--nlayers', type=int, default=101,
                         choices=[18, 50, 101, 152])
-    parser.add_argument('--pretrained', action='store_true',
-                        help='Deprecated compatibility flag; use --backbone-checkpoint.')
-    parser.add_argument('--backbone-checkpoint', default='',
-                        help='Optional source-domain PyTorch ResNetV2 checkpoint.')
+    parser.add_argument('--source-epochs', type=int, default=50,
+                        help='Released source-only fine-tuning budget.')
+    parser.add_argument('--source-batch-size', type=int, default=32)
+    parser.add_argument('--source-checkpoint', default='',
+                        help='Strict full-model source-tuned checkpoint; skips source fine-tuning.')
+    parser.add_argument('--pretrained-backbone', '--backbone-checkpoint',
+                        dest='pretrained_backbone', default='',
+                        help='Strict ImageNet ResNetV2-101 backbone checkpoint.')
+    parser.add_argument('--no-pretrained', action='store_true',
+                        help='Smoke-test only: initialize the backbone randomly.')
     parser.add_argument('--dropout', action='store_true')
     parser.add_argument('--l2n', action='store_true')
-    parser.add_argument('--fn', action='store_true')
+    parser.add_argument('--fn', dest='fn', action='store_true')
+    parser.add_argument('--no-fn', dest='fn', action='store_false')
     parser.add_argument('--train-src', action='store_true',
                         help='Enable the optional released source-direction update.')
     parser.add_argument('--size', type=int, default=224)
-    parser.add_argument('--resize', type=int, default=224)
+    parser.add_argument('--resize', type=int, default=256)
     parser.add_argument('--mean', type=float, default=0.5)
     parser.add_argument('--std', type=float, default=0.5)
     parser.add_argument('--color-jitter', type=float, default=0.2)
-    parser.add_argument('--flip', action='store_true')
-    parser.add_argument('--random-crop', action='store_true')
-    parser.add_argument('--random-color', action='store_true')
+    parser.add_argument('--flip', dest='flip', action='store_true')
+    parser.add_argument('--no-flip', dest='flip', action='store_false')
+    parser.add_argument('--vertical-flip', dest='vertical_flip', action='store_true')
+    parser.add_argument('--no-vertical-flip', dest='vertical_flip', action='store_false')
+    parser.add_argument('--random-crop', dest='random_crop', action='store_true')
+    parser.add_argument('--no-random-crop', dest='random_crop', action='store_false')
+    parser.add_argument('--random-color', dest='random_color', action='store_true')
+    parser.add_argument('--no-random-color', dest='random_color', action='store_false')
     parser.add_argument('--target-labels-per-class', type=int, default=10)
     parser.add_argument('--sda-seed', type=int, default=42)
     parser.add_argument('--num-workers', type=int, default=2)
@@ -305,7 +405,22 @@ def main():
     parser.add_argument('--save-dir', default=os.path.join(os.path.dirname(__file__), 'output'))
     parser.add_argument('--efficiency_output_dir', default=None)
     parser.add_argument('--seed', type=int, default=42)
+    parser.set_defaults(
+        fn=True, flip=True, vertical_flip=True,
+        random_crop=True, random_color=True,
+    )
     args = parser.parse_args()
+
+    if args.epochs <= 0 or args.source_epochs <= 0:
+        raise ValueError('epochs and source-epochs must be positive')
+    if args.batch_size <= 0 or args.source_batch_size <= 0:
+        raise ValueError('batch sizes must be positive')
+    if args.embed_size != 512 and not args.max_train_batches:
+        raise ValueError('formal d-SNE reproduction requires embed-size=512')
+    if args.nlayers != 101 and not args.max_train_batches:
+        raise ValueError('formal d-SNE reproduction requires ResNetV2-101')
+    if args.source_checkpoint and args.pretrained_backbone:
+        raise ValueError('source-checkpoint and pretrained-backbone are mutually exclusive')
 
     args.seed = seed_everything(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -335,6 +450,7 @@ def main():
         )
 
     source = UdaImageListDataset(source_list, train_tf, label_map)
+    source_eval = UdaImageListDataset(source_list, eval_tf, label_map)
     target = UdaImageListDataset(target_list, train_tf, label_map)
     target_val = UdaImageListDataset(target_val_list, eval_tf, label_map)
     print(format_dropped('source train', source))
@@ -358,18 +474,81 @@ def main():
         num_workers=args.num_workers,
     )
 
+    source_generator = torch.Generator().manual_seed(args.seed)
+    source_loader = DataLoader(
+        source, batch_size=args.source_batch_size, shuffle=True,
+        num_workers=args.num_workers, generator=source_generator,
+    )
+    source_eval_loader = DataLoader(
+        source_eval, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    default_backbone = Path(ROOT) / 'pretrained_weights' / \
+        'dsne_resnetv2_101_a1h_in1k_backbone.pth'
+    if (not args.source_checkpoint and not args.pretrained_backbone
+            and not args.no_pretrained and args.nlayers == 101
+            and default_backbone.is_file()):
+        args.pretrained_backbone = str(default_backbone)
+    timm_download = (
+        not args.source_checkpoint and not args.pretrained_backbone
+        and not args.no_pretrained and args.nlayers == 101
+    )
+    if args.no_pretrained and not args.max_train_batches:
+        raise ValueError('--no-pretrained is restricted to smoke tests')
+
     model = DSNE(
         num_classes=num_classes, embed_size=args.embed_size,
-        nlayers=args.nlayers, pretrained=args.pretrained,
+        nlayers=args.nlayers, pretrained=timm_download,
         use_dropout=args.dropout, use_l2n=args.l2n,
     ).to(device)
-    if args.backbone_checkpoint:
-        model.load_backbone_checkpoint(args.backbone_checkpoint)
+    if args.pretrained_backbone:
+        model.load_backbone_checkpoint(args.pretrained_backbone)
+    criterion = nn.CrossEntropyLoss()
+
+    run_stem = f'dsne_{args.target}_seed{args.seed}'
+    source_checkpoint = os.path.join(args.save_dir, f'{run_stem}_source_tuned.pth')
+    source_elapsed = 0.0
+    source_history = []
+    if args.source_checkpoint:
+        model.load_source_checkpoint(args.source_checkpoint)
+        source_provenance = str(Path(args.source_checkpoint).expanduser().resolve())
+    else:
+        source_started = time.perf_counter()
+        source_history = train_source(
+            model, source_loader, source_eval_loader, device, criterion,
+            args, num_classes,
+        )
+        source_elapsed = time.perf_counter() - source_started
+        source_metadata = {
+            'stage': 'supervised source_train fine-tuning',
+            'source': 'sunny', 'target': args.target, 'seed': args.seed,
+            'epochs': args.source_epochs,
+            'pretrained_backbone': args.pretrained_backbone or (
+                'timm ImageNet download' if timm_download else None
+            ),
+        }
+        torch.save(
+            checkpoint_payload(
+                model, args.source_epochs, source_history[-1][1], source_metadata
+            ),
+            source_checkpoint,
+        )
+        save_metric_history(
+            args.save_dir, f'{run_stem}_source', source_history,
+            metadata=source_metadata,
+        )
+        model.load_source_checkpoint(source_checkpoint)
+        source_provenance = str(Path(source_checkpoint).resolve())
+        print(
+            f'Saved and strictly reloaded source-tuned checkpoint: '
+            f'{source_checkpoint}'
+        )
+
     optimizer = torch.optim.SGD(
         model.parameters(), lr=args.lr, momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
-    criterion = nn.CrossEntropyLoss()
 
     efficiency = None
     if args.efficiency_output_dir:
@@ -380,15 +559,46 @@ def main():
             target_label_count=len(target),
             target_labels_per_class=args.target_labels_per_class,
             backbone=f'ResNet-{args.nlayers} + released 4096/{args.embed_size} head',
-            pretraining=(args.backbone_checkpoint or 'None (release default)'),
+            pretraining=source_provenance,
         )
         print(f'Efficiency logging -> {efficiency.run_dir}')
 
     history = []
-    best_metrics = None
-    best_epoch = None
-    run_stem = f'dsne_{args.target}_seed{args.seed}'
-    best_checkpoint = os.path.join(args.save_dir, f'{run_stem}_best.pth')
+    budgets = sorted(set(
+        [budget for budget in (10, 20) if budget <= args.epochs]
+        + [args.epochs]
+    ))
+    best_by_budget = {budget: None for budget in budgets}
+    best_epoch_by_budget = {budget: None for budget in budgets}
+    checkpoint_by_budget = {
+        budget: os.path.join(args.save_dir, f'{run_stem}_e{budget}_best.pth')
+        for budget in budgets
+    }
+    metadata = {
+        'method': 'd-SNE', 'protocol': 'SDA', 'target': args.target,
+        'source': 'sunny', 'class_ids_original_zero_based': class_ids,
+        'label_map': label_map, 'epochs': args.epochs, 'seed': args.seed,
+        'source_epochs': args.source_epochs,
+        'source_checkpoint': source_provenance,
+        'source_stage_elapsed_seconds': source_elapsed,
+        'target_labels_per_class': args.target_labels_per_class,
+        'backbone': f'ResNetV2-{args.nlayers}',
+        'pretrained_backbone': args.pretrained_backbone or (
+            'timm ImageNet download' if timm_download else None
+        ),
+        'strict_checkpoint_loading': True,
+        'train_src_during_adaptation': args.train_src,
+        'feature_normalization_in_dsne_loss': args.fn,
+        'negative_positive_ratio': args.ratio,
+        'augmentation': {
+            'resize': args.resize, 'crop': args.size,
+            'random_resized_crop': args.random_crop,
+            'horizontal_flip': args.flip, 'vertical_flip': args.vertical_flip,
+            'color_jitter': args.random_color,
+        },
+        'normalization': {'mean': args.mean, 'std': args.std},
+        'max_train_batches': args.max_train_batches,
+    }
     for epoch in range(1, args.epochs + 1):
         if efficiency:
             efficiency.epoch_start(epoch - 1)
@@ -429,34 +639,71 @@ def main():
         history.append((epoch, metrics))
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {metrics["accuracy"]:.4f}')
         print(f'  {format_classification_metrics(metrics)}')
-        if best_metrics is None or metrics['accuracy'] > best_metrics['accuracy']:
-            best_metrics = dict(metrics)
-            best_epoch = epoch
-            torch.save(model.state_dict(), best_checkpoint)
+        for budget in budgets:
+            if epoch > budget:
+                continue
+            current_best = best_by_budget[budget]
+            if current_best is None or metrics['accuracy'] > current_best['accuracy']:
+                best_by_budget[budget] = dict(metrics)
+                best_epoch_by_budget[budget] = epoch
+                torch.save(
+                    checkpoint_payload(model, epoch, metrics, metadata),
+                    checkpoint_by_budget[budget],
+                )
         if efficiency:
             efficiency.epoch_end(epoch - 1)
 
     last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
-    torch.save(model.state_dict(), last_checkpoint)
-    metrics_csv, metrics_json = save_metric_history(
-        args.save_dir,
-        run_stem,
-        history,
-        metadata={
-            'method': 'd-SNE', 'protocol': 'SDA', 'target': args.target,
-            'source': 'sunny', 'class_ids_original_zero_based': class_ids,
-            'label_map': label_map, 'epochs': args.epochs, 'seed': args.seed,
-            'target_labels_per_class': args.target_labels_per_class,
-            'backbone': f'ResNetV2-{args.nlayers}',
-            'backbone_checkpoint': args.backbone_checkpoint or None,
-            'train_src': args.train_src, 'negative_positive_ratio': args.ratio,
-            'max_train_batches': args.max_train_batches,
-        },
+    torch.save(
+        checkpoint_payload(model, args.epochs, history[-1][1], metadata),
+        last_checkpoint,
     )
+    budget_results = {}
+    for budget in budgets:
+        checkpoint = checkpoint_by_budget[budget]
+        model.load_source_checkpoint(checkpoint)
+        budget_history = history[:budget]
+        budget_metadata = dict(metadata)
+        budget_metadata.update({
+            'method': f'd-SNE@{budget}', 'budget_epochs': budget,
+            'selected_epoch': best_epoch_by_budget[budget],
+            'checkpoint': checkpoint,
+        })
+        metrics_csv, metrics_json = save_metric_history(
+            args.save_dir, f'{run_stem}_e{budget}', budget_history,
+            metadata=budget_metadata,
+        )
+        selected = best_by_budget[budget]
+        budget_results[str(budget)] = {
+            'method': f'd-SNE@{budget}',
+            'ACC': selected['accuracy'],
+            'Precision_macro': selected['precision_macro'],
+            'Recall_macro': selected['recall_macro'],
+            'F1_macro': selected['f1_macro'],
+            'best_epoch': best_epoch_by_budget[budget],
+            'checkpoint': checkpoint,
+            'metrics_csv': metrics_csv,
+            'metrics_json': metrics_json,
+        }
+        print(
+            f'd-SNE@{budget}: ACC={selected["accuracy"]:.4f} '
+            f'Precision_macro={selected["precision_macro"]:.4f} '
+            f'Recall_macro={selected["recall_macro"]:.4f} '
+            f'F1_macro={selected["f1_macro"]:.4f} '
+            f'best_epoch={best_epoch_by_budget[budget]}'
+        )
+
+    result_manifest = os.path.join(args.save_dir, f'{run_stem}_budget_results.json')
+    atomic_json(result_manifest, {
+        'metadata': metadata,
+        'budgets': budget_results,
+        'last_checkpoint': last_checkpoint,
+    })
     final_metrics = history[-1][1]
+    final_budget = budgets[-1]
     if efficiency:
         efficiency.finalize(extra_metrics={
-            'best_acc': best_metrics['accuracy'],
+            'best_acc': best_by_budget[final_budget]['accuracy'],
             'final_acc': final_metrics['accuracy'],
             'precision_macro': final_metrics['precision_macro'],
             'recall_macro': final_metrics['recall_macro'],
@@ -465,9 +712,8 @@ def main():
         })
 
     print(f'Final target val accuracy: {final_metrics["accuracy"]:.4f}')
-    print(f'Best target val accuracy: {best_metrics["accuracy"]:.4f} (epoch {best_epoch})')
-    print(f'Metrics CSV: {metrics_csv}')
-    print(f'Metrics JSON: {metrics_json}')
+    print(f'Budget result manifest: {result_manifest}')
+    print(f'Last checkpoint: {last_checkpoint}')
 
 
 if __name__ == '__main__':

@@ -258,6 +258,9 @@ def main():
 
     last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
     torch.save(model.state_dict(), last_checkpoint)
+    best_state = torch.load(best_checkpoint, map_location='cpu', weights_only=False)
+    model.load_state_dict(best_state, strict=True)
+    print(f'Strictly reloaded best checkpoint: {best_checkpoint}')
     metrics_csv, metrics_json = save_metric_history(
         args.save_dir,
         run_stem,

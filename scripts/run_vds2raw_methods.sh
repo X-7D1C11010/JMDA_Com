@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Sequential VDS2Raw CCSA -> d-SNE -> three-modal MCFT runner.
+# Sequential VDS2Raw runner. Override VDS2RAW_METHOD_ORDER when a different
+# resource-aware order is needed, for example: "dsne ccsa mcft3".
 set -euo pipefail
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
@@ -11,6 +12,7 @@ PYTHON_BIN="${PYTHON:-python}"
 DATA_ROOT="${VDS2RAW_DATA_ROOT:-/home/lixiang/lx/VDS2Raw/threeclass_ready}"
 OUTPUT_ROOT="${VDS2RAW_OUTPUT_ROOT:-$HERE/runs/vds2raw}"
 read -r -a SEEDS <<< "${VDS2RAW_SEEDS:-42}"
+read -r -a METHOD_ORDER <<< "${VDS2RAW_METHOD_ORDER:-ccsa dsne mcft3}"
 CCSA_EPOCHS="${VDS2RAW_CCSA_EPOCHS:-80}"
 DSNE_EPOCHS="${VDS2RAW_DSNE_EPOCHS:-20}"
 MCFT_EPOCHS="${VDS2RAW_MCFT_EPOCHS:-500}"
@@ -30,6 +32,24 @@ GPU_CANDIDATES="${VDS2RAW_GPU_CANDIDATES:-}"
 CCSA_MIN_FREE_MIB="${VDS2RAW_CCSA_MIN_FREE_MIB:-18000}"
 DSNE_MIN_FREE_MIB="${VDS2RAW_DSNE_MIN_FREE_MIB:-30000}"
 MCFT_MIN_FREE_MIB="${VDS2RAW_MCFT_MIN_FREE_MIB:-10000}"
+if [ "${#METHOD_ORDER[@]}" -ne 3 ]; then
+  echo "VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once." >&2
+  exit 1
+fi
+CCSA_ORDER_COUNT=0; DSNE_ORDER_COUNT=0; MCFT_ORDER_COUNT=0
+for method in "${METHOD_ORDER[@]}"; do
+  case "$method" in
+    ccsa) CCSA_ORDER_COUNT=$((CCSA_ORDER_COUNT + 1)) ;;
+    dsne) DSNE_ORDER_COUNT=$((DSNE_ORDER_COUNT + 1)) ;;
+    mcft3) MCFT_ORDER_COUNT=$((MCFT_ORDER_COUNT + 1)) ;;
+    *) echo "Unknown VDS2Raw method in order: $method" >&2; exit 1 ;;
+  esac
+done
+if [ "$CCSA_ORDER_COUNT" -ne 1 ] || [ "$DSNE_ORDER_COUNT" -ne 1 ] \
+  || [ "$MCFT_ORDER_COUNT" -ne 1 ]; then
+  echo "VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once." >&2
+  exit 1
+fi
 if [ -n "${VDS2RAW_CCSA_SOURCE_CHECKPOINT:-}" ] && \
    [ -n "${VDS2RAW_CCSA_PRETRAINED_BACKBONE:-}" ]; then
   echo "Set only one CCSA source checkpoint or pretrained backbone." >&2
@@ -60,6 +80,7 @@ STATS_FILE="$RUN_DIR/normalization_stats.json"
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SUMMARY_DIR"
 
 echo "Run directory: $RUN_DIR"
+echo "Method order: ${METHOD_ORDER[*]}"
 "$PYTHON_BIN" "$HERE/vds2raw/audit.py" --data-root "$DATA_ROOT" \
   --stats-file "$STATS_FILE" --report-file "$RUN_DIR/dataset_audit.json"
 
@@ -103,25 +124,50 @@ for seed in "${SEEDS[@]}"; do
   if [ -n "${VDS2RAW_DSNE_PRETRAINED_BACKBONE:-}" ]; then
     DSNE_BACKBONE_ARGS=(--pretrained-backbone "$VDS2RAW_DSNE_PRETRAINED_BACKBONE")
   fi
-  run_one "ccsa_seed$seed" "$CCSA_MIN_FREE_MIB" \
-    "$PYTHON_BIN" "$HERE/vds2raw/train_ccsa.py" \
-    --epochs "$CCSA_EPOCHS" --source-epochs "$CCSA_SOURCE_EPOCHS" \
-    --batch-size "$CCSA_BATCH" --pairs-per-epoch "$CCSA_PAIRS" \
-    --target-samples-per-class "$TARGET_PER_CLASS" \
-    "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
-    "${CCSA_CKPT_ARGS[@]}" "${CCSA_BACKBONE_ARGS[@]}"
-  run_one "dsne_seed$seed" "$DSNE_MIN_FREE_MIB" \
-    "$PYTHON_BIN" "$HERE/vds2raw/train_dsne.py" \
-    --epochs "$DSNE_EPOCHS" --source-epochs "$DSNE_SOURCE_EPOCHS" \
-    --batch-size "$DSNE_BATCH" --nlayers "$DSNE_LAYERS" \
-    --target-samples-per-class "$TARGET_PER_CLASS" --fn \
-    "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
-    "${DSNE_CKPT_ARGS[@]}" "${DSNE_BACKBONE_ARGS[@]}"
-  run_one "mcft3_seed$seed" "$MCFT_MIN_FREE_MIB" \
-    "$PYTHON_BIN" "$HERE/vds2raw/train_mcft.py" \
-    --epochs "$MCFT_EPOCHS" --batch-size "$MCFT_BATCH" --eval-frequency "$MCFT_EVAL" \
-    "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
+  for method in "${METHOD_ORDER[@]}"; do
+    case "$method" in
+      ccsa)
+        run_one "ccsa_seed$seed" "$CCSA_MIN_FREE_MIB" \
+          "$PYTHON_BIN" "$HERE/vds2raw/train_ccsa.py" \
+          --epochs "$CCSA_EPOCHS" --source-epochs "$CCSA_SOURCE_EPOCHS" \
+          --batch-size "$CCSA_BATCH" --pairs-per-epoch "$CCSA_PAIRS" \
+          --target-samples-per-class "$TARGET_PER_CLASS" \
+          "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
+          "${CCSA_CKPT_ARGS[@]}" "${CCSA_BACKBONE_ARGS[@]}"
+        ;;
+      dsne)
+        run_one "dsne_seed$seed" "$DSNE_MIN_FREE_MIB" \
+          "$PYTHON_BIN" "$HERE/vds2raw/train_dsne.py" \
+          --epochs "$DSNE_EPOCHS" --source-epochs "$DSNE_SOURCE_EPOCHS" \
+          --batch-size "$DSNE_BATCH" --nlayers "$DSNE_LAYERS" \
+          --target-samples-per-class "$TARGET_PER_CLASS" --fn \
+          "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
+          "${DSNE_CKPT_ARGS[@]}" "${DSNE_BACKBONE_ARGS[@]}"
+        ;;
+      mcft3)
+        run_one "mcft3_seed$seed" "$MCFT_MIN_FREE_MIB" \
+          "$PYTHON_BIN" "$HERE/vds2raw/train_mcft.py" \
+          --epochs "$MCFT_EPOCHS" --batch-size "$MCFT_BATCH" \
+          --eval-frequency "$MCFT_EVAL" \
+          "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
+        ;;
+    esac
+  done
 done
+
+BENCHMARK_ARGS=()
+if [ "$MODE" = smoke ]; then
+  BENCHMARK_ARGS=(--smoke)
+fi
+if [ "${VDS2RAW_RUN_COMPLEXITY_BENCHMARK:-1}" = "1" ]; then
+  run_one "complexity" "$MCFT_MIN_FREE_MIB" \
+    "$PYTHON_BIN" "$HERE/tools/benchmark_efficiency.py" \
+    --methods vds_ccsa,vds_dsne,vds_mcft3 \
+    --num-classes 3 --protocol benchmark \
+    --benchmark_train_batch_size 1 \
+    --efficiency_output_dir "$RUN_DIR/efficiency" \
+    "${BENCHMARK_ARGS[@]}"
+fi
 
 "$PYTHON_BIN" "$HERE/vds2raw/summarize.py" \
   --results-dir "$ARTIFACT_DIR" --output-dir "$SUMMARY_DIR"

@@ -1,4 +1,4 @@
-"""Create one exact VIS/IR-paired cohort shared by every comparison method."""
+"""Create deterministic modality-appropriate protocol cohorts."""
 
 import argparse
 import hashlib
@@ -265,11 +265,13 @@ def main():
             args.sda_seed,
         )
 
+    # Keep the historical filename for compatibility; ``modality`` and the
+    # fingerprinted cohort rule make the content unambiguous.
     manifest_path = output_dir / 'paired_protocol_manifest.json'
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8'
     )
-    print(f'[OK] prepared exact-paired protocol lists: {output_dir}')
+    print(f'[OK] prepared {args.modality} protocol lists: {output_dir}')
     for name, details in sorted(manifest['lists'].items()):
         print(f"  {name}: rows={details['rows']} sha256={details['sha256'][:12]}")
     for name, details in sorted(manifest['unlabeled_pair_lists'].items()):

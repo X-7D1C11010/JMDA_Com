@@ -25,6 +25,7 @@ from vds2raw.dataset import (
     NaturalImageRGBDataset,
     audit_dataset,
     fixed_samples_per_class,
+    load_or_compute_statistics,
 )
 from vds2raw.models import CCSAOfficeModel, ccsa_contrastive_loss, euclidean_distance
 
@@ -155,18 +156,19 @@ def main():
     save_dir.mkdir(parents=True, exist_ok=True)
     if not args.skip_audit:
         print("Dataset audit:", audit_dataset(data_root))
+    statistics = load_or_compute_statistics(data_root, args.stats_file or None)
 
     source_train = NaturalImageRGBDataset(
-        data_root, "source_train", augment=True, normalization="imagenet"
+        data_root, "source_train", statistics, augment=True, normalization="imagenet"
     )
     target_full = NaturalImageRGBDataset(
-        data_root, "target_train", augment=True, normalization="imagenet"
+        data_root, "target_train", statistics, augment=True, normalization="imagenet"
     )
     target_train = fixed_samples_per_class(
         target_full, args.target_samples_per_class, args.seed
     )
     target_val = NaturalImageRGBDataset(
-        data_root, "target_val", augment=False, normalization="imagenet"
+        data_root, "target_val", statistics, augment=False, normalization="imagenet"
     )
     print(
         f"CCSA labelled target subset: {len(target_train)} samples "
@@ -251,6 +253,7 @@ def main():
         "selection_partition": "target_val",
         "final_partition": "target_test",
         "modalities": ["RGB"],
+        "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
         "num_classes": 3,
         "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
         "embedding": [1024, 128],
@@ -312,9 +315,13 @@ def main():
             best_metrics = dict(val_metrics)
             save_checkpoint(checkpoint, model, epoch, val_metrics, metadata)
 
+    last_checkpoint = save_dir / f"{stem}_last.pth"
+    save_checkpoint(
+        last_checkpoint, model, history[-1][0], history[-1][1], metadata
+    )
     selected = load_selected_checkpoint(checkpoint, model, device)
     target_test = NaturalImageRGBDataset(
-        data_root, "target_test", augment=False, normalization="imagenet"
+        data_root, "target_test", statistics, augment=False, normalization="imagenet"
     )
     test_loader = DataLoader(
         target_test,

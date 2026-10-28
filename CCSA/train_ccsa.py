@@ -14,11 +14,13 @@ known class support and labels are remapped to a compact target-specific space.
 import argparse
 import os
 import sys
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.models import VGG16_Weights, vgg16
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,28 +60,68 @@ def contrastive_loss(y_true, y_pred, margin=1.0):
     ).mean()
 
 
-class CCSA(nn.Module):
-    """Released ``Create_Model`` encoder and Dropout-Dense classifier."""
+def _strict_load_backbone(module, checkpoint):
+    source = Path(checkpoint).expanduser().resolve()
+    payload = torch.load(source, map_location='cpu', weights_only=False)
+    state = payload.get('state_dict', payload.get('model_state', payload)) \
+        if isinstance(payload, dict) else payload
+    if not isinstance(state, dict):
+        raise TypeError(f'CCSA backbone checkpoint has no state dict: {source}')
+    prefixed = {
+        key[len('features.'):]: value
+        for key, value in state.items() if key.startswith('features.')
+    }
+    if prefixed:
+        state = prefixed
+    expected = module.state_dict()
+    missing = sorted(set(expected) - set(state))
+    unexpected = sorted(set(state) - set(expected))
+    mismatched = sorted(
+        key for key in set(expected) & set(state)
+        if tuple(expected[key].shape) != tuple(state[key].shape)
+    )
+    if missing or unexpected or mismatched:
+        raise RuntimeError(
+            'VGG-16 backbone checkpoint is not structurally compatible: '
+            f'expected={len(expected)} supplied={len(state)} '
+            f'missing={missing[:8]} unexpected={unexpected[:8]} '
+            f'shape_mismatch={mismatched[:8]}'
+        )
+    module.load_state_dict(state, strict=True)
+    print(f'Loaded all {len(state)} VGG-16 backbone tensors strictly from {source}')
 
-    def __init__(self, num_classes):
+
+class CCSA(nn.Module):
+    """Natural-image CCSA architecture reported for Office-31.
+
+    The digit release's 16x16 CNN is not the configuration reported for
+    natural images.  The paper uses ImageNet VGG-16 convolutions followed by
+    1024- and 128-dimensional fully connected layers.
+    """
+
+    def __init__(self, num_classes, pretrained=False, pretrained_backbone=''):
         super().__init__()
+        weights = VGG16_Weights.IMAGENET1K_V1 if pretrained and not pretrained_backbone else None
+        backbone = vgg16(weights=weights)
+        self.features = backbone.features
+        if pretrained_backbone:
+            _strict_load_backbone(self.features, pretrained_backbone)
+        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=0),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, kernel_size=3, padding=0),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2),
-            nn.Dropout(0.25),
             nn.Flatten(),
-            nn.Linear(32 * 110 * 110, 120),
+            nn.Linear(512 * 7 * 7, 1024),
             nn.ReLU(inplace=True),
-            nn.Linear(120, 84),
+            nn.Linear(1024, 128),
             nn.ReLU(inplace=True),
         )
-        self.classifier = nn.Sequential(nn.Dropout(0.5), nn.Linear(84, num_classes))
+        self.classifier = nn.Linear(128, num_classes)
+        for module in list(self.encoder.modules()) + [self.classifier]:
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                nn.init.zeros_(module.bias)
 
     def embed(self, images):
-        return self.encoder(images)
+        return self.encoder(self.avgpool(self.features(images)))
 
     def forward(self, first, second=None):
         first_features = self.embed(first)
@@ -89,6 +131,23 @@ class CCSA(nn.Module):
         second_features = self.embed(second)
         second_logits = self.classifier(second_features)
         return first_logits, second_logits, first_features, second_features
+
+    def set_source_initialization_stage(self, enabled):
+        for parameter in self.features.parameters():
+            parameter.requires_grad = not enabled
+
+    def source_initialization_parameters(self):
+        return list(self.encoder.parameters()) + list(self.classifier.parameters())
+
+    def load_source_checkpoint(self, checkpoint):
+        source = Path(checkpoint).expanduser().resolve()
+        payload = torch.load(source, map_location='cpu', weights_only=False)
+        state = payload.get('model_state', payload.get('state_dict', payload)) \
+            if isinstance(payload, dict) else payload
+        if not isinstance(state, dict):
+            raise TypeError(f'CCSA source checkpoint has no state dict: {source}')
+        self.load_state_dict(state, strict=True)
+        print(f'Loaded CCSA source-initialized model strictly from {source}')
 
 
 def evaluate(model, loader, device, num_classes):
@@ -102,6 +161,59 @@ def evaluate(model, loader, device, num_classes):
     return classification_metrics(labels_all, predictions_all, num_classes=num_classes)
 
 
+def train_source_initialization(model, loader, device, criterion, args):
+    """Initialize the new FC layers on all source data, as in the paper."""
+    model.set_source_initialization_stage(True)
+    optimizer = torch.optim.Adadelta(
+        model.source_initialization_parameters(),
+        lr=args.lr, rho=args.rho, eps=args.eps,
+    )
+    for epoch in range(1, args.source_epochs + 1):
+        model.train()
+        loss_sum, item_count = 0.0, 0
+        for batch_index, (images, labels) in enumerate(loader, 1):
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            for start in range(0, images.shape[0], args.micro_batch_size):
+                stop = min(start + args.micro_batch_size, images.shape[0])
+                loss = criterion(model(images[start:stop]), labels[start:stop])
+                ((stop - start) / images.shape[0] * loss).backward()
+                loss_sum += loss.item() * (stop - start)
+                item_count += stop - start
+            optimizer.step()
+            if args.max_train_batches and batch_index >= args.max_train_batches:
+                break
+        print(
+            f'CCSA source FC initialization [{epoch}/{args.source_epochs}] '
+            f'CE={loss_sum / max(item_count, 1):.4f}'
+        )
+    model.set_source_initialization_stage(False)
+
+
+def train_pair_direction(model, optimizer, criterion, first_images, first_labels,
+                         second_images, pair_labels, args):
+    """One released CCSA direction with an effective pair batch."""
+    optimizer.zero_grad()
+    count = first_images.shape[0]
+    ce_sum, csa_sum = 0.0, 0.0
+    for start in range(0, count, args.micro_batch_size):
+        stop = min(start + args.micro_batch_size, count)
+        logits, _, first_features, second_features = model(
+            first_images[start:stop], second_images[start:stop]
+        )
+        ce = criterion(logits, first_labels[start:stop])
+        csa = contrastive_loss(
+            pair_labels[start:stop],
+            euclidean_distance(first_features, second_features),
+        )
+        loss = (1.0 - args.alpha) * ce + args.alpha * csa
+        ((stop - start) / count * loss).backward()
+        ce_sum += ce.item() * (stop - start)
+        csa_sum += csa.item() * (stop - start)
+    optimizer.step()
+    return ce_sum / count, csa_sum / count
+
+
 def main():
     parser = argparse.ArgumentParser(description='Official-recipe CCSA SDA port')
     parser.add_argument('--target', default='backlight',
@@ -110,6 +222,12 @@ def main():
                         help='Released CCSA budget: 80 epochs.')
     parser.add_argument('--batch-size', type=int, default=256,
                         help='Released pair batch size: 256.')
+    parser.add_argument('--source-epochs', type=int, default=50)
+    parser.add_argument('--source-batch-size', type=int, default=256)
+    parser.add_argument('--micro-batch-size', type=int, default=16)
+    parser.add_argument('--source-checkpoint', default='')
+    parser.add_argument('--pretrained-backbone', default='')
+    parser.add_argument('--no-pretrained', action='store_true')
     parser.add_argument('--lr', type=float, default=1.0)
     parser.add_argument('--rho', type=float, default=0.95,
                         help='Keras Adadelta default used by the release.')
@@ -126,6 +244,14 @@ def main():
     parser.add_argument('--efficiency_output_dir', default=None)
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
+
+    if min(
+        args.epochs, args.source_epochs, args.batch_size,
+        args.source_batch_size, args.micro_batch_size,
+    ) <= 0:
+        raise ValueError('epoch and batch sizes must be positive')
+    if args.source_checkpoint and args.pretrained_backbone:
+        raise ValueError('source-checkpoint and pretrained-backbone are mutually exclusive')
 
     args.seed = seed_everything(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -180,11 +306,52 @@ def main():
         num_workers=args.num_workers,
     )
 
-    model = CCSA(num_classes=num_classes).to(device)
+    source_generator = torch.Generator().manual_seed(args.seed)
+    source_loader = DataLoader(
+        source, batch_size=args.source_batch_size, shuffle=True,
+        num_workers=args.num_workers, generator=source_generator,
+    )
+    default_backbone = Path(ROOT) / 'pretrained_weights' / \
+        'ccsa_vgg16_imagenet1k_v1_backbone.pth'
+    if (not args.source_checkpoint and not args.pretrained_backbone
+            and not args.no_pretrained and default_backbone.is_file()):
+        args.pretrained_backbone = str(default_backbone)
+    download_pretrained = (
+        not args.source_checkpoint and not args.pretrained_backbone
+        and not args.no_pretrained
+    )
+    if args.no_pretrained and not args.max_train_batches:
+        raise ValueError('--no-pretrained is restricted to smoke tests')
+    model = CCSA(
+        num_classes=num_classes,
+        pretrained=download_pretrained,
+        pretrained_backbone=args.pretrained_backbone,
+    ).to(device)
+    source_init_checkpoint = os.path.join(
+        args.save_dir, f'ccsa_{args.target}_seed{args.seed}_source_init.pth'
+    )
+    criterion = nn.CrossEntropyLoss()
+    if args.source_checkpoint:
+        model.load_source_checkpoint(args.source_checkpoint)
+        source_provenance = str(Path(args.source_checkpoint).expanduser().resolve())
+    else:
+        train_source_initialization(model, source_loader, device, criterion, args)
+        torch.save(
+            {
+                'model_state': model.state_dict(),
+                'metadata': {
+                    'stage': 'source_train FC initialization',
+                    'source_epochs': args.source_epochs,
+                    'pretrained_backbone': args.pretrained_backbone or 'torchvision download',
+                },
+            },
+            source_init_checkpoint,
+        )
+        model.load_source_checkpoint(source_init_checkpoint)
+        source_provenance = str(Path(source_init_checkpoint).resolve())
     optimizer = torch.optim.Adadelta(
         model.parameters(), lr=args.lr, rho=args.rho, eps=args.eps
     )
-    criterion = nn.CrossEntropyLoss()
 
     efficiency = None
     if args.efficiency_output_dir:
@@ -194,8 +361,8 @@ def main():
             device=str(device), modalities='VIS', protocol='SDA',
             target_label_count=len(target),
             target_labels_per_class=args.target_labels_per_class,
-            backbone='CCSA released CNN/MLP topology (RGB input adaptation)',
-            pretraining='None (trained from scratch)',
+            backbone='VGG-16 conv + 1024/128 head (paper Office configuration)',
+            pretraining=source_provenance,
         )
         print(f'Efficiency logging -> {efficiency.run_dir}')
 
@@ -220,29 +387,14 @@ def main():
             if efficiency:
                 efficiency.dataloader_done()
 
-            source_logits, _, source_features, target_features = model(
-                source_images, target_images
+            source_ce, source_csa = train_pair_direction(
+                model, optimizer, criterion,
+                source_images, source_labels, target_images, pair_labels, args,
             )
-            source_ce = criterion(source_logits, source_labels)
-            source_csa = contrastive_loss(
-                pair_labels, euclidean_distance(source_features, target_features)
+            target_ce, target_csa = train_pair_direction(
+                model, optimizer, criterion,
+                target_images, target_labels, source_images, pair_labels, args,
             )
-            source_total = (1.0 - args.alpha) * source_ce + args.alpha * source_csa
-            optimizer.zero_grad()
-            source_total.backward()
-            optimizer.step()
-
-            target_logits, _, target_features, source_features = model(
-                target_images, source_images
-            )
-            target_ce = criterion(target_logits, target_labels)
-            target_csa = contrastive_loss(
-                pair_labels, euclidean_distance(target_features, source_features)
-            )
-            target_total = (1.0 - args.alpha) * target_ce + args.alpha * target_csa
-            optimizer.zero_grad()
-            target_total.backward()
-            optimizer.step()
             if efficiency:
                 efficiency.step_end()
 
@@ -250,9 +402,9 @@ def main():
                 print(
                     f'  Epoch [{epoch}/{args.epochs}] '
                     f'batch [{batch_index}/{len(pair_loader)}] '
-                    f'source_ce={source_ce.item():.4f} '
-                    f'target_ce={target_ce.item():.4f} '
-                    f'csa={0.5 * (source_csa.item() + target_csa.item()):.4f}'
+                    f'source_ce={source_ce:.4f} '
+                    f'target_ce={target_ce:.4f} '
+                    f'csa={0.5 * (source_csa + target_csa):.4f}'
                 )
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
@@ -270,6 +422,9 @@ def main():
 
     last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
     torch.save(model.state_dict(), last_checkpoint)
+    best_state = torch.load(best_checkpoint, map_location='cpu', weights_only=False)
+    model.load_state_dict(best_state, strict=True)
+    print(f'Strictly reloaded best checkpoint: {best_checkpoint}')
     metrics_csv, metrics_json = save_metric_history(
         args.save_dir,
         run_stem,
@@ -279,6 +434,13 @@ def main():
             'source': 'sunny', 'class_ids_original_zero_based': class_ids,
             'label_map': label_map, 'epochs': args.epochs, 'seed': args.seed,
             'target_labels_per_class': args.target_labels_per_class,
+            'architecture': 'paper Office-31 VGG-16 conv + FC1024/128',
+            'source_initialization_epochs': args.source_epochs,
+            'source_initialization_checkpoint': source_provenance,
+            'pretrained_backbone': args.pretrained_backbone or (
+                'torchvision ImageNet download' if download_pretrained else None
+            ),
+            'strict_checkpoint_loading': True,
             'pair_protocol': 'all positives + 3x negatives; two updates per batch',
             'max_train_batches': args.max_train_batches,
         },

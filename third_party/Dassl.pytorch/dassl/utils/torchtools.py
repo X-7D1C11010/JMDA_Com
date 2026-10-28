@@ -98,15 +98,27 @@ def load_checkpoint(fpath):
 
     map_location = None if torch.cuda.is_available() else "cpu"
 
+    def _load(**kwargs):
+        # Dassl checkpoints are full local training-state dictionaries and can
+        # contain scheduler/optimizer objects. PyTorch 2.6 changed torch.load's
+        # default to weights_only=True, which rejects those objects. These files
+        # are produced by save_checkpoint in this same run, so explicitly use
+        # the full trusted-checkpoint loader. Keep compatibility with older
+        # PyTorch versions that do not expose the weights_only argument.
+        try:
+            return torch.load(
+                fpath, map_location=map_location, weights_only=False, **kwargs
+            )
+        except TypeError:
+            return torch.load(fpath, map_location=map_location, **kwargs)
+
     try:
-        checkpoint = torch.load(fpath, map_location=map_location)
+        checkpoint = _load()
 
     except UnicodeDecodeError:
         pickle.load = partial(pickle.load, encoding="latin1")
         pickle.Unpickler = partial(pickle.Unpickler, encoding="latin1")
-        checkpoint = torch.load(
-            fpath, pickle_module=pickle, map_location=map_location
-        )
+        checkpoint = _load(pickle_module=pickle)
 
     except Exception:
         print('Unable to load checkpoint from "{}"'.format(fpath))

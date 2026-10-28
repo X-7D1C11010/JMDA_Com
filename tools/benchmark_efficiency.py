@@ -217,7 +217,7 @@ def adapter_dsne():
         # Released default: target CE plus target->source d-SNE.  The optional
         # source update is enabled only by train_dsne.py --train-src.
         xent = nn.CrossEntropyLoss()(logits_t, labels_t)
-        aux = mod.dsne_loss(f_t, labels_t, f_s, labels_s)
+        aux = mod.dsne_loss(f_t, labels_t, f_s, labels_s, fn=True)
         return 0.9 * xent + 0.1 * aux
     return {'name':'d-SNE','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
@@ -244,6 +244,75 @@ def adapter_mcft():
         logits, _, _ = model(inp['vis'], inp['ir'], labels)
         return logits
     return {'name':'MCFT','group':'multimodal','modalities':'VIS+IR',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'forward_infer':forward_infer,
+            'vis_shape':'(1,3,15,15)','ir_shape':'(1,1,15,15)'}
+
+
+# ── VDS2Raw paper configurations ────────────────────────────────────────────
+def adapter_vds_ccsa():
+    from vds2raw.models import CCSAOfficeModel, ccsa_contrastive_loss, euclidean_distance
+    def build():
+        return CCSAOfficeModel(num_classes=3, pretrained=False)
+    def make_input(bs, device):
+        return torch.randn(bs, 3, 224, 224, device=device)
+    def forward_loss(model, inp):
+        other = torch.randn_like(inp)
+        logits, _, first, second = model(inp, other)
+        labels = torch.randint(0, 3, (inp.size(0),), device=inp.device)
+        pair = torch.randint(0, 2, (inp.size(0),), device=inp.device).float()
+        return 0.75 * nn.CrossEntropyLoss()(logits, labels) + 0.25 * ccsa_contrastive_loss(
+            pair, euclidean_distance(first, second)
+        )
+    return {'name':'VDS2Raw-CCSA','group':'visual_vlm','modalities':'RGB',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'vis_shape':'(1,3,224,224)'}
+
+
+def adapter_vds_dsne():
+    from vds2raw.models import DSNEOfficeModel, dsne_loss
+    def build():
+        return DSNEOfficeModel(num_classes=3, pretrained=False)
+    def make_input(bs, device):
+        return torch.randn(bs, 3, 224, 224, device=device)
+    def forward_loss(model, inp):
+        other = torch.randn_like(inp)
+        labels = torch.randint(0, 3, (inp.size(0),), device=inp.device)
+        other_labels = torch.randint(0, 3, (inp.size(0),), device=inp.device)
+        logits, features = model(inp, return_embedding=True)
+        _, other_features = model(other, return_embedding=True)
+        return 0.9 * nn.CrossEntropyLoss()(logits, labels) + 0.1 * dsne_loss(
+            features, labels, other_features, other_labels,
+            feature_normalization=True,
+        )
+    return {'name':'VDS2Raw-d-SNE','group':'visual_vlm','modalities':'RGB',
+            'build':build,'make_input':make_input,'forward_loss':forward_loss,
+            'vis_shape':'(1,3,224,224)'}
+
+
+def adapter_vds_mcft3():
+    from vds2raw.models import MCFTWithAIS
+    def build():
+        return MCFTWithAIS(num_classes=3)
+    def make_input(bs, device):
+        return {
+            'rgb': torch.randn(bs, 3, 15, 15, device=device),
+            'nir': torch.randn(bs, 1, 15, 15, device=device),
+            'ais': torch.randn(bs, 13, device=device),
+            'ais_mask': torch.ones(bs, 13, device=device),
+        }
+    def forward_loss(model, inp):
+        labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
+        logits, ita, itm = model(
+            inp['rgb'], inp['nir'], inp['ais'], inp['ais_mask'], labels
+        )
+        return nn.CrossEntropyLoss()(logits, labels) + 0.1 * ita + itm
+    def forward_infer(model, inp):
+        return model(
+            inp['rgb'], inp['nir'], inp['ais'], inp['ais_mask'],
+            labels=None, compute_auxiliary=False,
+        )[0]
+    return {'name':'VDS2Raw-MCFT3','group':'multimodal','modalities':'RGB+NIR+AIS+mask',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'forward_infer':forward_infer,
             'vis_shape':'(1,3,15,15)','ir_shape':'(1,1,15,15)'}
@@ -390,9 +459,12 @@ BACKBONE_INFO = {
     'cdan':           ('ResNet-18', 'ImageNet'),
     'mdd':            ('ResNet-18', 'ImageNet'),
     'mcc':            ('ResNet-18', 'ImageNet'),
-    'ccsa':           ('CCSA-CNN (conv 32x2 + fc120/fc84)', 'None (from scratch)'),
-    'dsne':           ('ResNetV2-101 + released 4096/512 head', 'None by default'),
+    'ccsa':           ('VGG-16 conv + FC1024/128', 'ImageNet -> source_train'),
+    'dsne':           ('ResNetV2-101 + released 4096/512 head', 'ImageNet -> source_train'),
     'mcft':           ('MCFT MViT (patch 15x15, dim=64)', 'None (from scratch)'),
+    'vds_ccsa':       ('VGG-16 conv + FC1024/128', 'ImageNet -> source_train'),
+    'vds_dsne':       ('ResNetV2-101 + released 4096/512 head', 'ImageNet -> source_train'),
+    'vds_mcft3':      ('MCFT MViT + AIS/mask late fusion', 'None (from scratch)'),
     'pda':            ('CLIP ViT-B/16 + PDA prompts', 'CLIP zero-shot'),
     'jmda_baseline':  ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
     'jmda_tensor_only': ('ResNet-18 x2 (VIS/IR)', 'ImageNet'),
@@ -410,6 +482,9 @@ ADAPTERS = {
     'ccsa': adapter_ccsa,
     'dsne': adapter_dsne,
     'mcft': adapter_mcft,
+    'vds_ccsa': adapter_vds_ccsa,
+    'vds_dsne': adapter_vds_dsne,
+    'vds_mcft3': adapter_vds_mcft3,
     'pda': adapter_pda,
     'jmda_baseline': lambda: adapter_jmda('baseline'),
     'jmda_tensor_only': lambda: adapter_jmda('tensor_only'),
@@ -802,9 +877,12 @@ def main():
         ('CDAN', 'CDAN/train_cdan.py', 'ResNetFc+AdversarialNet', 'ImageListDataset (VIS)'),
         ('MDD', 'MDD/train_mdd.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
         ('MCC', 'MCC/train_mcc.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
-        ('CCSA', 'CCSA/train_ccsa.py', 'CCSA-CNN (Keras port)', 'ImageListDataset (VIS, SDA subset)'),
+        ('CCSA', 'CCSA/train_ccsa.py', 'VGG16 conv + FC1024/128', 'ImageListDataset (VIS, SDA subset)'),
         ('d-SNE', 'd-SNE/train_dsne.py', 'DSNE(ResNetV2-101 + 512 embed)', 'Paired source/target table (VIS, SDA)'),
         ('MCFT', 'MCFT/train_mcft.py', 'MViT (VIS+IR)', 'PairedVisIrDataset (VIS+IR, 15x15)'),
+        ('VDS2Raw-CCSA', 'vds2raw/train_ccsa.py', 'VGG16 conv + FC1024/128', 'VDS2Raw RGB'),
+        ('VDS2Raw-d-SNE', 'vds2raw/train_dsne.py', 'ResNetV2-101 + 4096/512', 'VDS2Raw RGB'),
+        ('VDS2Raw-MCFT3', 'vds2raw/train_mcft.py', 'MViT + AIS/mask late fusion', 'VDS2Raw RGB+NIR+AIS'),
         ('PDA', 'PDA/train_pda.py', 'CustomCLIP(ViT-B/16)', 'ImageListDataset (VIS)'),
         ('JMDA-Net', os.path.join(JMDA_NET_DIR, 'Ablation', 'module_ablation.py'),
          'VisFeat+IRFeat+TAL+OTGen', 'MultiModalDomainDataset (VIS+IR)'),

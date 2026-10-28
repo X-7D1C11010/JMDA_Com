@@ -132,6 +132,24 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("21b0f4449a9e5914eba49e2415926309e742cffa", pins)
         self.assertIn("c61a1b570ac6333bd50fb5ae06aea59002fb20bb", pins)
 
+    def test_dassl_loads_its_full_local_checkpoint_on_torch_26(self):
+        dassl_root = os.path.join(ROOT, "third_party", "Dassl.pytorch")
+        if dassl_root not in sys.path:
+            sys.path.insert(0, dassl_root)
+        from dassl.utils.torchtools import load_checkpoint
+
+        parameter = torch.nn.Parameter(torch.ones(1))
+        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "full-checkpoint.pth.tar")
+            torch.save({"epoch": 1, "scheduler": scheduler}, path)
+            loaded = load_checkpoint(path)
+        self.assertEqual(loaded["epoch"], 1)
+        self.assertIsInstance(
+            loaded["scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR
+        )
+
     def test_server_launcher_forwards_fast_loader_and_selection_policy(self):
         with open(os.path.join(ROOT, "scripts", "run_server.sh"), encoding="utf-8") as f:
             launcher = f.read()

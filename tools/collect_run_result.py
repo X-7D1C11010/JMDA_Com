@@ -215,6 +215,10 @@ def main():
     parser.add_argument('--input-modalities', default='')
     parser.add_argument('--label-space-relation', default='')
     parser.add_argument('--model-selection', default='')
+    parser.add_argument(
+        '--budget-results', default='',
+        help='Optional d-SNE budget-result JSON; emits one row per declared budget.',
+    )
     args = parser.parse_args()
 
     os.makedirs(args.results_dir, exist_ok=True)
@@ -266,16 +270,44 @@ def main():
         'error_summary': error_summary,
     }
 
+    records = [record]
+    if args.budget_results and args.status == 'success':
+        with open(args.budget_results, 'r', encoding='utf-8') as handle:
+            budget_payload = json.load(handle)
+        budget_entries = budget_payload.get('budgets', {})
+        if not isinstance(budget_entries, dict) or not budget_entries:
+            raise ValueError(f'No budget results in {args.budget_results}')
+        records = []
+        for budget_text, values in sorted(
+            budget_entries.items(), key=lambda item: int(item[0])
+        ):
+            budget = int(budget_text)
+            budget_record = dict(record)
+            budget_record.update({
+                'run_tag': f'{args.run_tag}_e{budget}',
+                'method': values.get('method', f'{method}@{budget}'),
+                'epochs': budget,
+                'model_selection': 'best_target_val_ACC_within_budget',
+                'final_acc': values['ACC'],
+                'best_acc': values['ACC'],
+                'precision_macro': values['Precision_macro'],
+                'recall_macro': values['Recall_macro'],
+                'f1_macro': values['F1_macro'],
+                'accuracy_values_count': budget,
+            })
+            records.append(budget_record)
+
     protocol_dir = os.path.join(args.results_dir, args.protocol.lower())
     os.makedirs(protocol_dir, exist_ok=True)
-    json_name = f"{args.run_tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(os.path.join(protocol_dir, json_name), 'w', encoding='utf-8') as handle:
-        json.dump(record, handle, ensure_ascii=False, indent=2)
-
     csv_path = os.path.join(args.results_dir, 'runs.csv')
-    append_csv_record(csv_path, record)
-
-    print(json.dumps(record, ensure_ascii=False))
+    for current in records:
+        json_name = (
+            f"{current['run_tag']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        with open(os.path.join(protocol_dir, json_name), 'w', encoding='utf-8') as handle:
+            json.dump(current, handle, ensure_ascii=False, indent=2)
+        append_csv_record(csv_path, current)
+        print(json.dumps(current, ensure_ascii=False))
 
 
 if __name__ == '__main__':

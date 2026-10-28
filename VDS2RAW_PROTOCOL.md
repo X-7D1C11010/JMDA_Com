@@ -124,6 +124,21 @@ export VDS2RAW_DSNE_PRETRAINED_BACKBONE=/home/lixiang/lx/JMDA_Com/pretrained_wei
 bash scripts/run_vds2raw_background.sh formal
 ```
 
+需要在指定物理 GPU 上优先运行高显存方法时，可覆盖方法顺序和门控参数：
+
+```bash
+export VDS2RAW_GPU_CANDIDATES=1
+export VDS2RAW_METHOD_ORDER="dsne ccsa mcft3"
+export VDS2RAW_GPU_STABLE_CHECKS=1
+export VDS2RAW_GPU_POLL_SECONDS=2
+bash scripts/run_vds2raw_background.sh formal
+```
+
+这会缩短方法切换空窗，但不能对不遵守本项目锁的其他用户提供 GPU 独占保证。训练代码
+不会调用 `torch.cuda.empty_cache()`；单个方法内部从训练切换到验证时，模型、优化器及
+PyTorch 缓存分配器仍保持 CUDA 上下文。真正的独占必须由集群调度器或管理员授权的
+GPU exclusive-process 模式提供，不应使用无效张量把显存人为占满。
+
 此时服务器不会访问网络下载 ImageNet 权重，仍会分别执行 50 epoch 的
 `source_train` 初始化/微调。`VDS2RAW_*_PRETRAINED_BACKBONE` 是原始 ImageNet
 主干；`VDS2RAW_*_SOURCE_CHECKPOINT` 是已经完成源域训练的完整模型，两类变量
@@ -155,14 +170,19 @@ Linux 也可设置 `VDS2RAW_CCSA_SOURCE_CHECKPOINT` 和
 每次运行写入 `runs/vds2raw/<运行ID>/`：
 
 - `dataset_audit.json`：分区、NPZ、manifest 和泄漏审计；
-- `normalization_stats.json`：只基于两个训练分区的 RGB/NIR 统计；
+- `normalization_stats.json`：只基于两个训练分区的 RGB/NIR 均值、标准差和原始 DN
+  逐通道最小/最大值；MCFT 使用训练统计做 z-score。自然图像分支保留 RGB 色彩比例，
+  固定除以 255 并裁剪稀疏高 DN 异常值（训练集各通道超过 255 的比例为 0.42%–1.46%）；
 - `logs/`：各方法标准输出和错误日志；
 - `artifacts/*_best.pth`：由 `target_val` 选择的最佳模型；
+- `artifacts/*_last.pth`：最后一轮模型；
 - `artifacts/*_source_init.pth`、`*_source_tuned.pth`：CCSA/d-SNE 源域初始化；
 - `artifacts/*_target_val_metrics.csv/json`：验证曲线；
 - `artifacts/*_result.csv/json`：选中验证指标和一次性最终测试指标；
 - `summary/runs.csv`：每个方法、每个随机种子的最终四项测试指标；
 - `summary/summary.csv`：跨随机种子的均值和总体标准差。
+- `efficiency/`：当前 CCSA、d-SNE、三模态 MCFT 的参数量、MAC/GFLOPs、延迟、吞吐及
+  训练 step/显存微基准；smoke 为快速验证，论文表应使用正式重复基准。
 
 d-SNE 正式运行会同时生成 `d-SNE@10` 和 `d-SNE@20` 两行结果。
 
