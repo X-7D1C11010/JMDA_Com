@@ -312,7 +312,7 @@ def adapter_vds_mcft3():
             inp['rgb'], inp['nir'], inp['ais'], inp['ais_mask'],
             labels=None, compute_auxiliary=False,
         )[0]
-    return {'name':'VDS2Raw-MCFT3','group':'multimodal','modalities':'RGB+NIR+AIS+mask',
+    return {'name':'VDS2Raw-MCFT3','group':'multimodal','modalities':'RGB+NIR+AIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'forward_infer':forward_infer,
             'vis_shape':'(1,3,15,15)','ir_shape':'(1,1,15,15)'}

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -18,6 +19,7 @@ from vds2raw.dataset import (
     fixed_samples_per_class,
     load_or_compute_statistics,
 )
+from vds2raw.models import MCFTWithAIS
 
 
 def write_sample(path, rgb_value, nir_value, label):
@@ -118,6 +120,33 @@ class VDS2RawStatisticsTests(unittest.TestCase):
             self.assertEqual(item["ais"].shape, (13,))
             self.assertEqual(item["ais_mask"].shape, (13,))
 
+    def test_paired_flips_transform_ais_heading_consistently(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_fixture(root)
+            path = root / "samples/source_train/Cargo/source.npz"
+            ais = np.zeros(13, dtype=np.float32)
+            ais[:2] = (0.6, -0.8)
+            np.savez_compressed(
+                path,
+                rgb=np.full((3, 96, 96), 1, dtype=np.uint16),
+                nir=np.full((1, 96, 96), 10, dtype=np.uint16),
+                ais=ais,
+                ais_mask=np.ones(13, dtype=np.float32),
+                label=np.asarray(0, dtype=np.int64),
+            )
+            statistics = compute_image_statistics(root)
+            dataset = VDS2RawDataset(
+                root, "source_train", statistics, image_size=15, augment=True
+            )
+            with patch(
+                "vds2raw.dataset.torch.rand",
+                side_effect=(torch.tensor(0.0), torch.tensor(0.0)),
+            ):
+                item = dataset[0]
+            self.assertAlmostEqual(float(item["ais"][0]), -0.6, places=6)
+            self.assertAlmostEqual(float(item["ais"][1]), 0.8, places=6)
+
     def test_cached_statistics_reject_wrong_fit_partitions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -169,6 +198,35 @@ class VDS2RawEvaluationTests(unittest.TestCase):
             torch.device("cpu"),
         )
         self.assertEqual(metrics["accuracy"], 1.0)
+
+    def test_mcft_mask_is_validity_gate_not_classifier_feature(self):
+        model = MCFTWithAIS(
+            ais_feature_profile="continuous",
+            ais_dropout_probability=0.0,
+        ).eval()
+        ais = torch.zeros(2, 13)
+        # With zero values, changing validity bits alone cannot change the
+        # encoded feature because mask is not concatenated as an input.
+        masks = torch.stack((torch.zeros(13), torch.ones(13)))
+        encoded = model.encode_ais(ais, masks)
+        torch.testing.assert_close(encoded[0], encoded[1])
+
+        # Navigation-status features are excluded by the robust default.
+        ais[1, 6] = 1.0  # nav_engaged_in_fishing
+        encoded = model.encode_ais(ais, torch.ones_like(ais))
+        torch.testing.assert_close(encoded[0], encoded[1])
+        self.assertEqual(model.ais_encoder[0].normalized_shape, (4,))
+
+    def test_mcft_full_ais_profile_remains_explicit_opt_in(self):
+        model = MCFTWithAIS(
+            ais_feature_profile="full",
+            ais_dropout_probability=0.0,
+        )
+        self.assertEqual(model.ais_encoder[0].normalized_shape, (13,))
+        with self.assertRaisesRegex(ValueError, "unknown AIS feature profile"):
+            MCFTWithAIS(ais_feature_profile="unknown")
+        with self.assertRaisesRegex(ValueError, "must be in"):
+            MCFTWithAIS(ais_dropout_probability=1.0)
 
 
 if __name__ == "__main__":

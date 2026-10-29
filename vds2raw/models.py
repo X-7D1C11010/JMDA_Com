@@ -363,10 +363,44 @@ class DSNEOfficeModel(nn.Module):
 
 
 class MCFTWithAIS(nn.Module):
-    """Official RGB+NIR MCFT trunk plus an explicit AIS/mask late-fusion branch."""
+    """Official RGB+NIR MCFT trunk plus a regularized AIS late-fusion branch.
 
-    def __init__(self, num_classes=3, patch_size=15):
+    ``ais_mask`` is a missing-value validity indicator, not a fourth modality.
+    It gates invalid AIS values but is deliberately not concatenated to the
+    classifier input: missingness is correlated with vessel class in VDS2Raw
+    and otherwise becomes an unintended shortcut.  The default ``continuous``
+    profile also excludes navigation-status one-hot fields such as "engaged in
+    fishing" and "under way sailing", which are near-direct label proxies.
+    """
+
+    AIS_FEATURE_PROFILES: ClassVar[dict[str, tuple[int, ...]]] = {
+        "continuous": (0, 1, 2, 3),
+        "full": tuple(range(13)),
+    }
+
+    def __init__(
+        self,
+        num_classes=3,
+        patch_size=15,
+        ais_feature_profile="continuous",
+        ais_dropout_probability=0.5,
+    ):
         super().__init__()
+        if ais_feature_profile not in self.AIS_FEATURE_PROFILES:
+            raise ValueError(
+                f"unknown AIS feature profile {ais_feature_profile!r}; expected "
+                f"one of {sorted(self.AIS_FEATURE_PROFILES)}"
+            )
+        if not 0.0 <= ais_dropout_probability < 1.0:
+            raise ValueError("ais_dropout_probability must be in [0, 1)")
+        feature_indices = self.AIS_FEATURE_PROFILES[ais_feature_profile]
+        self.ais_feature_profile = ais_feature_profile
+        self.ais_dropout_probability = float(ais_dropout_probability)
+        self.register_buffer(
+            "ais_feature_indices",
+            torch.tensor(feature_indices, dtype=torch.long),
+            persistent=False,
+        )
         self.visual = MViT(
             patch_size=patch_size,
             num_patches=[3, 1],
@@ -380,10 +414,10 @@ class MCFTWithAIS(nn.Module):
             mode="MViT",
         )
         self.ais_encoder = nn.Sequential(
-            nn.LayerNorm(26),
-            nn.Linear(26, 64),
+            nn.LayerNorm(len(feature_indices)),
+            nn.Linear(len(feature_indices), 64),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(64, 64),
             nn.GELU(),
         )
@@ -391,9 +425,23 @@ class MCFTWithAIS(nn.Module):
             nn.LayerNorm(128),
             nn.Linear(128, 64),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(64, num_classes),
         )
+
+    def encode_ais(self, ais, ais_mask):
+        """Encode valid AIS values without exposing mask bits as features."""
+        indices = self.ais_feature_indices
+        values = ais.index_select(1, indices)
+        validity = ais_mask.index_select(1, indices)
+        features = self.ais_encoder(values * validity)
+        if self.training and self.ais_dropout_probability:
+            keep = (
+                torch.rand(features.shape[0], 1, device=features.device)
+                >= self.ais_dropout_probability
+            ).to(features.dtype)
+            features = features * keep / (1.0 - self.ais_dropout_probability)
+        return features
 
     def forward(self, rgb, nir, ais, ais_mask, labels=None, compute_auxiliary=True):
         visual_logits, loss_ita, loss_itm, visual_features = self.visual(
@@ -403,7 +451,7 @@ class MCFTWithAIS(nn.Module):
             return_features=True,
             compute_auxiliary=compute_auxiliary,
         )
-        ais_features = self.ais_encoder(torch.cat((ais * ais_mask, ais_mask), dim=1))
+        ais_features = self.encode_ais(ais, ais_mask)
         logits = visual_logits + self.fusion_delta(
             torch.cat((visual_features, ais_features), dim=1)
         )

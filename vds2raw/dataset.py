@@ -301,8 +301,15 @@ class VDS2RawDataset(Dataset):
         if self.augment:
             if bool(torch.rand(()) < 0.5):
                 rgb, nir = rgb.flip(-1), nir.flip(-1)
+                # AIS heading uses (sin(theta), cos(theta)) for clockwise
+                # degrees from north.  A left/right image reflection negates
+                # the east/west component, i.e. heading_sin.
+                ais[0] = -ais[0]
             if bool(torch.rand(()) < 0.5):
                 rgb, nir = rgb.flip(-2), nir.flip(-2)
+                # An up/down reflection negates the north/south component,
+                # i.e. heading_cos. Invalid headings are already zero.
+                ais[1] = -ais[1]
         return {
             "rgb": rgb,
             "nir": nir,

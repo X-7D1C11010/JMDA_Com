@@ -24,6 +24,9 @@ from vds2raw.dataset import VDS2RawDataset, audit_dataset, load_or_compute_stati
 from vds2raw.models import MCFTWithAIS
 
 
+DEFAULT_AIS_FEATURE_PROFILE = "continuous"
+
+
 def main():
     parser = argparse.ArgumentParser(description="MCFT RGB+NIR+AIS on VDS2Raw")
     parser.add_argument("--data-root", default=r"D:\Downloads\VDS2Raw\threeclass_ready")
@@ -34,19 +37,44 @@ def main():
     parser.add_argument("--eval-batch-size", type=int, default=128)
     parser.add_argument("--eval-frequency", type=int, default=10)
     parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--step-size", type=int, default=20)
     parser.add_argument("--gamma", type=float, default=0.9)
     parser.add_argument("--loss-ita-weight", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument(
+        "--ais-feature-profile",
+        choices=("continuous", "full"),
+        default=DEFAULT_AIS_FEATURE_PROFILE,
+        help=(
+            "continuous (default) keeps heading/length/width and excludes "
+            "navigation-status label proxies; full restores all 13 AIS fields"
+        ),
+    )
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=5,
+        help="Stop after this many validation evaluations without improvement; 0 disables.",
+    )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--augment", dest="augment", action="store_true")
+    parser.add_argument("--no-augment", dest="augment", action="store_false")
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
+    parser.set_defaults(augment=True)
     args = parser.parse_args()
 
     if args.epochs <= 0 or args.batch_size <= 0 or args.eval_frequency <= 0:
         raise ValueError("epochs, batch-size and eval-frequency must be positive")
+    if not 0.0 <= args.label_smoothing < 1.0:
+        raise ValueError("label-smoothing must be in [0, 1)")
+    if not 0.0 <= args.ais_dropout_probability < 1.0:
+        raise ValueError("ais-dropout-probability must be in [0, 1)")
+    if args.early_stopping_patience < 0:
+        raise ValueError("early-stopping-patience cannot be negative")
     args.seed = seed_everything(args.seed)
     data_root = Path(args.data_root).expanduser().resolve()
     save_dir = Path(args.save_dir).expanduser().resolve()
@@ -84,8 +112,11 @@ def main():
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MCFTWithAIS().to(device)
-    criterion = nn.CrossEntropyLoss()
+    model = MCFTWithAIS(
+        ais_feature_profile=args.ais_feature_profile,
+        ais_dropout_probability=args.ais_dropout_probability,
+    ).to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -103,14 +134,43 @@ def main():
         "target_train_partition": "target_train",
         "selection_partition": "target_val",
         "final_partition": "target_test",
-        "modalities": ["RGB", "NIR", "AIS", "AIS_mask"],
+        "modalities": ["RGB", "NIR", "AIS"],
+        "auxiliary_inputs": ["AIS_validity_mask"],
         "num_classes": 3,
-        "adaptation_note": "official two-image MCFT trunk plus explicit AIS/mask late-fusion branch",
+        "adaptation_note": (
+            "official two-image MCFT trunk plus regularized AIS late-fusion; "
+            "validity mask gates missing values and is not a modality/classifier feature"
+        ),
+        "ais_feature_profile": args.ais_feature_profile,
+        "ais_feature_names": (
+            ["heading_sin", "heading_cos", "length_z", "width_z"]
+            if args.ais_feature_profile == "continuous"
+            else "all_13_fields_in_feature_schema"
+        ),
+        "excluded_label_proxy_fields": (
+            ["nav_status_one_hot"]
+            if args.ais_feature_profile == "continuous"
+            else []
+        ),
+        "ais_mask_as_classifier_feature": False,
+        "ais_dropout_probability": args.ais_dropout_probability,
+        "augmentation": "paired horizontal and vertical flips" if args.augment else "none",
+        "label_smoothing": args.label_smoothing,
+        "weight_decay": args.weight_decay,
+        "early_stopping_patience_evaluations": args.early_stopping_patience,
         "normalization": statistics.to_dict(),
     }
     history, best_metrics = [], None
+    evaluations_without_improvement = 0
+    stopped_early = False
+    completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
+        train_items = 0
+        train_correct = 0
+        train_ce_sum = 0.0
+        train_ita_sum = 0.0
+        train_itm_sum = 0.0
         for batch_index, batch in enumerate(train_loader, 1):
             labels = batch["label"].to(device)
             logits, loss_ita, loss_itm = model(
@@ -125,6 +185,12 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            batch_items = labels.shape[0]
+            train_items += batch_items
+            train_correct += int((logits.argmax(1) == labels).sum().item())
+            train_ce_sum += classification_loss.item() * batch_items
+            train_ita_sum += loss_ita.item() * batch_items
+            train_itm_sum += loss_itm.item() * batch_items
             if batch_index % 5 == 0:
                 print(
                     f"Epoch [{epoch}/{args.epochs}] batch "
@@ -134,6 +200,14 @@ def main():
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
         scheduler.step()
+        completed_epoch = epoch
+        print(
+            f"Epoch [{epoch}/{args.epochs}] train "
+            f"accuracy={train_correct / max(train_items, 1):.4f} "
+            f"ce={train_ce_sum / max(train_items, 1):.4f} "
+            f"ita={train_ita_sum / max(train_items, 1):.4f} "
+            f"itm={train_itm_sum / max(train_items, 1):.4f}"
+        )
 
         should_evaluate = (
             epoch == 1 or epoch == args.epochs or epoch % args.eval_frequency == 0
@@ -145,7 +219,23 @@ def main():
             if better_metrics(val_metrics, best_metrics):
                 best_metrics = dict(val_metrics)
                 save_checkpoint(checkpoint, model, epoch, val_metrics, metadata)
+                evaluations_without_improvement = 0
+            else:
+                evaluations_without_improvement += 1
+                if (
+                    args.early_stopping_patience
+                    and evaluations_without_improvement
+                    >= args.early_stopping_patience
+                ):
+                    stopped_early = True
+                    print(
+                        "Early stopping: target_val did not improve for "
+                        f"{evaluations_without_improvement} evaluations."
+                    )
+                    break
 
+    metadata["completed_epochs"] = completed_epoch
+    metadata["stopped_early"] = stopped_early
     last_checkpoint = save_dir / f"{stem}_last.pth"
     save_checkpoint(
         last_checkpoint, model, history[-1][0], history[-1][1], metadata

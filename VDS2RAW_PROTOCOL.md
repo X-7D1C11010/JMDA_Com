@@ -19,7 +19,8 @@ Recall 和 F1。
 一致性，也会独立验证不同分区的 scene/MMSI 交集为零。该审计不计算训练统计、
 不进行模型推理，也不影响选模。RGB/NIR 均值方差仅由 210 条训练样本计算；
 AIS 中已经由数据构建程序基于相同训练分区标准化的 `length_z`、`width_z`
-直接使用，并与 13 维缺失掩码一同送入模型。ImageNet 预训练的 CCSA/d-SNE
+直接使用。13 维缺失掩码只是数据有效性标记，用于将无效 AIS 字段置零，不作为
+第四模态，也不再拼入分类器特征。ImageNet 预训练的 CCSA/d-SNE
 使用各自官方自然图像流程规定的输入归一化常量；这些外部预训练常量不从
 `target_val` 或 `target_test` 拟合。
 
@@ -34,11 +35,19 @@ d-SNE 默认使用 `target_train` 全部 94 条有标签样本，不再施加预
 |---|---|---|
 | CCSA | RGB | ImageNet VGG-16 卷积层 + 1024/128 嵌入、CSA、双向分类更新 |
 | d-SNE | RGB | ImageNet ResNetV2-101 + 4096/512 嵌入、官方跨域配对与 d-SNE 损失 |
-| MCFT-RGB-NIR-AIS | RGB + NIR + AIS + mask | 官方双影像 MCFT 主干，增加显式 AIS/mask 后融合分支 |
+| MCFT-RGB-NIR-AIS | RGB + NIR + AIS | 官方双影像 MCFT 主干，增加正则化 AIS 后融合分支；mask 仅控制缺失值 |
 
-MCFT 原论文只有两路栅格模态。因此三模态版本保留其 RGB/NIR Transformer、
-ITA、ITM 和优化配方，同时用一个 26 维 `AIS*mask + mask` MLP 分支进行后
-融合。这是透明标注的数据集适配版本，不宣称 AIS 分支来自原论文。
+MCFT 原论文只有 HSI/LiDAR 两路栅格模态，不包含 AIS 或 AIS mask。因此三模态
+版本保留 RGB/NIR Transformer、ITA 和 ITM，同时增加 AIS 后融合分支。这是项目
+适配，不宣称 AIS 分支来自原论文。默认 `continuous` AIS 配置只使用航向正余弦、
+船长和船宽；`nav_engaged in fishing`、`nav_under way sailing` 等近似类别标签的
+航行状态字段默认排除。mask 只做 `AIS*mask` 有效性门控，不显式送入 MLP。
+
+当前 VDS2Raw MCFT 的小样本正则化默认包括：RGB/NIR 成对水平/垂直翻转（同时
+按镜像方向修正 AIS heading sin/cos）、AIS 分支 0.5
+模态 dropout、0.1 label smoothing、Adam weight decay 1e-4，以及连续 5 次验证
+无提升时早停。500 epoch 是最大预算而不是强制更新到第 500 轮；这些正则化属于
+VDS2Raw 三模态适配，不反向修改 JMDA 的官方配方 VIS+IR 基线。
 
 CCSA 先冻结 ImageNet VGG-16 卷积层，使用全部 `source_train` 初始化新加入的
 全连接层 50 epoch，再解冻全部参数进行 80 epoch CCSA。适配阶段完全使用发布代码
