@@ -412,10 +412,12 @@ class FixedPerClassSubset(Dataset):
 
 
 def fixed_samples_per_class(dataset, samples_per_class, seed):
-    """Select exactly ``samples_per_class`` examples from every present class."""
+    """Select a fixed per-class subset, or return all samples when set to zero."""
     import random
 
-    if samples_per_class <= 0:
+    if samples_per_class < 0:
+        raise ValueError("samples_per_class cannot be negative")
+    if samples_per_class == 0:
         return dataset
     by_class = {}
     for index, (_, label) in enumerate(dataset.samples):

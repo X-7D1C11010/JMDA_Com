@@ -22,8 +22,9 @@ CCSA_BATCH="${VDS2RAW_CCSA_BATCH_SIZE:-256}"
 DSNE_BATCH="${VDS2RAW_DSNE_BATCH_SIZE:-32}"
 MCFT_BATCH="${VDS2RAW_MCFT_BATCH_SIZE:-32}"
 DSNE_LAYERS="${VDS2RAW_DSNE_LAYERS:-101}"
-CCSA_PAIRS="${VDS2RAW_CCSA_PAIRS_PER_EPOCH:-768}"
-TARGET_PER_CLASS="${VDS2RAW_TARGET_SAMPLES_PER_CLASS:-10}"
+LEGACY_TARGET_PER_CLASS="${VDS2RAW_TARGET_SAMPLES_PER_CLASS:-}"
+CCSA_TARGET_PER_CLASS="${VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-10}}"
+DSNE_TARGET_PER_CLASS="${VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-0}}"
 MCFT_EVAL="${VDS2RAW_MCFT_EVAL_FREQUENCY:-10}"
 GPU_MAX_UTIL="${VDS2RAW_GPU_MAX_UTIL_PERCENT:-10}"
 GPU_STABLE_CHECKS="${VDS2RAW_GPU_STABLE_CHECKS:-3}"
@@ -66,7 +67,6 @@ if [ "$MODE" = smoke ]; then
   CCSA_EPOCHS=1; DSNE_EPOCHS=1; MCFT_EPOCHS=1
   CCSA_SOURCE_EPOCHS=1; DSNE_SOURCE_EPOCHS=1
   CCSA_BATCH=8; DSNE_BATCH=4; MCFT_BATCH=4; DSNE_LAYERS=101; MCFT_EVAL=1
-  CCSA_PAIRS=24
   MAX_BATCH_ARGS=(--max-train-batches 1)
   PRETRAINED_ARGS=(--no-pretrained)
 fi
@@ -130,8 +130,8 @@ for seed in "${SEEDS[@]}"; do
         run_one "ccsa_seed$seed" "$CCSA_MIN_FREE_MIB" \
           "$PYTHON_BIN" "$HERE/vds2raw/train_ccsa.py" \
           --epochs "$CCSA_EPOCHS" --source-epochs "$CCSA_SOURCE_EPOCHS" \
-          --batch-size "$CCSA_BATCH" --pairs-per-epoch "$CCSA_PAIRS" \
-          --target-samples-per-class "$TARGET_PER_CLASS" \
+          --batch-size "$CCSA_BATCH" \
+          --target-samples-per-class "$CCSA_TARGET_PER_CLASS" \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
           "${CCSA_CKPT_ARGS[@]}" "${CCSA_BACKBONE_ARGS[@]}"
         ;;
@@ -140,7 +140,7 @@ for seed in "${SEEDS[@]}"; do
           "$PYTHON_BIN" "$HERE/vds2raw/train_dsne.py" \
           --epochs "$DSNE_EPOCHS" --source-epochs "$DSNE_SOURCE_EPOCHS" \
           --batch-size "$DSNE_BATCH" --nlayers "$DSNE_LAYERS" \
-          --target-samples-per-class "$TARGET_PER_CLASS" --fn \
+          --target-samples-per-class "$DSNE_TARGET_PER_CLASS" --fn \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
           "${DSNE_CKPT_ARGS[@]}" "${DSNE_BACKBONE_ARGS[@]}"
         ;;

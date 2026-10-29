@@ -46,6 +46,16 @@ function Get-EnvInt([string]$Name, [int]$Default) {
     return $parsed
 }
 
+function Get-EnvNonNegativeInt([string]$Name, [int]$Default) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($value)) { return $Default }
+    $parsed = 0
+    if (-not [int]::TryParse($value, [ref]$parsed) -or $parsed -lt 0) {
+        throw "$Name must be a non-negative integer: $value"
+    }
+    return $parsed
+}
+
 $CcsaEpochs = Get-EnvInt 'VDS2RAW_CCSA_EPOCHS' 80
 $DsneEpochs = Get-EnvInt 'VDS2RAW_DSNE_EPOCHS' 20
 $McftEpochs = Get-EnvInt 'VDS2RAW_MCFT_EPOCHS' 500
@@ -55,8 +65,28 @@ $CcsaBatch = Get-EnvInt 'VDS2RAW_CCSA_BATCH_SIZE' 256
 $DsneBatch = Get-EnvInt 'VDS2RAW_DSNE_BATCH_SIZE' 32
 $McftBatch = Get-EnvInt 'VDS2RAW_MCFT_BATCH_SIZE' 32
 $DsneLayers = Get-EnvInt 'VDS2RAW_DSNE_LAYERS' 101
-$CcsaPairs = Get-EnvInt 'VDS2RAW_CCSA_PAIRS_PER_EPOCH' 768
-$TargetPerClass = Get-EnvInt 'VDS2RAW_TARGET_SAMPLES_PER_CLASS' 10
+$legacyTargetValue = [Environment]::GetEnvironmentVariable(
+    'VDS2RAW_TARGET_SAMPLES_PER_CLASS'
+)
+$legacyTargetPerClass = if ([string]::IsNullOrWhiteSpace($legacyTargetValue)) {
+    $null
+} else {
+    Get-EnvNonNegativeInt 'VDS2RAW_TARGET_SAMPLES_PER_CLASS' 0
+}
+$CcsaTargetPerClass = if ($env:VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS) {
+    Get-EnvNonNegativeInt 'VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS' 10
+} elseif ($null -ne $legacyTargetPerClass) {
+    $legacyTargetPerClass
+} else {
+    10
+}
+$DsneTargetPerClass = if ($env:VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS) {
+    Get-EnvNonNegativeInt 'VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS' 0
+} elseif ($null -ne $legacyTargetPerClass) {
+    $legacyTargetPerClass
+} else {
+    0
+}
 $McftEvalFrequency = Get-EnvInt 'VDS2RAW_MCFT_EVAL_FREQUENCY' 10
 $CcsaSourceCheckpoint = $env:VDS2RAW_CCSA_SOURCE_CHECKPOINT
 $DsneSourceCheckpoint = $env:VDS2RAW_DSNE_SOURCE_CHECKPOINT
@@ -80,7 +110,6 @@ if ($Mode -eq 'smoke') {
     $DsneBatch = 4
     $McftBatch = 4
     $DsneLayers = 101
-    $CcsaPairs = 24
     $McftEvalFrequency = 1
     $MaxBatches = 1
     $PretrainedArgs = @('--no-pretrained')
@@ -100,7 +129,7 @@ $config = [ordered]@{
     data_root = (Resolve-Path -LiteralPath $DataRoot).Path
     seeds = $Seeds
     method_order = $MethodOrder
-    protocol = 'source_train + fixed-shot target_train; target_val selection; target_test once per predeclared method/budget'
+    protocol = 'CCSA fixed-shot official pairs; d-SNE all labelled target_train by default; target_val selection; target_test once per predeclared method/budget'
     ccsa_epochs = $CcsaEpochs
     ccsa_source_epochs = $CcsaSourceEpochs
     dsne_epochs = $DsneEpochs
@@ -110,8 +139,9 @@ $config = [ordered]@{
     dsne_batch_size = $DsneBatch
     mcft_batch_size = $McftBatch
     dsne_layers = $DsneLayers
-    ccsa_pairs_per_epoch = $CcsaPairs
-    target_samples_per_class = $TargetPerClass
+    ccsa_pair_protocol = 'fixed exhaustive official pair table'
+    ccsa_target_samples_per_class = $CcsaTargetPerClass
+    dsne_target_samples_per_class = $DsneTargetPerClass
     dsne_feature_normalization = $true
     ccsa_source_checkpoint = if ($CcsaSourceCheckpoint) { $CcsaSourceCheckpoint } else { $null }
     dsne_source_checkpoint = if ($DsneSourceCheckpoint) { $DsneSourceCheckpoint } else { $null }
@@ -163,14 +193,14 @@ foreach ($seed in $Seeds) {
     $ccsaArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_ccsa.py'),
         '--epochs', "$CcsaEpochs", '--source-epochs', "$CcsaSourceEpochs",
-        '--batch-size', "$CcsaBatch", '--pairs-per-epoch', "$CcsaPairs",
-        '--target-samples-per-class', "$TargetPerClass"
+        '--batch-size', "$CcsaBatch",
+        '--target-samples-per-class', "$CcsaTargetPerClass"
     ) + $common + $smokeArgs + $PretrainedArgs + $ccsaCheckpointArgs + $ccsaBackboneArgs
     $dsneArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_dsne.py'),
         '--epochs', "$DsneEpochs", '--batch-size', "$DsneBatch",
         '--source-epochs', "$DsneSourceEpochs", '--nlayers', "$DsneLayers",
-        '--target-samples-per-class', "$TargetPerClass", '--fn'
+        '--target-samples-per-class', "$DsneTargetPerClass", '--fn'
     ) + $common + $smokeArgs + $PretrainedArgs + $dsneCheckpointArgs + $dsneBackboneArgs
     $mcftArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_mcft.py'),

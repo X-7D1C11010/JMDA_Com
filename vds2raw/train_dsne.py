@@ -30,6 +30,9 @@ from vds2raw.dataset import (
 from vds2raw.models import DSNEOfficeModel, dsne_loss
 
 
+DEFAULT_TARGET_SAMPLES_PER_CLASS = 0
+
+
 def train_direction(
     model,
     optimizer,
@@ -152,7 +155,12 @@ def main():
     parser.add_argument("--ratio", type=int, default=1)
     parser.add_argument("--embed-size", type=int, default=512)
     parser.add_argument("--nlayers", type=int, default=101)
-    parser.add_argument("--target-samples-per-class", type=int, default=10)
+    parser.add_argument(
+        "--target-samples-per-class",
+        type=int,
+        default=DEFAULT_TARGET_SAMPLES_PER_CLASS,
+        help="0 (default) uses every labelled target_train sample; positive values enable a fixed per-class subset.",
+    )
     parser.add_argument("--source-checkpoint", default="")
     parser.add_argument("--pretrained-backbone", default="")
     parser.add_argument("--backbone-checkpoint", default="", help=argparse.SUPPRESS)
@@ -170,6 +178,8 @@ def main():
 
     if args.epochs <= 0 or args.source_epochs <= 0 or args.batch_size <= 0:
         raise ValueError("epochs, source-epochs and batch-size must be positive")
+    if args.target_samples_per_class < 0:
+        raise ValueError("target-samples-per-class cannot be negative")
     if args.nlayers != 101:
         raise ValueError("formal d-SNE reproduction requires ResNet-101")
     if args.embed_size != 512:
@@ -206,10 +216,16 @@ def main():
     target_val = NaturalImageRGBDataset(
         data_root, "target_val", statistics, augment=False, normalization="half"
     )
-    print(
-        f"d-SNE labelled target subset: {len(target_train)} samples "
-        f"({args.target_samples_per_class} per class)"
-    )
+    if args.target_samples_per_class == 0:
+        print(
+            f"d-SNE labelled target data: all {len(target_train)} available "
+            "target_train samples"
+        )
+    else:
+        print(
+            f"d-SNE labelled target subset: {len(target_train)} samples "
+            f"({args.target_samples_per_class} per class)"
+        )
 
     generator = torch.Generator().manual_seed(args.seed)
     source_loader = DataLoader(
@@ -293,6 +309,10 @@ def main():
         "source_partition": "source_train",
         "target_train_partition": "target_train",
         "target_samples_per_class": args.target_samples_per_class,
+        "target_label_mode": (
+            "all_available" if args.target_samples_per_class == 0 else "fixed_per_class"
+        ),
+        "target_labelled_samples": len(target_train),
         "selection_partition": "target_val",
         "final_partition": "target_test",
         "modalities": ["RGB"],

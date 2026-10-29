@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.domain_pairing import ControlledCrossDomainPairDataset
+from tools.domain_pairing import CrossDomainPairDataset
 from tools.reproducibility import seed_everything
 from vds2raw.common import (
     better_metrics,
@@ -116,7 +116,15 @@ def main():
     parser.add_argument("--source-batch-size", type=int, default=256)
     parser.add_argument("--micro-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=64)
-    parser.add_argument("--pairs-per-epoch", type=int, default=768)
+    parser.add_argument(
+        "--pairs-per-epoch",
+        type=int,
+        default=0,
+        help=(
+            "Deprecated compatibility option. Official CCSA always uses the fixed "
+            "exhaustive pair table, so this value no longer changes training."
+        ),
+    )
     parser.add_argument("--target-samples-per-class", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1.0)
     parser.add_argument("--rho", type=float, default=0.95)
@@ -138,13 +146,17 @@ def main():
         args.batch_size,
         args.source_batch_size,
         args.micro_batch_size,
-        args.pairs_per_epoch,
         args.target_samples_per_class,
     )
     if any(value <= 0 for value in positive_values):
-        raise ValueError("epoch, batch, pair and per-class counts must be positive")
-    if args.pairs_per_epoch % args.batch_size:
-        raise ValueError("pairs-per-epoch must be a multiple of batch-size")
+        raise ValueError("epoch, batch and per-class counts must be positive")
+    if args.pairs_per_epoch < 0:
+        raise ValueError("pairs-per-epoch cannot be negative")
+    if args.pairs_per_epoch:
+        print(
+            "[DEPRECATED] --pairs-per-epoch is ignored: official CCSA uses the "
+            "fixed exhaustive cross-domain pair table."
+        )
     if args.source_checkpoint and args.pretrained_backbone:
         raise ValueError(
             "source-checkpoint and pretrained-backbone are mutually exclusive"
@@ -159,10 +171,10 @@ def main():
     statistics = load_or_compute_statistics(data_root, args.stats_file or None)
 
     source_train = NaturalImageRGBDataset(
-        data_root, "source_train", statistics, augment=True, normalization="imagenet"
+        data_root, "source_train", statistics, augment=False, normalization="imagenet"
     )
     target_full = NaturalImageRGBDataset(
-        data_root, "target_train", statistics, augment=True, normalization="imagenet"
+        data_root, "target_train", statistics, augment=False, normalization="imagenet"
     )
     target_train = fixed_samples_per_class(
         target_full, args.target_samples_per_class, args.seed
@@ -183,12 +195,8 @@ def main():
         num_workers=args.num_workers,
         generator=generator,
     )
-    pairs = ControlledCrossDomainPairDataset(
-        source_train,
-        target_train,
-        pairs_per_epoch=args.pairs_per_epoch,
-        negative_ratio=3,
-        seed=args.seed,
+    pairs = CrossDomainPairDataset(
+        source_train, target_train, negative_ratio=3, seed=args.seed
     )
     pair_loader = DataLoader(
         pairs,
@@ -204,7 +212,7 @@ def main():
         num_workers=args.num_workers,
     )
     print(
-        f"Controlled CCSA pairs/epoch: {len(pairs)} "
+        f"Official fixed CCSA pair table: {len(pairs)} pairs "
         f"({pairs.positive_pairs} positive, {pairs.negative_pairs} negative, "
         f"{len(pair_loader)} effective batches)"
     )
@@ -231,7 +239,7 @@ def main():
     checkpoint = save_dir / f"{stem}_best.pth"
     metadata = {
         "method": "CCSA",
-        "implementation": "paper natural-image configuration, PyTorch port",
+        "implementation": "official fixed-pair CCSA recipe, PyTorch port",
         "seed": args.seed,
         "epochs": args.epochs,
         "source_initialization_epochs": args.source_epochs,
@@ -257,17 +265,21 @@ def main():
         "num_classes": 3,
         "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
         "embedding": [1024, 128],
-        "pair_protocol": "epoch-resampled controlled pairs; 1 positive : 3 negative",
-        "pairs_per_epoch": args.pairs_per_epoch,
+        "pair_protocol": (
+            "fixed exhaustive cross-domain table; all positives plus up to 3x "
+            "unique negatives; two successive direction updates per batch"
+        ),
+        "positive_pairs": pairs.positive_pairs,
+        "negative_pairs": pairs.negative_pairs,
+        "pairs_per_epoch": len(pairs),
         "effective_batch_size": args.batch_size,
         "micro_batch_size": args.micro_batch_size,
-        "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter",
+        "augmentation": "none; fixed resize256/center-crop224 preprocessing",
         "normalization": "ImageNet",
     }
 
     history, best_metrics = [], None
     for epoch in range(1, args.epochs + 1):
-        pairs.set_epoch(epoch)
         model.train()
         for batch_index, batch in enumerate(pair_loader, 1):
             source_images, source_labels, target_images, target_labels, pair_labels = (

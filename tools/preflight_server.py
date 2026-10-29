@@ -317,6 +317,9 @@ def main():
             lists.append(
                 list_dir / f'{target}_sda_10shot_seed42.txt'
             )
+            # CCSA consumes the fixed-shot list while d-SNE defaults to the
+            # complete labelled target-training list. Validate both cohorts.
+            lists.append(list_dir / f'{target}_train.txt')
         elif args.protocol in (
             'jmda_uda', 'jmda_oracle_shared_uda',
             'jmda_label_guided_da', 'uda', 'vlm'
@@ -365,6 +368,16 @@ def main():
         if training_name not in validated:
             continue
         target_labels = {label for _, label in validated[training_name]}
+        if args.protocol == 'sda':
+            full_training_name = f'{target}_train.txt'
+            full_target_labels = {
+                label for _, label in validated[full_training_name]
+            }
+            if full_target_labels != target_labels:
+                fail(
+                    f'{target} fixed-shot/full target label support differs: '
+                    f'{sorted(target_labels)} != {sorted(full_target_labels)}'
+                )
         val_labels = {
             label for _, label in validated[f'{target}_val.txt']
         }

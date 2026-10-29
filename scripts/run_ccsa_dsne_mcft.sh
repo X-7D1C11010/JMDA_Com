@@ -74,7 +74,8 @@ DSNE_SOURCE_EPOCHS="${SDA_DSNE_SOURCE_EPOCHS:-50}"
 DSNE_LAYERS="${SDA_DSNE_LAYERS:-101}"
 NUM_WORKERS="${JMDA_NUM_WORKERS:-2}"
 MCFT_EVAL_FREQUENCY="${MCFT_EVAL_FREQUENCY:-10}"
-SDA_LABELS_PER_CLASS=10
+CCSA_LABELS_PER_CLASS="${SDA_CCSA_LABELS_PER_CLASS:-10}"
+DSNE_LABELS_PER_CLASS="${SDA_DSNE_LABELS_PER_CLASS:-0}"
 SDA_SUBSET_SEED=42
 CCSA_BATCH_SIZE="${SDA_CCSA_BATCH_SIZE:-256}"
 DSNE_BATCH_SIZE="${SDA_DSNE_BATCH_SIZE:-32}"
@@ -100,7 +101,8 @@ if [ "$MODE" = "smoke" ]; then
 fi
 
 for value_name in CCSA_EPOCHS DSNE_EPOCHS MCFT_EPOCHS NUM_WORKERS \
-  CCSA_BATCH_SIZE DSNE_BATCH_SIZE MCFT_BATCH_SIZE MCFT_EVAL_FREQUENCY; do
+  CCSA_BATCH_SIZE DSNE_BATCH_SIZE MCFT_BATCH_SIZE MCFT_EVAL_FREQUENCY \
+  CCSA_LABELS_PER_CLASS DSNE_LABELS_PER_CLASS; do
   value="${!value_name}"
   if ! [[ "$value" =~ ^[0-9]+$ ]]; then
     echo "$value_name 必须是非负整数: $value"
@@ -110,6 +112,15 @@ done
 if [ "$CCSA_EPOCHS" -eq 0 ] || [ "$DSNE_EPOCHS" -eq 0 ] || [ "$MCFT_EPOCHS" -eq 0 ]; then
   echo "训练轮数必须大于 0。"
   exit 1
+fi
+if [ "$CCSA_LABELS_PER_CLASS" -eq 0 ]; then
+  echo "CCSA_LABELS_PER_CLASS 必须大于 0。"
+  exit 1
+fi
+if [ "$DSNE_LABELS_PER_CLASS" -eq 0 ]; then
+  DSNE_TARGET_LABEL_POLICY="all"
+else
+  DSNE_TARGET_LABEL_POLICY="${DSNE_LABELS_PER_CLASS}-shot seed${SDA_SUBSET_SEED}"
 fi
 if [ "$CCSA_BATCH_SIZE" -eq 0 ] || [ "$DSNE_BATCH_SIZE" -eq 0 ] \
   || [ "$MCFT_BATCH_SIZE" -eq 0 ] || [ "$MCFT_EVAL_FREQUENCY" -eq 0 ]; then
@@ -133,7 +144,8 @@ export JMDA_EFFICIENCY_OUTPUT_DIR="$EFFICIENCY_DIR"
   echo "seeds=${SEEDS[*]}"
   echo "source_domain=晴天"
   echo "target_label_policy=target-known classes filter sunny source"
-  echo "sda_subset=10-shot seed42"
+  echo "ccsa_target_labels=${CCSA_LABELS_PER_CLASS}-shot seed${SDA_SUBSET_SEED}"
+  echo "dsne_target_labels=$DSNE_TARGET_LABEL_POLICY"
   echo "ccsa_epochs=$CCSA_EPOCHS"
   echo "ccsa_source_epochs=$CCSA_SOURCE_EPOCHS"
   echo "ccsa_batch_size=$CCSA_BATCH_SIZE"
@@ -155,7 +167,7 @@ if ! "$PYTHON_BIN" "$HERE/tools/prepare_paired_protocol_lists.py" \
   --output-dir "$VIS_LIST_DIR" \
   --targets "${TARGETS[@]}" \
   --modality vis \
-  --sda-shots "$SDA_LABELS_PER_CLASS" \
+  --sda-shots "$CCSA_LABELS_PER_CLASS" \
   --sda-seed "$SDA_SUBSET_SEED"; then
   echo "VIS 清单生成失败；尚未启动训练。"
   exit 1
@@ -165,7 +177,7 @@ if ! "$PYTHON_BIN" "$HERE/tools/prepare_paired_protocol_lists.py" \
   --output-dir "$PAIRED_LIST_DIR" \
   --targets "${TARGETS[@]}" \
   --modality paired \
-  --sda-shots "$SDA_LABELS_PER_CLASS" \
+  --sda-shots "$CCSA_LABELS_PER_CLASS" \
   --sda-seed "$SDA_SUBSET_SEED"; then
   echo "清单生成失败；尚未启动训练。"
   exit 1
@@ -296,7 +308,7 @@ for target in "${TARGETS[@]}"; do
     run_one "ccsa" "sda" "$target" "$seed" "$CCSA_EPOCHS" "VIS" \
       "$PYTHON_BIN" "$HERE/CCSA/train_ccsa.py" \
       --target "$target" --epochs "$CCSA_EPOCHS" --seed "$seed" \
-      --target-labels-per-class "$SDA_LABELS_PER_CLASS" \
+      --target-labels-per-class "$CCSA_LABELS_PER_CLASS" \
       --sda-seed "$SDA_SUBSET_SEED" \
       "${COMMON_VIS_ARGS[@]}" "${CCSA_EXTRA[@]}" \
       "${CCSA_CHECKPOINT_ARGS[@]}"
@@ -308,7 +320,7 @@ for target in "${TARGETS[@]}"; do
     run_one "dsne" "sda" "$target" "$seed" "$DSNE_EPOCHS" "VIS" \
       "$PYTHON_BIN" "$HERE/d-SNE/train_dsne.py" \
       --target "$target" --epochs "$DSNE_EPOCHS" --seed "$seed" \
-      --target-labels-per-class "$SDA_LABELS_PER_CLASS" \
+      --target-labels-per-class "$DSNE_LABELS_PER_CLASS" \
       --sda-seed "$SDA_SUBSET_SEED" \
       "${COMMON_VIS_ARGS[@]}" "${DSNE_EXTRA[@]}" \
       "${DSNE_CHECKPOINT_ARGS[@]}"

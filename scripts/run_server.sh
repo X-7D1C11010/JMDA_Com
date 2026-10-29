@@ -258,8 +258,10 @@ if [ -z "$DEEPCORAL_ALEXNET_WEIGHTS" ] \
     && [ -f "$HERE/pretrained_weights/deepcoral_alexnet_owt_4df8aa71.pth" ]; then
   DEEPCORAL_ALEXNET_WEIGHTS="$HERE/pretrained_weights/deepcoral_alexnet_owt_4df8aa71.pth"
 fi
-# SDA 目标标注预算（每类样本数），CCSA / d-SNE 与子集生成共用同一数值
+# CCSA keeps the declared fixed-shot protocol. d-SNE uses every labelled
+# target-training sample by default; a positive override restores few-shot.
 SDA_LABELS_PER_CLASS="${JMDA_SDA_LABELS_PER_CLASS:-10}"
+DSNE_LABELS_PER_CLASS="${JMDA_DSNE_LABELS_PER_CLASS:-0}"
 export JMDA_DATA_ROOT="$DATA_ROOT"
 export JMDA_EFFICIENCY_OUTPUT_DIR="$EFF_DIR"
 mkdir -p "$LOG_ROOT" "$EFF_DIR" "$RESULTS_DIR" "$CHECKPOINT_ROOT" "$FAIR_LIST_DIR"
@@ -491,14 +493,14 @@ COMMON=(--epochs "$EPOCHS" --seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficien
 METHOD_COMMON=(--seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
 
 if [ "$PROTOCOL" = "sda" ]; then
-  # ---- SDA：所有方法使用同一源标签 + 同一目标标注子集（共享 list）----
+  # ---- SDA：CCSA fixed-shot；d-SNE 默认使用完整目标训练标签 ----
   for t in "${TARGETS[@]}"; do
     run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann_sda.py"             --target "$t" "${COMMON[@]}"
     run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral_sda.py"   --target "$t" "${COMMON[@]}"
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan_sda.py"             --target "$t" "${COMMON[@]}"
     run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd_sda.py"               --target "$t" "${COMMON[@]}"
     run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc_sda.py"               --target "$t" "${COMMON[@]}"
-    # CCSA / d-SNE 原作即为有监督域适应，使用同一目标标注子集
+    # CCSA retains the fixed-shot experiment; d-SNE defaults to all labels.
     run "ccsa_$t" --record-epochs "$SDA_CCSA_EPOCHS" \
       "$PYTHON" "$HERE/CCSA/train_ccsa.py" --target "$t" \
       --epochs "$SDA_CCSA_EPOCHS" "${METHOD_COMMON[@]}" \
@@ -506,7 +508,7 @@ if [ "$PROTOCOL" = "sda" ]; then
     run "dsne_$t" --record-epochs "$SDA_DSNE_EPOCHS" \
       "$PYTHON" "$HERE/d-SNE/train_dsne.py" --target "$t" \
       --epochs "$SDA_DSNE_EPOCHS" "${METHOD_COMMON[@]}" \
-      --target-labels-per-class "$SDA_LABELS_PER_CLASS" --sda-seed "$SEED"
+      --target-labels-per-class "$DSNE_LABELS_PER_CLASS" --sda-seed "$SEED"
     # JMDA-Net-SDA（本文方法，仓库内 JMDA-Net/ 目录）
     run "jmda_net_sda_$t" bash -c \
       "cd '$JMDA_NET_DIR' && JMDA_SDA_LIST_DIR='$FAIR_LIST_DIR' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS' --num-iterations '${JMDA_NUM_ITERATIONS:-5}' --sda-seed '$SEED'"

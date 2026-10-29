@@ -23,9 +23,10 @@ AIS 中已经由数据构建程序基于相同训练分区标准化的 `length_z
 使用各自官方自然图像流程规定的输入归一化常量；这些外部预训练常量不从
 `target_val` 或 `target_test` 拟合。
 
-CCSA 与 d-SNE 对 `target_train` 使用同一规则：每个类别按随机种子固定抽取
-10 条，共 30 条有标签目标样本。10-shot 是本 VDS2Raw 实验预先声明的数据
-协议（d-SNE 的 VisDA-C 实验也使用 10-shot）；它不是对损失函数的修改。
+CCSA 保留预先声明的 10-shot 协议：每类按随机种子固定抽取 10 条，共 30 条。
+d-SNE 默认使用 `target_train` 全部 94 条有标签样本，不再施加预设标签数量上限；
+只有显式传入正数 `--target-samples-per-class` 时才恢复 fixed-shot 子集。两种标签
+预算必须在结果表中分开标注，不能再写成相同监督量。
 
 ## 方法输入
 
@@ -40,15 +41,17 @@ ITA、ITM 和优化配方，同时用一个 26 维 `AIS*mask + mask` MLP 分支�
 融合。这是透明标注的数据集适配版本，不宣称 AIS 分支来自原论文。
 
 CCSA 先冻结 ImageNet VGG-16 卷积层，使用全部 `source_train` 初始化新加入的
-全连接层 50 epoch，再解冻全部参数进行 80 epoch CCSA。每个 epoch 重新随机
-生成 768 个受控配对（192 正、576 负），在三个目标类别间均分；有效 batch
-size 为 256，显存中的 micro-batch 默认 16，梯度累积后才做一次优化更新。
-这保留论文允许的随机配对选择和官方 1:3 正负比例，避免每个目标样本固定
-遍历全部源样本。
+全连接层 50 epoch，再解冻全部参数进行 80 epoch CCSA。适配阶段完全使用发布代码
+的固定穷举配对：保留所有同类正对，随机打乱不同类负对后至多截取正对数的 3 倍，
+整个训练期间不重新生成 pair 表；有效 batch size 为 256，尾部不足一个 batch 的
+pair 与发布代码的整数除法一样不参与更新。每个完整 batch 先执行 source→target，
+再对同一 batch 执行 target→source 更新。micro-batch 仅用于等价梯度累积，不改变
+有效 batch 或优化器更新次数。训练预处理为固定 resize/center-crop，不使用自定义
+随机增强。
 
 d-SNE 先从 ImageNet ResNetV2-101 开始，在全部 `source_train` 上监督微调 50
 epoch，再以 batch size 32、`--fn`、SGD 0.001、momentum 0.9、weight decay
-1e-4 进行适配。10 epoch 是官方 Office-31 预算；程序继续到 20 epoch，并分别
+1e-4 对全部有标签 `target_train` 进行适配。10 epoch 是官方 Office-31 预算；程序继续到 20 epoch，并分别
 以 `target_val` 在 1--10 和 1--20 范围选模，输出 `d-SNE@10` 与 `d-SNE@20`。
 原仓库依赖 MXNet/CUDA 9；本项目是在当前 PyTorch/CUDA 环境中的等价训练端口，
 数据读取和指标保存是 VDS2Raw 接口层修改。
@@ -81,9 +84,11 @@ $env:VDS2RAW_SEEDS = '42'
 
 正式脚本默认使用 CCSA/d-SNE/MCFT 有效批大小 256/32/32；可以用
 `VDS2RAW_CCSA_BATCH_SIZE`、`VDS2RAW_DSNE_BATCH_SIZE` 和
-`VDS2RAW_MCFT_BATCH_SIZE` 覆盖。CCSA 还可以用
-`VDS2RAW_CCSA_PAIRS_PER_EPOCH` 调整受控配对数（必须为 batch size 的整数倍），
-用 `VDS2RAW_TARGET_SAMPLES_PER_CLASS` 同步调整两种方法的目标每类样本数。
+`VDS2RAW_MCFT_BATCH_SIZE` 覆盖。CCSA 的 pair 数由官方穷举规则唯一确定，旧参数
+`VDS2RAW_CCSA_PAIRS_PER_EPOCH` 不再影响训练。CCSA 和 d-SNE 的标签预算分别用
+`VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS`（默认 10）和
+`VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS`（默认 0，即全部）控制。兼容变量
+`VDS2RAW_TARGET_SAMPLES_PER_CLASS` 仍可同时覆盖两者，但不建议在正式实验中混用。
 适配训练轮数默认分别为 80/20/500。
 
 首次正式运行会下载/读取 ImageNet 权重，并分别产生 CCSA 和 d-SNE 的源域

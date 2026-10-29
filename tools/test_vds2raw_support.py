@@ -15,6 +15,7 @@ from vds2raw.dataset import (
     PARTITIONS,
     VDS2RawDataset,
     compute_image_statistics,
+    fixed_samples_per_class,
     load_or_compute_statistics,
 )
 
@@ -83,6 +84,25 @@ class VDS2RawStatisticsTests(unittest.TestCase):
                 float(source_rgb.max()), 2.0 / 255.0 - 1.0, places=5
             )
             self.assertAlmostEqual(float(validation_rgb.min()), 1.0, places=5)
+
+    def test_zero_per_class_uses_every_available_target_label(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_fixture(root)
+            statistics = compute_image_statistics(root)
+            target = NaturalImageRGBDataset(
+                root, "target_train", statistics,
+                augment=False, normalization="half",
+            )
+            selected = fixed_samples_per_class(target, 0, seed=42)
+            self.assertIs(selected, target)
+            self.assertEqual(len(selected), len(target))
+            with self.assertRaisesRegex(ValueError, "cannot be negative"):
+                fixed_samples_per_class(target, -1, seed=42)
+
+        from vds2raw.train_dsne import DEFAULT_TARGET_SAMPLES_PER_CLASS
+
+        self.assertEqual(DEFAULT_TARGET_SAMPLES_PER_CLASS, 0)
 
     def test_dataset_returns_float32_and_respects_resize(self):
         with tempfile.TemporaryDirectory() as temporary:

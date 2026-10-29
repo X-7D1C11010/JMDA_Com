@@ -26,11 +26,25 @@ from torchvision import transforms
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 
+DEFAULT_TARGET_LABELS_PER_CLASS = 0
+
 from classification_metrics import classification_metrics, format_classification_metrics
 from domain_pairing import CrossDomainPairDataset
 from metrics_io import save_metric_history
 from reproducibility import seed_everything
 from uda_data import UdaImageListDataset, format_dropped, uda_label_space
+
+
+def target_training_list_path(data_dir, target, labels_per_class, sda_seed):
+    """Use the complete labelled target train list unless few-shot is requested."""
+    if labels_per_class < 0:
+        raise ValueError('target-labels-per-class cannot be negative')
+    if labels_per_class == 0:
+        return os.path.join(data_dir, f'{target}_train.txt')
+    return os.path.join(
+        data_dir,
+        f'{target}_sda_{labels_per_class}shot_seed{sda_seed}.txt',
+    )
 
 
 def get_transforms(args):
@@ -396,7 +410,15 @@ def main():
     parser.add_argument('--no-random-crop', dest='random_crop', action='store_false')
     parser.add_argument('--random-color', dest='random_color', action='store_true')
     parser.add_argument('--no-random-color', dest='random_color', action='store_false')
-    parser.add_argument('--target-labels-per-class', type=int, default=10)
+    parser.add_argument(
+        '--target-labels-per-class',
+        type=int,
+        default=DEFAULT_TARGET_LABELS_PER_CLASS,
+        help=(
+            '0 (default) uses every labelled target training sample; positive '
+            'values retain the optional fixed-shot protocol.'
+        ),
+    )
     parser.add_argument('--sda-seed', type=int, default=42)
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--max-train-batches', type=int, default=0,
@@ -415,6 +437,8 @@ def main():
         raise ValueError('epochs and source-epochs must be positive')
     if args.batch_size <= 0 or args.source_batch_size <= 0:
         raise ValueError('batch sizes must be positive')
+    if args.target_labels_per_class < 0:
+        raise ValueError('target-labels-per-class cannot be negative')
     if args.embed_size != 512 and not args.max_train_batches:
         raise ValueError('formal d-SNE reproduction requires embed-size=512')
     if args.nlayers != 101 and not args.max_train_batches:
@@ -439,14 +463,17 @@ def main():
 
     train_tf, eval_tf = get_transforms(args)
     source_list = os.path.join(args.data_dir, 'sunny_train.txt')
-    target_list = os.path.join(
+    target_list = target_training_list_path(
         args.data_dir,
-        f'{args.target}_sda_{args.target_labels_per_class}shot_seed{args.sda_seed}.txt',
+        args.target,
+        args.target_labels_per_class,
+        args.sda_seed,
     )
     target_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
     if not os.path.isfile(target_list):
         raise FileNotFoundError(
-            f'SDA subset list missing: {target_list}. Run tools/make_sda_lists.py first.'
+            f'Labelled target training list missing: {target_list}. '
+            'Run tools/prepare_paired_protocol_lists.py first.'
         )
 
     source = UdaImageListDataset(source_list, train_tf, label_map)
@@ -456,6 +483,13 @@ def main():
     print(format_dropped('source train', source))
     print(format_dropped('target labelled train', target))
     print(format_dropped('target validation', target_val))
+    if args.target_labels_per_class == 0:
+        print(f'd-SNE target label mode: all {len(target)} available training samples')
+    else:
+        print(
+            f'd-SNE target label mode: {args.target_labels_per_class}-shot '
+            f'per class ({len(target)} samples)'
+        )
 
     pair_dataset = CrossDomainPairDataset(
         source, target, negative_ratio=args.ratio, seed=args.seed
@@ -582,6 +616,12 @@ def main():
         'source_checkpoint': source_provenance,
         'source_stage_elapsed_seconds': source_elapsed,
         'target_labels_per_class': args.target_labels_per_class,
+        'target_label_mode': (
+            'all_available'
+            if args.target_labels_per_class == 0
+            else 'fixed_per_class'
+        ),
+        'target_label_count': len(target),
         'backbone': f'ResNetV2-{args.nlayers}',
         'pretrained_backbone': args.pretrained_backbone or (
             'timm ImageNet download' if timm_download else None

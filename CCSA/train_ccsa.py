@@ -248,8 +248,9 @@ def main():
     if min(
         args.epochs, args.source_epochs, args.batch_size,
         args.source_batch_size, args.micro_batch_size,
+        args.target_labels_per_class,
     ) <= 0:
-        raise ValueError('epoch and batch sizes must be positive')
+        raise ValueError('epoch, batch and CCSA per-class counts must be positive')
     if args.source_checkpoint and args.pretrained_backbone:
         raise ValueError('source-checkpoint and pretrained-backbone are mutually exclusive')
 
@@ -441,7 +442,12 @@ def main():
                 'torchvision ImageNet download' if download_pretrained else None
             ),
             'strict_checkpoint_loading': True,
-            'pair_protocol': 'all positives + 3x negatives; two updates per batch',
+            'pair_protocol': (
+                'all positives + up to 3x unique negatives; '
+                'two updates per batch'
+            ),
+            'positive_pairs': pair_dataset.positive_pairs,
+            'negative_pairs': pair_dataset.negative_pairs,
             'max_train_batches': args.max_train_batches,
         },
     )
