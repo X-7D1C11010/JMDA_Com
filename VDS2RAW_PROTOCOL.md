@@ -7,13 +7,15 @@
 - 类别：Cargo、Fishing、Sailing & Pleasure
 - 源域：`source_train`，day3，116 条
 - 有标签目标训练域：`target_train`，非 day3，94 条
-- 选模集：`target_val`，28 条
-- 最终测试集：`target_test`，33 条
+- 诊断集：`target_val`，28 条
+- 峰值选模集：`target_test`，33 条
 
-训练和数据集统计拟合严格限定为 `source_train + target_train`。每个方法只用
-`target_val` 选择最佳 epoch；选定并重新载入最佳检查点后，才构造
-`target_test` loader 并执行一次最终评价。最终保存 ACC、宏平均 Precision、
-Recall 和 F1。
+训练和数据集统计拟合严格限定为 `source_train + target_train`。按用户指定的当前
+VDS2Raw 实验协议，三个方法均在训练期间评价 `target_val` 和 `target_test`，并按
+`target_test` 的 ACC、macro-F1 顺序选择峰值 epoch。该结果是测试集参与选模后的
+峰值，存在明确的 test-selection bias，不能解释为无偏泛化估计。最终保存 ACC、
+宏平均 Precision、Recall、F1、两套逐轮曲线、逐轮训练损失/LR、逐样本预测和
+混淆矩阵。
 
 运行前的结构审计会检查 271 个 NPZ 的键、形状、类型、类别和 manifest
 一致性，也会独立验证不同分区的 scene/MMSI 交集为零。该审计不计算训练统计、
@@ -24,10 +26,10 @@ AIS 中已经由数据构建程序基于相同训练分区标准化的 `length_z
 使用各自官方自然图像流程规定的输入归一化常量；这些外部预训练常量不从
 `target_val` 或 `target_test` 拟合。
 
-CCSA 保留预先声明的 10-shot 协议：每类按随机种子固定抽取 10 条，共 30 条。
-d-SNE 默认使用 `target_train` 全部 94 条有标签样本，不再施加预设标签数量上限；
-只有显式传入正数 `--target-samples-per-class` 时才恢复 fixed-shot 子集。两种标签
-预算必须在结果表中分开标注，不能再写成相同监督量。
+CCSA、d-SNE 与 MCFT 使用相同的全监督预算：全部 116 条 `source_train` 和全部
+94 条 `target_train` 的真实标签在训练中可见。CCSA/d-SNE 的
+`--target-samples-per-class 0` 表示全部目标训练样本；正数参数仅保留给显式消融，
+正式统一协议拒绝非零配置。MCFT 继续用两个训练分区的拼接数据。
 
 ## 方法输入
 
@@ -45,8 +47,8 @@ MCFT 原论文只有 HSI/LiDAR 两路栅格模态，不包含 AIS 或 AIS mask�
 
 当前 VDS2Raw MCFT 的小样本正则化默认包括：RGB/NIR 成对水平/垂直翻转（同时
 按镜像方向修正 AIS heading sin/cos）、AIS 分支 0.5
-模态 dropout、0.1 label smoothing、Adam weight decay 1e-4，以及连续 5 次验证
-无提升时早停。500 epoch 是最大预算而不是强制更新到第 500 轮；这些正则化属于
+模态 dropout、0.1 label smoothing 和 Adam weight decay 1e-4。为完整搜索
+`target_test` 峰值，正式协议默认每轮评价且关闭早停，执行完整 500 epoch；这些正则化属于
 VDS2Raw 三模态适配，不反向修改 JMDA 的官方配方 VIS+IR 基线。
 
 CCSA 先冻结 ImageNet VGG-16 卷积层，使用全部 `source_train` 初始化新加入的
@@ -61,7 +63,8 @@ pair 与发布代码的整数除法一样不参与更新。每个完整 batch �
 d-SNE 先从 ImageNet ResNetV2-101 开始，在全部 `source_train` 上监督微调 50
 epoch，再以 batch size 32、`--fn`、SGD 0.001、momentum 0.9、weight decay
 1e-4 对全部有标签 `target_train` 进行适配。10 epoch 是官方 Office-31 预算；程序继续到 20 epoch，并分别
-以 `target_val` 在 1--10 和 1--20 范围选模，输出 `d-SNE@10` 与 `d-SNE@20`。
+以 `target_test` 在 1--10 和 1--20 范围选峰值，输出 `d-SNE@10` 与 `d-SNE@20`。
+两者均在元数据中标记测试集选模偏差。
 原仓库依赖 MXNet/CUDA 9；本项目是在当前 PyTorch/CUDA 环境中的等价训练端口，
 数据读取和指标保存是 VDS2Raw 接口层修改。
 
@@ -94,11 +97,11 @@ $env:VDS2RAW_SEEDS = '42'
 正式脚本默认使用 CCSA/d-SNE/MCFT 有效批大小 256/32/32；可以用
 `VDS2RAW_CCSA_BATCH_SIZE`、`VDS2RAW_DSNE_BATCH_SIZE` 和
 `VDS2RAW_MCFT_BATCH_SIZE` 覆盖。CCSA 的 pair 数由官方穷举规则唯一确定，旧参数
-`VDS2RAW_CCSA_PAIRS_PER_EPOCH` 不再影响训练。CCSA 和 d-SNE 的标签预算分别用
-`VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS`（默认 10）和
-`VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS`（默认 0，即全部）控制。兼容变量
-`VDS2RAW_TARGET_SAMPLES_PER_CLASS` 仍可同时覆盖两者，但不建议在正式实验中混用。
-适配训练轮数默认分别为 80/20/500。
+`VDS2RAW_CCSA_PAIRS_PER_EPOCH` 不再影响训练。CCSA 和 d-SNE 的标签预算变量
+`VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS`、`VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS`
+均默认 0，即全部；正式启动会拒绝任一非零值。兼容变量
+`VDS2RAW_TARGET_SAMPLES_PER_CLASS` 仅供显式消融。适配训练轮数默认分别为
+80/20/500，MCFT 默认每轮评价并关闭早停。
 
 首次正式运行会下载/读取 ImageNet 权重，并分别产生 CCSA 和 d-SNE 的源域
 检查点。后续运行可复用这些检查点，跳过各自 50 epoch 的源域阶段：

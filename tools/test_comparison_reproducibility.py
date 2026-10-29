@@ -39,11 +39,14 @@ class ComparisonReproducibilityTests(unittest.TestCase):
                     source,
                 )
 
-    def test_sda_entrypoints_read_the_shared_labelled_subset(self):
-        for relative_path in ("CCSA/train_ccsa.py", "d-SNE/train_dsne.py"):
-            with self.subTest(entrypoint=relative_path):
-                source = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn("_sda_{args.target_labels_per_class}shot_seed", source)
+    def test_sda_entrypoints_resolve_their_declared_label_mode(self):
+        ccsa = (ROOT / "CCSA/train_ccsa.py").read_text(encoding="utf-8")
+        self.assertIn("_sda_{args.target_labels_per_class}shot_seed", ccsa)
+
+        dsne = (ROOT / "d-SNE/train_dsne.py").read_text(encoding="utf-8")
+        self.assertIn("def target_training_list_path", dsne)
+        self.assertIn("if labels_per_class == 0", dsne)
+        self.assertIn("target_training_list_path(", dsne)
 
     def test_requested_methods_use_target_driven_class_space_and_save_metrics(self):
         for relative_path in (

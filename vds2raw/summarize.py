@@ -28,6 +28,11 @@ def main():
                 "method": metadata["method"],
                 "seed": int(metadata["seed"]),
                 "selected_epoch": int(payload["selected_epoch"]),
+                "selection_partition": payload.get("selection_partition", "unknown"),
+                "test_selection_bias": bool(payload.get("test_selection_bias", False)),
+                "test_evaluations_for_selection": int(
+                    payload.get("test_evaluations_for_selection", 0)
+                ),
                 "ACC": float(test["accuracy"]),
                 "Precision_macro": float(test["precision_macro"]),
                 "Recall_macro": float(test["recall_macro"]),
@@ -63,6 +68,8 @@ def main():
             "seeds": " ".join(
                 str(row["seed"]) for row in sorted(rows, key=lambda x: x["seed"])
             ),
+            "selection_partition": rows[0]["selection_partition"],
+            "test_selection_bias": rows[0]["test_selection_bias"],
         }
         for metric in METRICS:
             values = [row[key_map[metric]] for row in rows]

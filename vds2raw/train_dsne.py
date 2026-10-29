@@ -1,4 +1,4 @@
-"""Official natural-image d-SNE recipe on the VDS2Raw cross-day protocol."""
+"""d-SNE core recipe under the user-specified fully supervised VDS2Raw protocol."""
 
 import argparse
 import sys
@@ -20,6 +20,9 @@ from vds2raw.common import (
     metric_line,
     save_checkpoint,
     save_experiment_results,
+    save_prediction_artifacts,
+    save_record_history,
+    save_run_config,
 )
 from vds2raw.dataset import (
     NaturalImageRGBDataset,
@@ -71,6 +74,7 @@ def train_source_model(model, loader, device, args):
         weight_decay=args.weight_decay,
     )
     criterion = nn.CrossEntropyLoss()
+    history = []
     for epoch in range(1, args.source_epochs + 1):
         model.train()
         loss_sum = 0.0
@@ -86,11 +90,21 @@ def train_source_model(model, loader, device, args):
             sample_count += images.shape[0]
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
+        epoch_ce = loss_sum / max(sample_count, 1)
+        history.append(
+            {
+                "epoch": epoch,
+                "ce": epoch_ce,
+                "lr": optimizer.param_groups[0]["lr"],
+                "samples": sample_count,
+            }
+        )
         if epoch == 1 or epoch % 10 == 0 or epoch == args.source_epochs:
             print(
                 f"d-SNE source fine-tune [{epoch}/{args.source_epochs}] "
-                f"CE={loss_sum / max(sample_count, 1):.4f}"
+                f"CE={epoch_ce:.4f}"
             )
+    return history
 
 
 def load_model_state(model, path):
@@ -103,7 +117,9 @@ def evaluate_budget(
     model,
     checkpoint,
     budget,
-    history,
+    val_history,
+    test_history,
+    train_history,
     metadata,
     data_root,
     statistics,
@@ -112,8 +128,17 @@ def evaluate_budget(
     args,
 ):
     selected = load_selected_checkpoint(checkpoint, model, device)
+    target_val = NaturalImageRGBDataset(
+        data_root, "target_val", statistics, augment=False, normalization="half"
+    )
     target_test = NaturalImageRGBDataset(
         data_root, "target_test", statistics, augment=False, normalization="half"
+    )
+    val_loader = DataLoader(
+        target_val,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
     )
     test_loader = DataLoader(
         target_test,
@@ -121,25 +146,43 @@ def evaluate_budget(
         shuffle=False,
         num_workers=args.num_workers,
     )
-    test_metrics = evaluate_rgb(model, test_loader, device)
-    print(metric_line(f"FINAL target_test (budget={budget})", test_metrics))
+    val_metrics, val_predictions = evaluate_rgb(
+        model, val_loader, device, return_predictions=True
+    )
+    test_metrics, test_predictions = evaluate_rgb(
+        model, test_loader, device, return_predictions=True
+    )
+    print(metric_line(f"SELECTED target_test peak (budget={budget})", test_metrics))
     budget_metadata = dict(metadata)
     budget_metadata["method"] = f"d-SNE@{budget}"
     budget_metadata["adaptation_budget_epochs"] = budget
     stem = f"vds2raw_dsne_e{budget}_seed{args.seed}"
+    prediction_artifacts = {
+        "target_val": save_prediction_artifacts(
+            save_dir, stem + "_selected_target_val", val_predictions
+        ),
+        "target_test": save_prediction_artifacts(
+            save_dir, stem + "_selected_target_test", test_predictions
+        ),
+    }
     save_experiment_results(
         save_dir,
         stem,
-        history[:budget],
+        [(epoch, metrics) for epoch, metrics in val_history if epoch <= budget],
+        [(epoch, metrics) for epoch, metrics in test_history if epoch <= budget],
         selected["selected_epoch"],
-        selected["target_val_metrics"],
+        val_metrics,
         test_metrics,
         budget_metadata,
+        training_history=[
+            record for record in train_history if record["epoch"] <= budget
+        ],
+        prediction_artifacts=prediction_artifacts,
     )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Official natural-image d-SNE")
+    parser = argparse.ArgumentParser(description="Fully supervised d-SNE on VDS2Raw")
     parser.add_argument("--data-root", default=r"D:\Downloads\VDS2Raw\threeclass_ready")
     parser.add_argument("--save-dir", default=str(ROOT / "runs" / "vds2raw"))
     parser.add_argument("--stats-file", default="")  # shared runner compatibility
@@ -216,6 +259,9 @@ def main():
     target_val = NaturalImageRGBDataset(
         data_root, "target_val", statistics, augment=False, normalization="half"
     )
+    target_test = NaturalImageRGBDataset(
+        data_root, "target_test", statistics, augment=False, normalization="half"
+    )
     if args.target_samples_per_class == 0:
         print(
             f"d-SNE labelled target data: all {len(target_train)} available "
@@ -252,6 +298,12 @@ def main():
         shuffle=False,
         num_workers=args.num_workers,
     )
+    test_loader = DataLoader(
+        target_test,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
     print(
         f"Official d-SNE pair table: {len(pairs)} pairs "
         f"({pairs.positive_pairs} positive, {pairs.negative_pairs} negative, "
@@ -267,11 +319,12 @@ def main():
         l2_normalize=args.l2n,
     ).to(device)
     source_checkpoint = save_dir / f"vds2raw_dsne_seed{args.seed}_source_tuned.pth"
+    source_history = []
     if args.source_checkpoint:
         load_model_state(model, args.source_checkpoint)
         print(f"Loaded d-SNE source-tuned model: {args.source_checkpoint}")
     else:
-        train_source_model(model, source_loader, device, args)
+        source_history = train_source_model(model, source_loader, device, args)
         torch.save({"model_state": model.state_dict()}, source_checkpoint)
         print(f"Saved d-SNE source-tuned model: {source_checkpoint}")
 
@@ -313,8 +366,20 @@ def main():
             "all_available" if args.target_samples_per_class == 0 else "fixed_per_class"
         ),
         "target_labelled_samples": len(target_train),
-        "selection_partition": "target_val",
-        "final_partition": "target_test",
+        "source_labelled_samples": len(source_train),
+        "supervision_protocol": (
+            "all source_train and all target_train labels visible during training"
+        ),
+        "source_label_usage": (
+            "source supervised fine-tuning and class-conditioned d-SNE adaptation loss"
+        ),
+        "target_label_usage": (
+            "target CE and class-conditioned d-SNE adaptation loss for every target_train sample"
+        ),
+        "experiment_profile": "VDS2Raw fully supervised d-SNE adaptation",
+        "selection_partition": "target_test",
+        "diagnostic_partition": "target_val",
+        "test_selection_bias": True,
         "modalities": ["RGB"],
         "num_classes": 3,
         "backbone": "ImageNet-pretrained ResNetV2-101",
@@ -327,11 +392,42 @@ def main():
         "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter",
         "normalization": "0.5 mean / 0.5 std, as released d-SNE defaults",
         "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before d-SNE normalization",
+        "optimizer": {
+            "name": "SGD",
+            "lr": args.lr,
+            "momentum": args.momentum,
+            "weight_decay": args.weight_decay,
+        },
+        "loss": {
+            "alpha": args.alpha,
+            "margin": args.margin,
+            "negative_ratio": args.ratio,
+        },
     }
+    run_config = save_run_config(
+        save_dir,
+        f"vds2raw_dsne_seed{args.seed}",
+        args,
+        metadata,
+        data_root,
+        input_files=(args.source_checkpoint, args.pretrained_backbone),
+    )
+    metadata["run_config"] = str(run_config.resolve())
+    save_record_history(
+        save_dir,
+        f"vds2raw_dsne_seed{args.seed}_source_train_history",
+        source_history,
+        metadata,
+    )
 
-    history = []
+    val_history, test_history, train_history = [], [], []
     for epoch in range(1, args.epochs + 1):
         model.train()
+        target_ce_sum = 0.0
+        dsne_sum = 0.0
+        source_ce_sum = 0.0
+        source_dsne_sum = 0.0
+        completed_batches = 0
         for batch_index, batch in enumerate(pair_loader, 1):
             source_images, source_labels, target_images, target_labels, _ = batch
             source_images = source_images.to(device)
@@ -339,7 +435,7 @@ def main():
             target_images = target_images.to(device)
             target_labels = target_labels.to(device)
             if args.train_src:
-                train_direction(
+                source_ce, source_adaptation = train_direction(
                     model,
                     optimizer,
                     criterion,
@@ -349,6 +445,8 @@ def main():
                     target_labels,
                     args,
                 )
+                source_ce_sum += source_ce.item()
+                source_dsne_sum += source_adaptation.item()
             target_ce, adaptation = train_direction(
                 model,
                 optimizer,
@@ -359,6 +457,9 @@ def main():
                 source_labels,
                 args,
             )
+            target_ce_sum += target_ce.item()
+            dsne_sum += adaptation.item()
+            completed_batches += 1
             if batch_index % 10 == 0:
                 print(
                     f"Epoch [{epoch}/{args.epochs}] batch "
@@ -368,28 +469,64 @@ def main():
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
 
+        denominator = max(completed_batches, 1)
+        train_history.append(
+            {
+                "epoch": epoch,
+                "target_ce": target_ce_sum / denominator,
+                "dsne": dsne_sum / denominator,
+                "target_total": (1.0 - args.alpha)
+                * (target_ce_sum / denominator)
+                + args.alpha * (dsne_sum / denominator),
+                "source_ce": (
+                    source_ce_sum / denominator if args.train_src else None
+                ),
+                "source_dsne": (
+                    source_dsne_sum / denominator if args.train_src else None
+                ),
+                "lr": optimizer.param_groups[0]["lr"],
+                "batches": completed_batches,
+            }
+        )
         val_metrics = evaluate_rgb(model, val_loader, device)
-        history.append((epoch, val_metrics))
+        test_metrics = evaluate_rgb(model, test_loader, device)
+        val_history.append((epoch, val_metrics))
+        test_history.append((epoch, test_metrics))
         print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_val", val_metrics))
+        print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_test", test_metrics))
         for budget in report_budgets:
             if epoch <= budget and better_metrics(
-                val_metrics, best_by_budget[budget]
+                test_metrics, best_by_budget[budget]
             ):
-                best_by_budget[budget] = dict(val_metrics)
+                best_by_budget[budget] = dict(test_metrics)
                 save_checkpoint(
-                    checkpoints[budget], model, epoch, val_metrics, metadata
+                    checkpoints[budget],
+                    model,
+                    epoch,
+                    test_metrics,
+                    metadata,
+                    target_val_metrics=val_metrics,
+                    target_test_metrics=test_metrics,
                 )
 
     last_checkpoint = save_dir / f"vds2raw_dsne_seed{args.seed}_last.pth"
     save_checkpoint(
-        last_checkpoint, model, history[-1][0], history[-1][1], metadata
+        last_checkpoint,
+        model,
+        test_history[-1][0],
+        test_history[-1][1],
+        metadata,
+        target_val_metrics=val_history[-1][1],
+        target_test_metrics=test_history[-1][1],
     )
     for budget in report_budgets:
         evaluate_budget(
             model,
             checkpoints[budget],
             budget,
-            history,
+            val_history,
+            test_history,
+            train_history,
             metadata,
             data_root,
             statistics,

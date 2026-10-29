@@ -9,7 +9,11 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from vds2raw.common import evaluate_multimodal
+from vds2raw.common import (
+    evaluate_multimodal,
+    save_checkpoint,
+    save_prediction_artifacts,
+)
 from vds2raw.dataset import (
     CLASS_NAMES,
     NaturalImageRGBDataset,
@@ -198,6 +202,52 @@ class VDS2RawEvaluationTests(unittest.TestCase):
             torch.device("cpu"),
         )
         self.assertEqual(metrics["accuracy"], 1.0)
+
+    def test_test_selected_checkpoint_and_prediction_artifacts_are_explicit(self):
+        model = nn.Linear(2, 3)
+        val_metrics = {
+            "accuracy": 0.5,
+            "precision_macro": 0.5,
+            "recall_macro": 0.5,
+            "f1_macro": 0.5,
+            "val_samples": 2,
+            "val_present_classes": 2,
+            "val_total_classes": 3,
+        }
+        test_metrics = dict(val_metrics, accuracy=0.75, f1_macro=0.7)
+        records = [
+            {
+                "sample_index": 0,
+                "sample_id": "sample.npz",
+                "y_true": 1,
+                "y_pred": 1,
+                "correct": 1,
+                "logits": [0.0, 1.0, 0.0],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "best.pth"
+            save_checkpoint(
+                checkpoint,
+                model,
+                4,
+                test_metrics,
+                {"selection_partition": "target_test"},
+                target_val_metrics=val_metrics,
+                target_test_metrics=test_metrics,
+            )
+            payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+            self.assertEqual(payload["selection_partition"], "target_test")
+            self.assertEqual(payload["target_val_metrics"]["accuracy"], 0.5)
+            self.assertEqual(payload["target_test_metrics"]["accuracy"], 0.75)
+
+            artifacts = save_prediction_artifacts(directory, "selected", records)
+            for path in artifacts.values():
+                self.assertTrue(Path(path).is_file())
+            confusion = json.loads(
+                Path(artifacts["confusion_matrix_json"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(confusion["matrix"][1][1], 1)
 
     def test_mcft_mask_is_validity_gate_not_classifier_feature(self):
         model = MCFTWithAIS(

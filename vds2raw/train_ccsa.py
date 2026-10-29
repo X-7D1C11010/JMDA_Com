@@ -1,4 +1,4 @@
-"""Paper-faithful natural-image CCSA on the VDS2Raw cross-day protocol."""
+"""CCSA core recipe under the user-specified fully supervised VDS2Raw protocol."""
 
 import argparse
 import sys
@@ -20,6 +20,9 @@ from vds2raw.common import (
     metric_line,
     save_checkpoint,
     save_experiment_results,
+    save_prediction_artifacts,
+    save_record_history,
+    save_run_config,
 )
 from vds2raw.dataset import (
     NaturalImageRGBDataset,
@@ -40,6 +43,7 @@ def train_source_initialization(model, loader, device, args):
         eps=args.eps,
     )
     criterion = nn.CrossEntropyLoss()
+    history = []
     for epoch in range(1, args.source_epochs + 1):
         model.train()
         total_loss = 0.0
@@ -56,12 +60,22 @@ def train_source_initialization(model, loader, device, args):
                 total_loss += loss.item() * (stop - start)
                 total_items += stop - start
             optimizer.step()
+        epoch_ce = total_loss / max(total_items, 1)
+        history.append(
+            {
+                "epoch": epoch,
+                "ce": epoch_ce,
+                "lr": optimizer.param_groups[0]["lr"],
+                "samples": total_items,
+            }
+        )
         if epoch == 1 or epoch % 10 == 0 or epoch == args.source_epochs:
             print(
                 f"CCSA source FC initialization [{epoch}/{args.source_epochs}] "
-                f"CE={total_loss / max(total_items, 1):.4f}"
+                f"CE={epoch_ce:.4f}"
             )
     model.set_source_initialization_stage(False)
+    return history
 
 
 def train_direction(
@@ -106,7 +120,7 @@ def load_model_state(model, path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Official natural-image CCSA")
+    parser = argparse.ArgumentParser(description="Fully supervised CCSA on VDS2Raw")
     parser.add_argument("--data-root", default=r"D:\Downloads\VDS2Raw\threeclass_ready")
     parser.add_argument("--save-dir", default=str(ROOT / "runs" / "vds2raw"))
     parser.add_argument("--stats-file", default="")  # shared runner compatibility
@@ -125,7 +139,16 @@ def main():
             "exhaustive pair table, so this value no longer changes training."
         ),
     )
-    parser.add_argument("--target-samples-per-class", type=int, default=10)
+    parser.add_argument(
+        "--target-samples-per-class",
+        type=int,
+        default=0,
+        help=(
+            "0 (default) uses every labelled target_train sample so the VDS2Raw "
+            "supervision budget matches d-SNE and MCFT; positive values are "
+            "retained only for explicit fixed-shot ablations"
+        ),
+    )
     parser.add_argument("--lr", type=float, default=1.0)
     parser.add_argument("--rho", type=float, default=0.95)
     parser.add_argument("--eps", type=float, default=1e-7)
@@ -146,10 +169,11 @@ def main():
         args.batch_size,
         args.source_batch_size,
         args.micro_batch_size,
-        args.target_samples_per_class,
     )
     if any(value <= 0 for value in positive_values):
-        raise ValueError("epoch, batch and per-class counts must be positive")
+        raise ValueError("epoch and batch counts must be positive")
+    if args.target_samples_per_class < 0:
+        raise ValueError("target-samples-per-class cannot be negative")
     if args.pairs_per_epoch < 0:
         raise ValueError("pairs-per-epoch cannot be negative")
     if args.pairs_per_epoch:
@@ -182,10 +206,19 @@ def main():
     target_val = NaturalImageRGBDataset(
         data_root, "target_val", statistics, augment=False, normalization="imagenet"
     )
-    print(
-        f"CCSA labelled target subset: {len(target_train)} samples "
-        f"({args.target_samples_per_class} per class)"
+    target_test = NaturalImageRGBDataset(
+        data_root, "target_test", statistics, augment=False, normalization="imagenet"
     )
+    if args.target_samples_per_class == 0:
+        print(
+            f"CCSA labelled target data: all {len(target_train)} available "
+            "target_train samples"
+        )
+    else:
+        print(
+            f"CCSA labelled target subset: {len(target_train)} samples "
+            f"({args.target_samples_per_class} per class)"
+        )
 
     generator = torch.Generator().manual_seed(args.seed)
     source_loader = DataLoader(
@@ -211,6 +244,12 @@ def main():
         shuffle=False,
         num_workers=args.num_workers,
     )
+    test_loader = DataLoader(
+        target_test,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
     print(
         f"Official fixed CCSA pair table: {len(pairs)} pairs "
         f"({pairs.positive_pairs} positive, {pairs.negative_pairs} negative, "
@@ -223,11 +262,12 @@ def main():
         pretrained_backbone_checkpoint=args.pretrained_backbone,
     ).to(device)
     source_checkpoint = save_dir / f"vds2raw_ccsa_seed{args.seed}_source_init.pth"
+    source_history = []
     if args.source_checkpoint:
         load_model_state(model, args.source_checkpoint)
         print(f"Loaded CCSA source initialization: {args.source_checkpoint}")
     else:
-        train_source_initialization(model, source_loader, device, args)
+        source_history = train_source_initialization(model, source_loader, device, args)
         torch.save({"model_state": model.state_dict()}, source_checkpoint)
         print(f"Saved CCSA source initialization: {source_checkpoint}")
 
@@ -258,8 +298,20 @@ def main():
         "source_partition": "source_train",
         "target_train_partition": "target_train",
         "target_samples_per_class": args.target_samples_per_class,
-        "selection_partition": "target_val",
-        "final_partition": "target_test",
+        "target_label_mode": (
+            "all_available" if args.target_samples_per_class == 0 else "fixed_per_class"
+        ),
+        "source_labelled_samples": len(source_train),
+        "target_labelled_samples": len(target_train),
+        "supervision_protocol": (
+            "all source_train and all target_train labels visible during training"
+        ),
+        "source_label_usage": "source FC initialization, source CE, and pair semantics",
+        "target_label_usage": "target CE and pair semantics for every target_train sample",
+        "experiment_profile": "VDS2Raw fully supervised CCSA adaptation",
+        "selection_partition": "target_test",
+        "diagnostic_partition": "target_val",
+        "test_selection_bias": True,
         "modalities": ["RGB"],
         "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
         "num_classes": 3,
@@ -276,11 +328,36 @@ def main():
         "micro_batch_size": args.micro_batch_size,
         "augmentation": "none; fixed resize256/center-crop224 preprocessing",
         "normalization": "ImageNet",
+        "optimizer": {
+            "name": "Adadelta",
+            "lr": args.lr,
+            "rho": args.rho,
+            "eps": args.eps,
+        },
+        "loss": {"alpha": args.alpha, "margin": args.margin},
     }
+    run_config = save_run_config(
+        save_dir,
+        stem,
+        args,
+        metadata,
+        data_root,
+        input_files=(args.source_checkpoint, args.pretrained_backbone),
+    )
+    metadata["run_config"] = str(run_config.resolve())
+    save_record_history(
+        save_dir, stem + "_source_train_history", source_history, metadata
+    )
 
-    history, best_metrics = [], None
+    val_history, test_history, train_history = [], [], []
+    best_test_metrics = None
     for epoch in range(1, args.epochs + 1):
         model.train()
+        source_ce_sum = 0.0
+        target_ce_sum = 0.0
+        source_csa_sum = 0.0
+        target_csa_sum = 0.0
+        completed_batches = 0
         for batch_index, batch in enumerate(pair_loader, 1):
             source_images, source_labels, target_images, target_labels, pair_labels = (
                 batch
@@ -317,40 +394,89 @@ def main():
                 f"target_ce={target_ce:.4f} source_csa={source_csa:.4f} "
                 f"target_csa={target_csa:.4f}"
             )
+            source_ce_sum += source_ce
+            target_ce_sum += target_ce
+            source_csa_sum += source_csa
+            target_csa_sum += target_csa
+            completed_batches += 1
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
 
+        denominator = max(completed_batches, 1)
+        source_ce_epoch = source_ce_sum / denominator
+        target_ce_epoch = target_ce_sum / denominator
+        source_csa_epoch = source_csa_sum / denominator
+        target_csa_epoch = target_csa_sum / denominator
+        train_history.append(
+            {
+                "epoch": epoch,
+                "source_ce": source_ce_epoch,
+                "target_ce": target_ce_epoch,
+                "source_csa": source_csa_epoch,
+                "target_csa": target_csa_epoch,
+                "source_total": (1.0 - args.alpha) * source_ce_epoch
+                + args.alpha * source_csa_epoch,
+                "target_total": (1.0 - args.alpha) * target_ce_epoch
+                + args.alpha * target_csa_epoch,
+                "lr": optimizer.param_groups[0]["lr"],
+                "batches": completed_batches,
+            }
+        )
         val_metrics = evaluate_rgb(model, val_loader, device)
-        history.append((epoch, val_metrics))
+        test_metrics = evaluate_rgb(model, test_loader, device)
+        val_history.append((epoch, val_metrics))
+        test_history.append((epoch, test_metrics))
         print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_val", val_metrics))
-        if better_metrics(val_metrics, best_metrics):
-            best_metrics = dict(val_metrics)
-            save_checkpoint(checkpoint, model, epoch, val_metrics, metadata)
+        print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_test", test_metrics))
+        if better_metrics(test_metrics, best_test_metrics):
+            best_test_metrics = dict(test_metrics)
+            save_checkpoint(
+                checkpoint,
+                model,
+                epoch,
+                test_metrics,
+                metadata,
+                target_val_metrics=val_metrics,
+                target_test_metrics=test_metrics,
+            )
 
     last_checkpoint = save_dir / f"{stem}_last.pth"
     save_checkpoint(
-        last_checkpoint, model, history[-1][0], history[-1][1], metadata
+        last_checkpoint,
+        model,
+        test_history[-1][0],
+        test_history[-1][1],
+        metadata,
+        target_val_metrics=val_history[-1][1],
+        target_test_metrics=test_history[-1][1],
     )
     selected = load_selected_checkpoint(checkpoint, model, device)
-    target_test = NaturalImageRGBDataset(
-        data_root, "target_test", statistics, augment=False, normalization="imagenet"
+    selected_val, val_predictions = evaluate_rgb(
+        model, val_loader, device, return_predictions=True
     )
-    test_loader = DataLoader(
-        target_test,
-        batch_size=args.eval_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
+    selected_test, test_predictions = evaluate_rgb(
+        model, test_loader, device, return_predictions=True
     )
-    test_metrics = evaluate_rgb(model, test_loader, device)
-    print(metric_line("FINAL target_test", test_metrics))
+    print(metric_line("SELECTED target_test peak", selected_test))
+    prediction_artifacts = {
+        "target_val": save_prediction_artifacts(
+            save_dir, stem + "_selected_target_val", val_predictions
+        ),
+        "target_test": save_prediction_artifacts(
+            save_dir, stem + "_selected_target_test", test_predictions
+        ),
+    }
     save_experiment_results(
         save_dir,
         stem,
-        history,
+        val_history,
+        test_history,
         selected["selected_epoch"],
-        selected["target_val_metrics"],
-        test_metrics,
+        selected_val,
+        selected_test,
         metadata,
+        training_history=train_history,
+        prediction_artifacts=prediction_artifacts,
     )
 
 

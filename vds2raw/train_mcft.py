@@ -19,6 +19,8 @@ from vds2raw.common import (
     metric_line,
     save_checkpoint,
     save_experiment_results,
+    save_prediction_artifacts,
+    save_run_config,
 )
 from vds2raw.dataset import VDS2RawDataset, audit_dataset, load_or_compute_statistics
 from vds2raw.models import MCFTWithAIS
@@ -35,7 +37,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--eval-batch-size", type=int, default=128)
-    parser.add_argument("--eval-frequency", type=int, default=10)
+    parser.add_argument("--eval-frequency", type=int, default=1)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--step-size", type=int, default=20)
@@ -55,8 +57,11 @@ def main():
     parser.add_argument(
         "--early-stopping-patience",
         type=int,
-        default=5,
-        help="Stop after this many validation evaluations without improvement; 0 disables.",
+        default=0,
+        help=(
+            "Stop after this many target_test evaluations without improvement; "
+            "0 (default) disables early stopping so the full epoch budget is searched"
+        ),
     )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
@@ -95,6 +100,9 @@ def main():
     target_val = VDS2RawDataset(
         data_root, "target_val", statistics, image_size=15, augment=False
     )
+    target_test = VDS2RawDataset(
+        data_root, "target_test", statistics, image_size=15, augment=False
+    )
     generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_data,
@@ -106,6 +114,12 @@ def main():
     )
     val_loader = DataLoader(
         target_val,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    test_loader = DataLoader(
+        target_test,
         batch_size=args.eval_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
@@ -132,8 +146,17 @@ def main():
         "data_root": str(data_root),
         "source_partition": "source_train",
         "target_train_partition": "target_train",
-        "selection_partition": "target_val",
-        "final_partition": "target_test",
+        "source_labelled_samples": len(source),
+        "target_labelled_samples": len(target),
+        "supervision_protocol": (
+            "all source_train and all target_train labels visible during training"
+        ),
+        "source_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+        "target_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+        "experiment_profile": "VDS2Raw MCFT RGB-NIR-AIS adaptation",
+        "selection_partition": "target_test",
+        "diagnostic_partition": "target_val",
+        "test_selection_bias": True,
         "modalities": ["RGB", "NIR", "AIS"],
         "auxiliary_inputs": ["AIS_validity_mask"],
         "num_classes": 3,
@@ -159,18 +182,37 @@ def main():
         "weight_decay": args.weight_decay,
         "early_stopping_patience_evaluations": args.early_stopping_patience,
         "normalization": statistics.to_dict(),
+        "batch_size": args.batch_size,
+        "optimizer": {
+            "name": "Adam",
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+        },
+        "scheduler": {
+            "name": "StepLR",
+            "step_size": args.step_size,
+            "gamma": args.gamma,
+        },
+        "loss": {"ita_weight": args.loss_ita_weight},
     }
-    history, best_metrics = [], None
+    run_config = save_run_config(
+        save_dir, stem, args, metadata, data_root, input_files=()
+    )
+    metadata["run_config"] = str(run_config.resolve())
+    val_history, test_history, train_history = [], [], []
+    best_test_metrics = None
     evaluations_without_improvement = 0
     stopped_early = False
     completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
+        epoch_lr = optimizer.param_groups[0]["lr"]
         train_items = 0
         train_correct = 0
         train_ce_sum = 0.0
         train_ita_sum = 0.0
         train_itm_sum = 0.0
+        train_total_sum = 0.0
         for batch_index, batch in enumerate(train_loader, 1):
             labels = batch["label"].to(device)
             logits, loss_ita, loss_itm = model(
@@ -191,6 +233,7 @@ def main():
             train_ce_sum += classification_loss.item() * batch_items
             train_ita_sum += loss_ita.item() * batch_items
             train_itm_sum += loss_itm.item() * batch_items
+            train_total_sum += loss.item() * batch_items
             if batch_index % 5 == 0:
                 print(
                     f"Epoch [{epoch}/{args.epochs}] batch "
@@ -201,6 +244,19 @@ def main():
                 break
         scheduler.step()
         completed_epoch = epoch
+        train_history.append(
+            {
+                "epoch": epoch,
+                "accuracy": train_correct / max(train_items, 1),
+                "ce": train_ce_sum / max(train_items, 1),
+                "ita": train_ita_sum / max(train_items, 1),
+                "itm": train_itm_sum / max(train_items, 1),
+                "total_loss": train_total_sum / max(train_items, 1),
+                "lr": epoch_lr,
+                "lr_after_scheduler": optimizer.param_groups[0]["lr"],
+                "samples": train_items,
+            }
+        )
         print(
             f"Epoch [{epoch}/{args.epochs}] train "
             f"accuracy={train_correct / max(train_items, 1):.4f} "
@@ -214,11 +270,22 @@ def main():
         )
         if should_evaluate:
             val_metrics = evaluate_multimodal(model, val_loader, device)
-            history.append((epoch, val_metrics))
+            test_metrics = evaluate_multimodal(model, test_loader, device)
+            val_history.append((epoch, val_metrics))
+            test_history.append((epoch, test_metrics))
             print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_val", val_metrics))
-            if better_metrics(val_metrics, best_metrics):
-                best_metrics = dict(val_metrics)
-                save_checkpoint(checkpoint, model, epoch, val_metrics, metadata)
+            print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_test", test_metrics))
+            if better_metrics(test_metrics, best_test_metrics):
+                best_test_metrics = dict(test_metrics)
+                save_checkpoint(
+                    checkpoint,
+                    model,
+                    epoch,
+                    test_metrics,
+                    metadata,
+                    target_val_metrics=val_metrics,
+                    target_test_metrics=test_metrics,
+                )
                 evaluations_without_improvement = 0
             else:
                 evaluations_without_improvement += 1
@@ -229,7 +296,7 @@ def main():
                 ):
                     stopped_early = True
                     print(
-                        "Early stopping: target_val did not improve for "
+                        "Early stopping: target_test did not improve for "
                         f"{evaluations_without_improvement} evaluations."
                     )
                     break
@@ -238,29 +305,41 @@ def main():
     metadata["stopped_early"] = stopped_early
     last_checkpoint = save_dir / f"{stem}_last.pth"
     save_checkpoint(
-        last_checkpoint, model, history[-1][0], history[-1][1], metadata
+        last_checkpoint,
+        model,
+        test_history[-1][0],
+        test_history[-1][1],
+        metadata,
+        target_val_metrics=val_history[-1][1],
+        target_test_metrics=test_history[-1][1],
     )
     selected = load_selected_checkpoint(checkpoint, model, device)
-    del target_val, val_loader
-    target_test = VDS2RawDataset(
-        data_root, "target_test", statistics, image_size=15, augment=False
+    selected_val, val_predictions = evaluate_multimodal(
+        model, val_loader, device, return_predictions=True
     )
-    test_loader = DataLoader(
-        target_test,
-        batch_size=args.eval_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
+    selected_test, test_predictions = evaluate_multimodal(
+        model, test_loader, device, return_predictions=True
     )
-    test_metrics = evaluate_multimodal(model, test_loader, device)
-    print(metric_line("FINAL target_test", test_metrics))
+    print(metric_line("SELECTED target_test peak", selected_test))
+    prediction_artifacts = {
+        "target_val": save_prediction_artifacts(
+            save_dir, stem + "_selected_target_val", val_predictions
+        ),
+        "target_test": save_prediction_artifacts(
+            save_dir, stem + "_selected_target_test", test_predictions
+        ),
+    }
     save_experiment_results(
         save_dir,
         stem,
-        history,
+        val_history,
+        test_history,
         selected["selected_epoch"],
-        selected["target_val_metrics"],
-        test_metrics,
+        selected_val,
+        selected_test,
         metadata,
+        training_history=train_history,
+        prediction_artifacts=prediction_artifacts,
     )
 
 

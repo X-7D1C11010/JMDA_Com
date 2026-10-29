@@ -37,7 +37,7 @@ def save_metric_history(save_dir, stem, history, metadata=None):
     os.makedirs(save_dir, exist_ok=True)
     rows = [_metric_row(epoch, metrics) for epoch, metrics in history]
     final_row = rows[-1]
-    best_row = max(rows, key=lambda row: row['ACC'])
+    best_row = max(rows, key=lambda row: (row['ACC'], row['F1_macro']))
 
     csv_path = os.path.join(save_dir, f'{stem}_metrics.csv')
     csv_tmp = csv_path + '.tmp'
@@ -58,6 +58,8 @@ def save_metric_history(save_dir, stem, history, metadata=None):
         },
         'metadata': metadata or {},
         'final': final_row,
+        'best_by_ACC_then_F1': best_row,
+        # Compatibility alias for existing result readers.
         'best_by_ACC': best_row,
         'history': rows,
     }

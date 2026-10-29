@@ -23,9 +23,9 @@ DSNE_BATCH="${VDS2RAW_DSNE_BATCH_SIZE:-32}"
 MCFT_BATCH="${VDS2RAW_MCFT_BATCH_SIZE:-32}"
 DSNE_LAYERS="${VDS2RAW_DSNE_LAYERS:-101}"
 LEGACY_TARGET_PER_CLASS="${VDS2RAW_TARGET_SAMPLES_PER_CLASS:-}"
-CCSA_TARGET_PER_CLASS="${VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-10}}"
+CCSA_TARGET_PER_CLASS="${VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-0}}"
 DSNE_TARGET_PER_CLASS="${VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-0}}"
-MCFT_EVAL="${VDS2RAW_MCFT_EVAL_FREQUENCY:-10}"
+MCFT_EVAL="${VDS2RAW_MCFT_EVAL_FREQUENCY:-1}"
 GPU_MAX_UTIL="${VDS2RAW_GPU_MAX_UTIL_PERCENT:-10}"
 GPU_STABLE_CHECKS="${VDS2RAW_GPU_STABLE_CHECKS:-3}"
 GPU_POLL_SECONDS="${VDS2RAW_GPU_POLL_SECONDS:-30}"
@@ -49,6 +49,11 @@ done
 if [ "$CCSA_ORDER_COUNT" -ne 1 ] || [ "$DSNE_ORDER_COUNT" -ne 1 ] \
   || [ "$MCFT_ORDER_COUNT" -ne 1 ]; then
   echo "VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once." >&2
+  exit 1
+fi
+if [ "$MODE" = formal ] && \
+   { [ "$CCSA_TARGET_PER_CLASS" -ne 0 ] || [ "$DSNE_TARGET_PER_CLASS" -ne 0 ]; }; then
+  echo "Formal VDS2Raw runs require all target_train labels: set both target-samples-per-class values to 0." >&2
   exit 1
 fi
 if [ -n "${VDS2RAW_CCSA_SOURCE_CHECKPOINT:-}" ] && \
@@ -148,7 +153,7 @@ for seed in "${SEEDS[@]}"; do
         run_one "mcft3_seed$seed" "$MCFT_MIN_FREE_MIB" \
           "$PYTHON_BIN" "$HERE/vds2raw/train_mcft.py" \
           --epochs "$MCFT_EPOCHS" --batch-size "$MCFT_BATCH" \
-          --eval-frequency "$MCFT_EVAL" \
+          --eval-frequency "$MCFT_EVAL" --early-stopping-patience 0 \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
         ;;
     esac

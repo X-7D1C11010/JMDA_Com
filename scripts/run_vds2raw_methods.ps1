@@ -74,11 +74,11 @@ $legacyTargetPerClass = if ([string]::IsNullOrWhiteSpace($legacyTargetValue)) {
     Get-EnvNonNegativeInt 'VDS2RAW_TARGET_SAMPLES_PER_CLASS' 0
 }
 $CcsaTargetPerClass = if ($env:VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS) {
-    Get-EnvNonNegativeInt 'VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS' 10
+    Get-EnvNonNegativeInt 'VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS' 0
 } elseif ($null -ne $legacyTargetPerClass) {
     $legacyTargetPerClass
 } else {
-    10
+    0
 }
 $DsneTargetPerClass = if ($env:VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS) {
     Get-EnvNonNegativeInt 'VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS' 0
@@ -87,7 +87,12 @@ $DsneTargetPerClass = if ($env:VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS) {
 } else {
     0
 }
-$McftEvalFrequency = Get-EnvInt 'VDS2RAW_MCFT_EVAL_FREQUENCY' 10
+$McftEvalFrequency = Get-EnvInt 'VDS2RAW_MCFT_EVAL_FREQUENCY' 1
+if ($Mode -eq 'formal' -and
+    ($CcsaTargetPerClass -ne 0 -or $DsneTargetPerClass -ne 0)) {
+    throw ('Formal VDS2Raw runs require all target_train labels: set both ' +
+        'target-samples-per-class values to 0.')
+}
 $CcsaSourceCheckpoint = $env:VDS2RAW_CCSA_SOURCE_CHECKPOINT
 $DsneSourceCheckpoint = $env:VDS2RAW_DSNE_SOURCE_CHECKPOINT
 $CcsaPretrainedBackbone = $env:VDS2RAW_CCSA_PRETRAINED_BACKBONE
@@ -129,7 +134,7 @@ $config = [ordered]@{
     data_root = (Resolve-Path -LiteralPath $DataRoot).Path
     seeds = $Seeds
     method_order = $MethodOrder
-    protocol = 'CCSA fixed-shot official pairs; d-SNE all labelled target_train by default; target_val selection; target_test once per predeclared method/budget'
+    protocol = 'all source_train and target_train labels for every method; target_test peak checkpoint selection (biased test-selected estimate)'
     ccsa_epochs = $CcsaEpochs
     ccsa_source_epochs = $CcsaSourceEpochs
     dsne_epochs = $DsneEpochs
@@ -143,6 +148,8 @@ $config = [ordered]@{
     ccsa_target_samples_per_class = $CcsaTargetPerClass
     dsne_target_samples_per_class = $DsneTargetPerClass
     dsne_feature_normalization = $true
+    model_selection = 'best target_test ACC with macro-F1 tie-break'
+    test_selection_bias = $true
     ccsa_source_checkpoint = if ($CcsaSourceCheckpoint) { $CcsaSourceCheckpoint } else { $null }
     dsne_source_checkpoint = if ($DsneSourceCheckpoint) { $DsneSourceCheckpoint } else { $null }
     ccsa_pretrained_backbone = if ($CcsaPretrainedBackbone) { $CcsaPretrainedBackbone } else { $null }
@@ -205,7 +212,7 @@ foreach ($seed in $Seeds) {
     $mcftArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_mcft.py'),
         '--epochs', "$McftEpochs", '--batch-size', "$McftBatch",
-        '--eval-frequency', "$McftEvalFrequency"
+        '--eval-frequency', "$McftEvalFrequency", '--early-stopping-patience', '0'
     ) + $common + $smokeArgs
     foreach ($method in $MethodOrder) {
         switch ($method) {
