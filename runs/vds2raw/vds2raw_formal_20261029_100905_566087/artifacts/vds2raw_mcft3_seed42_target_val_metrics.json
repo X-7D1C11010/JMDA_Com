@@ -1,0 +1,178 @@
+{
+  "metric_definition": {
+    "ACC": "classification accuracy",
+    "Precision_macro": "macro precision over evaluation classes",
+    "Recall_macro": "macro recall over evaluation classes",
+    "F1_macro": "macro F1 over evaluation classes"
+  },
+  "metadata": {
+    "method": "MCFT-RGB-NIR-AIS",
+    "seed": 42,
+    "epochs": 500,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "selection_partition": "target_val",
+    "final_partition": "target_test",
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "num_classes": 3,
+    "adaptation_note": "official two-image MCFT trunk plus regularized AIS late-fusion; validity mask gates missing values and is not a modality/classifier feature",
+    "ais_feature_profile": "continuous",
+    "ais_feature_names": [
+      "heading_sin",
+      "heading_cos",
+      "length_z",
+      "width_z"
+    ],
+    "excluded_label_proxy_fields": [
+      "nav_status_one_hot"
+    ],
+    "ais_mask_as_classifier_feature": false,
+    "ais_dropout_probability": 0.5,
+    "augmentation": "paired horizontal and vertical flips",
+    "label_smoothing": 0.1,
+    "weight_decay": 0.0001,
+    "early_stopping_patience_evaluations": 5,
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted on source_train + target_train only"
+    },
+    "completed_epochs": 60,
+    "stopped_early": true
+  },
+  "final": {
+    "epoch": 60,
+    "ACC": 0.7857142857142857,
+    "Precision_macro": 0.7818181818181819,
+    "Recall_macro": 0.8023809523809525,
+    "F1_macro": 0.7746031746031746,
+    "val_samples": 28,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC": {
+    "epoch": 10,
+    "ACC": 0.8928571428571429,
+    "Precision_macro": 0.85,
+    "Recall_macro": 0.8648809523809525,
+    "F1_macro": 0.8559139784946237,
+    "val_samples": 28,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ACC": 0.17857142857142858,
+      "Precision_macro": 0.12820512820512822,
+      "Recall_macro": 0.3333333333333333,
+      "F1_macro": 0.1851851851851852,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 10,
+      "ACC": 0.8928571428571429,
+      "Precision_macro": 0.85,
+      "Recall_macro": 0.8648809523809525,
+      "F1_macro": 0.8559139784946237,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 20,
+      "ACC": 0.7142857142857143,
+      "Precision_macro": 0.7070707070707071,
+      "Recall_macro": 0.7339285714285714,
+      "F1_macro": 0.6992143658810325,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 30,
+      "ACC": 0.8571428571428571,
+      "Precision_macro": 0.8222222222222223,
+      "Recall_macro": 0.8440476190476192,
+      "F1_macro": 0.8277777777777778,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 40,
+      "ACC": 0.8928571428571429,
+      "Precision_macro": 0.85,
+      "Recall_macro": 0.8648809523809525,
+      "F1_macro": 0.8559139784946237,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 50,
+      "ACC": 0.8571428571428571,
+      "Precision_macro": 0.8222222222222223,
+      "Recall_macro": 0.8440476190476192,
+      "F1_macro": 0.8277777777777778,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 60,
+      "ACC": 0.7857142857142857,
+      "Precision_macro": 0.7818181818181819,
+      "Recall_macro": 0.8023809523809525,
+      "F1_macro": 0.7746031746031746,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    }
+  ]
+}

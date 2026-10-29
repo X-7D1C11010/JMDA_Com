@@ -1,0 +1,40 @@
+torch.profiler summary (forward-only, 10 iters)
+Model: DSNEOfficeModel
+Device: cuda:0
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                           aten::conv2d         1.27%     557.850us        44.39%      19.559ms      14.467us       0.000us         0.00%      20.055ms      14.834us          1352  
+                                      aten::convolution         1.59%     702.252us        43.12%      19.002ms      14.054us       0.000us         0.00%      20.055ms      14.834us          1352  
+                                     aten::_convolution         2.93%       1.289ms        41.53%      18.299ms      13.535us       0.000us         0.00%      20.055ms      14.834us          1352  
+                                aten::cudnn_convolution        23.25%      10.247ms        38.60%      17.010ms      12.582us      20.055ms        80.66%      20.055ms      14.834us          1352  
+void cutlass__5x_cudnn::Kernel<cutlass_tensorop_s168...         0.00%       0.000us         0.00%       0.000us       0.000us       9.419ms        37.88%       9.419ms      24.151us           390  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us       3.511ms        14.12%       3.511ms       4.823us           728  
+                                       aten::batch_norm         1.08%     476.955us        34.47%      15.188ms      11.683us       0.000us         0.00%       2.524ms       1.941us          1300  
+                           aten::_batch_norm_impl_index         1.61%     708.812us        33.38%      14.711ms      11.316us       0.000us         0.00%       2.524ms       1.941us          1300  
+                                 aten::cudnn_batch_norm        12.54%       5.528ms        31.78%      14.002ms      10.771us       2.524ms        10.15%       2.524ms       1.941us          1300  
+void cudnn::bn_fw_inf_1C11_kernel_NCHW<float, float,...         0.00%       0.000us         0.00%       0.000us       0.000us       2.524ms        10.15%       2.524ms       1.941us          1300  
+void cudnn::engines_precompiled::nchwToNhwcKernel<fl...         0.00%       0.000us         0.00%       0.000us       0.000us       2.488ms        10.01%       2.488ms       2.900us           858  
+sm80_xmma_fprop_implicit_gemm_tf32f32_tf32f32_f32_nh...         0.00%       0.000us         0.00%       0.000us       0.000us       1.527ms         6.14%       1.527ms      39.163us            39  
+                                            aten::relu_         2.37%       1.043ms        13.03%       5.743ms       4.331us       0.000us         0.00%       1.248ms       0.941us          1326  
+                                       aten::clamp_min_         4.24%       1.869ms        10.67%       4.700ms       3.544us       1.248ms         5.02%       1.248ms       0.941us          1326  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.248ms         5.02%       1.248ms       0.941us          1326  
+void precomputed_convolve_sgemm<float, 1024, 5, 5, 4...         0.00%       0.000us         0.00%       0.000us       0.000us       1.034ms         4.16%       1.034ms      26.518us            39  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     557.730us         2.24%     557.730us       8.580us            65  
+                                              aten::add         2.61%       1.148ms         4.69%       2.065ms       4.813us     545.028us         2.19%     545.028us       1.270us           429  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     545.028us         2.19%     545.028us       1.270us           429  
+void cudnn::engines_precompiled::nhwcToNchwKernel<fl...         0.00%       0.000us         0.00%       0.000us       0.000us     498.116us         2.00%     498.116us       1.161us           429  
+                                           aten::linear         0.12%      52.200us         1.72%     756.376us      19.394us       0.000us         0.00%     432.959us      11.102us            39  
+                                            aten::addmm         1.10%     485.993us         1.40%     616.463us      15.807us     432.959us         1.74%     432.959us      11.102us            39  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us     393.057us         1.58%     393.057us      15.118us            26  
+void cublasLt::splitKreduce_kernel<32, 16, int, floa...         0.00%       0.000us         0.00%       0.000us       0.000us     380.487us         1.53%     380.487us       1.171us           325  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     206.080us         0.83%     206.080us       3.963us            52  
+void implicit_convolve_sgemm<float, float, 1024, 5, ...         0.00%       0.000us         0.00%       0.000us       0.000us     198.720us         0.80%     198.720us      16.560us            12  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us     142.400us         0.57%     142.400us       5.477us            26  
+                                        Memset (Device)         0.00%       0.000us         0.00%       0.000us       0.000us      53.792us         0.22%      53.792us       1.379us            39  
+void gemv2T_kernel_val<int, int, float, float, float...         0.00%       0.000us         0.00%       0.000us       0.000us      39.902us         0.16%      39.902us       3.069us            13  
+void cudnn::cnn::kern_precompute_indices<false>(int*...         0.00%       0.000us         0.00%       0.000us       0.000us      38.306us         0.15%      38.306us       0.982us            39  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 44.065ms
+Self CUDA time total: 24.865ms
