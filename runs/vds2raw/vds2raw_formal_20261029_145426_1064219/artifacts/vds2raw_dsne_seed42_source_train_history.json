@@ -1,0 +1,357 @@
+{
+  "metadata": {
+    "method": "d-SNE",
+    "implementation": "official natural-image configuration, PyTorch port",
+    "seed": 42,
+    "epochs": 20,
+    "source_fine_tune_epochs": 50,
+    "source_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/dsne_resnetv2_101_a1h_in1k_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet ResNetV2-101 followed by source_train fine-tuning",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 0,
+    "target_label_mode": "all_available",
+    "target_labelled_samples": 94,
+    "source_labelled_samples": 116,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "source supervised fine-tuning and class-conditioned d-SNE adaptation loss",
+    "target_label_usage": "target CE and class-conditioned d-SNE adaptation loss for every target_train sample",
+    "experiment_profile": "VDS2Raw fully supervised d-SNE adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB"
+    ],
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained ResNetV2-101",
+    "embedding": [
+      4096,
+      512
+    ],
+    "feature_normalization_loss": true,
+    "output_l2_normalization": false,
+    "train_source_direction_during_adaptation": false,
+    "pair_protocol": "all positives + equal-count sampled negatives",
+    "batch_size": 32,
+    "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter",
+    "normalization": "0.5 mean / 0.5 std, as released d-SNE defaults",
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before d-SNE normalization",
+    "optimizer": {
+      "name": "SGD",
+      "lr": 0.001,
+      "momentum": 0.9,
+      "weight_decay": 0.0001
+    },
+    "loss": {
+      "alpha": 0.1,
+      "margin": 1.0,
+      "negative_ratio": 1
+    },
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_dsne_seed42_run_config.json"
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ce": 1.0939839708394017,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 2,
+      "ce": 1.090921792490729,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 3,
+      "ce": 1.0874417979141762,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 4,
+      "ce": 1.0834475139091755,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 5,
+      "ce": 1.0780469877966519,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 6,
+      "ce": 1.0718570495473927,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 7,
+      "ce": 1.067156405284487,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 8,
+      "ce": 1.0640550235222126,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 9,
+      "ce": 1.0569062150757889,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 10,
+      "ce": 1.0516162370813305,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 11,
+      "ce": 1.0490243147159446,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 12,
+      "ce": 1.0423246827618828,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 13,
+      "ce": 1.0407355201655422,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 14,
+      "ce": 1.0362679423957035,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 15,
+      "ce": 1.0336810802591259,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 16,
+      "ce": 1.0305208995424469,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 17,
+      "ce": 1.026046769372348,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 18,
+      "ce": 1.0226473232795452,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 19,
+      "ce": 1.0197716067577232,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 20,
+      "ce": 1.0184447107643917,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 21,
+      "ce": 1.0133468652593678,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 22,
+      "ce": 1.0127005905940616,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 23,
+      "ce": 1.0114239084309544,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 24,
+      "ce": 1.007192274619793,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 25,
+      "ce": 1.0096028015531342,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 26,
+      "ce": 1.0092474139969925,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 27,
+      "ce": 1.002525611170407,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 28,
+      "ce": 1.0023306299900185,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 29,
+      "ce": 1.0038591582199623,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 30,
+      "ce": 1.0023881176422382,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 31,
+      "ce": 0.9964687392629427,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 32,
+      "ce": 0.9967872315439684,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 33,
+      "ce": 0.9945483659875805,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 34,
+      "ce": 0.9930828357564991,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 35,
+      "ce": 0.9926997094318785,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 36,
+      "ce": 0.9950646860846157,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 37,
+      "ce": 0.9925837537337994,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 38,
+      "ce": 0.9942369748806131,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 39,
+      "ce": 0.9920132920659822,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 40,
+      "ce": 0.9940616488456726,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 41,
+      "ce": 0.9899815074328718,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 42,
+      "ce": 0.9910695018439457,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 43,
+      "ce": 0.9891205861650664,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 44,
+      "ce": 0.9898973826704354,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 45,
+      "ce": 0.9921877178652533,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 46,
+      "ce": 0.9896092229876025,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 47,
+      "ce": 0.9909679314185833,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 48,
+      "ce": 0.9922306969248015,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 49,
+      "ce": 0.9870211975327854,
+      "lr": 0.001,
+      "samples": 116
+    },
+    {
+      "epoch": 50,
+      "ce": 0.9898072234515486,
+      "lr": 0.001,
+      "samples": 116
+    }
+  ]
+}
