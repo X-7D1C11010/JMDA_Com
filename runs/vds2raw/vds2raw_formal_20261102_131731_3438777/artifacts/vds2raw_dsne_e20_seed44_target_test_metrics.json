@@ -1,0 +1,219 @@
+{
+  "metric_definition": {
+    "ACC": "classification accuracy",
+    "Precision_macro": "macro precision over evaluation classes",
+    "Recall_macro": "macro recall over evaluation classes",
+    "F1_macro": "macro F1 over evaluation classes"
+  },
+  "metadata": {
+    "method": "d-SNE@20",
+    "implementation": "official natural-image d-SNE head/loss with shared-backbone RGB+NIR fusion, continuous-AIS residual adaptation, VDS2Raw source-tuning and class-coverage sampling",
+    "seed": 44,
+    "epochs": 20,
+    "source_fine_tune_epochs": 80,
+    "source_head_warmup_epochs": 10,
+    "source_batch_size": 16,
+    "source_class_balanced_sampling": true,
+    "source_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/dsne_resnetv2_101_a1h_in1k_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet ResNetV2-101 followed by source_train fine-tuning",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 0,
+    "target_label_mode": "all_available",
+    "target_labelled_samples": 94,
+    "source_labelled_samples": 116,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "source supervised fine-tuning and class-conditioned d-SNE adaptation loss",
+    "target_label_usage": "target CE and class-conditioned d-SNE adaptation loss for every target_train sample",
+    "experiment_profile": "VDS2Raw fully supervised d-SNE adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "multimodal_adapter": "official ImageNet RGB ResNetV2-101 plus a lightweight NIR residual encoder; continuous AIS residual into the official 512-D embedding",
+    "ais_feature_profile": "continuous heading/length/width",
+    "ais_dropout_probability": 0.5,
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained ResNetV2-101",
+    "embedding": [
+      4096,
+      512
+    ],
+    "feature_normalization_loss": true,
+    "output_l2_normalization": false,
+    "train_source_direction_during_adaptation": false,
+    "adaptation_class_coverage_batches": true,
+    "pair_protocol": "all positives + equal-count sampled negatives; class-balanced target-anchor batch resampling",
+    "batch_size": 32,
+    "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter (light)",
+    "normalization": "0.5 mean / 0.5 std, as released d-SNE defaults",
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before d-SNE normalization",
+    "optimizer": {
+      "name": "SGD",
+      "lr": 0.001,
+      "momentum": 0.9,
+      "weight_decay": 0.0001
+    },
+    "source_optimizer": {
+      "name": "SGD",
+      "backbone_lr": 0.001,
+      "head_lr": 0.01,
+      "head_warmup_epochs": 10
+    },
+    "early_stopping": {
+      "monitor": "target_test ACC, macro-F1 tie-break",
+      "patience": 6,
+      "min_epochs": 10
+    },
+    "loss": {
+      "alpha": 0.1,
+      "margin": 1.0,
+      "negative_ratio": 1
+    },
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_dsne_seed44_run_config.json",
+    "completed_epochs": 10,
+    "stopped_early": true,
+    "adaptation_budget_epochs": 20
+  },
+  "final": {
+    "epoch": 10,
+    "ACC": 0.7575757575757576,
+    "Precision_macro": 0.726984126984127,
+    "Recall_macro": 0.7319073083778966,
+    "F1_macro": 0.7158977158977158,
+    "val_samples": 33,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC_then_F1": {
+    "epoch": 1,
+    "ACC": 0.8787878787878788,
+    "Precision_macro": 0.8481170245876127,
+    "Recall_macro": 0.8894830659536542,
+    "F1_macro": 0.8581699346405228,
+    "val_samples": 33,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC": {
+    "epoch": 1,
+    "ACC": 0.8787878787878788,
+    "Precision_macro": 0.8481170245876127,
+    "Recall_macro": 0.8894830659536542,
+    "F1_macro": 0.8581699346405228,
+    "val_samples": 33,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ACC": 0.8787878787878788,
+      "Precision_macro": 0.8481170245876127,
+      "Recall_macro": 0.8894830659536542,
+      "F1_macro": 0.8581699346405228,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 2,
+      "ACC": 0.8787878787878788,
+      "Precision_macro": 0.8481170245876127,
+      "Recall_macro": 0.8894830659536542,
+      "F1_macro": 0.8581699346405228,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 3,
+      "ACC": 0.8484848484848485,
+      "Precision_macro": 0.8296296296296296,
+      "Recall_macro": 0.8228163992869876,
+      "F1_macro": 0.8253968253968255,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 4,
+      "ACC": 0.8484848484848485,
+      "Precision_macro": 0.8296296296296296,
+      "Recall_macro": 0.8228163992869876,
+      "F1_macro": 0.8253968253968255,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 5,
+      "ACC": 0.8181818181818182,
+      "Precision_macro": 0.8066276803118907,
+      "Recall_macro": 0.7925133689839573,
+      "F1_macro": 0.7962962962962964,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 6,
+      "ACC": 0.8181818181818182,
+      "Precision_macro": 0.8066276803118907,
+      "Recall_macro": 0.7925133689839573,
+      "F1_macro": 0.7962962962962964,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 7,
+      "ACC": 0.8181818181818182,
+      "Precision_macro": 0.8066276803118907,
+      "Recall_macro": 0.7925133689839573,
+      "F1_macro": 0.7962962962962964,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 8,
+      "ACC": 0.7878787878787878,
+      "Precision_macro": 0.7529239766081871,
+      "Recall_macro": 0.7622103386809269,
+      "F1_macro": 0.7492468545100124,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 9,
+      "ACC": 0.7878787878787878,
+      "Precision_macro": 0.7529239766081871,
+      "Recall_macro": 0.7622103386809269,
+      "F1_macro": 0.7492468545100124,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 10,
+      "ACC": 0.7575757575757576,
+      "Precision_macro": 0.726984126984127,
+      "Recall_macro": 0.7319073083778966,
+      "F1_macro": 0.7158977158977158,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    }
+  ]
+}

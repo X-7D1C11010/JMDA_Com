@@ -1,0 +1,370 @@
+{
+  "metadata": {
+    "method": "CCSA",
+    "implementation": "official fixed-pair CCSA objective/optimizer with shared-backbone RGB+NIR fusion and continuous-AIS residual adaptation",
+    "seed": 44,
+    "epochs": 80,
+    "source_initialization_epochs": 50,
+    "source_initialization_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/ccsa_vgg16_imagenet1k_v1_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet VGG-16 followed by source_train initialization",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 0,
+    "target_label_mode": "all_available",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "source FC initialization, source CE, and pair semantics",
+    "target_label_usage": "target CE and pair semantics for every target_train sample",
+    "experiment_profile": "VDS2Raw fully supervised CCSA adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "multimodal_adapter": "official ImageNet RGB VGG-16 plus a lightweight NIR residual encoder; continuous AIS residual into the official 128-D embedding",
+    "ais_feature_profile": "continuous heading/length/width",
+    "ais_dropout_probability": 0.5,
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
+    "embedding": [
+      1024,
+      128
+    ],
+    "pair_protocol": "fixed exhaustive cross-domain table; all positives plus up to 3x unique negatives; two successive direction updates per batch",
+    "positive_pairs": 2974,
+    "negative_pairs": 7930,
+    "pairs_per_epoch": 10904,
+    "effective_batch_size": 256,
+    "micro_batch_size": 16,
+    "augmentation": "none; fixed resize256/center-crop224 preprocessing",
+    "normalization": "ImageNet",
+    "optimizer": {
+      "name": "Adadelta",
+      "lr": 1.0,
+      "rho": 0.95,
+      "eps": 1e-07
+    },
+    "loss": {
+      "alpha": 0.25,
+      "margin": 1.0
+    },
+    "early_stopping": {
+      "monitor": "target_test ACC, macro-F1 tie-break",
+      "patience": 8,
+      "min_epochs": 5
+    },
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_ccsa_seed44_run_config.json"
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ce": 1.0979177787386138,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 2,
+      "ce": 1.061989693806089,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 3,
+      "ce": 1.0067324967219913,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 4,
+      "ce": 0.9616848189255287,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 5,
+      "ce": 0.9385101877409836,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 6,
+      "ce": 0.9232458657231825,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 7,
+      "ce": 0.9738940781560438,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 8,
+      "ce": 0.9354995982400303,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 9,
+      "ce": 0.9742335409953676,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 10,
+      "ce": 0.8642948722017223,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 11,
+      "ce": 0.8428821142377525,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 12,
+      "ce": 0.8711189072707604,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 13,
+      "ce": 0.8999014065183443,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 14,
+      "ce": 0.9640084628401131,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 15,
+      "ce": 0.8500000197311928,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 16,
+      "ce": 0.8013157947310086,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 17,
+      "ce": 0.7301772010737452,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 18,
+      "ce": 0.7911295603061544,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 19,
+      "ce": 0.9848189353942871,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 20,
+      "ce": 0.892660169765867,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 21,
+      "ce": 0.8555257423170681,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 22,
+      "ce": 0.7777911547956795,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 23,
+      "ce": 0.6907950166998238,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 24,
+      "ce": 0.6486071738703497,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 25,
+      "ce": 0.6040766496082832,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 26,
+      "ce": 0.6623696212110848,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 27,
+      "ce": 0.7552657949513403,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 28,
+      "ce": 1.0393743884974513,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 29,
+      "ce": 0.8283667071112271,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 30,
+      "ce": 0.701674969031893,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 31,
+      "ce": 0.647014700133225,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 32,
+      "ce": 0.5761480989127323,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 33,
+      "ce": 0.5652251305251286,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 34,
+      "ce": 1.0757698971649696,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 35,
+      "ce": 0.6800922576723427,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 36,
+      "ce": 0.6314025521278381,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 37,
+      "ce": 0.547234716086552,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 38,
+      "ce": 0.5076686637154941,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 39,
+      "ce": 0.4921149467599803,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 40,
+      "ce": 0.62285499326114,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 41,
+      "ce": 0.7498902596276382,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 42,
+      "ce": 0.566229483176922,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 43,
+      "ce": 0.47106168393431036,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 44,
+      "ce": 0.4278295574517086,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 45,
+      "ce": 0.42266165799108046,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 46,
+      "ce": 0.6933182814511759,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 47,
+      "ce": 0.945350614087335,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 48,
+      "ce": 1.41340028006455,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 49,
+      "ce": 0.7261861418855602,
+      "lr": 1.0,
+      "samples": 116
+    },
+    {
+      "epoch": 50,
+      "ce": 0.6053605408504091,
+      "lr": 1.0,
+      "samples": 116
+    }
+  ]
+}

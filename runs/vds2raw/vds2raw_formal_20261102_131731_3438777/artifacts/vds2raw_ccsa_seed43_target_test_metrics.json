@@ -1,0 +1,228 @@
+{
+  "metric_definition": {
+    "ACC": "classification accuracy",
+    "Precision_macro": "macro precision over evaluation classes",
+    "Recall_macro": "macro recall over evaluation classes",
+    "F1_macro": "macro F1 over evaluation classes"
+  },
+  "metadata": {
+    "method": "CCSA",
+    "implementation": "official fixed-pair CCSA objective/optimizer with shared-backbone RGB+NIR fusion and continuous-AIS residual adaptation",
+    "seed": 43,
+    "epochs": 80,
+    "source_initialization_epochs": 50,
+    "source_initialization_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/ccsa_vgg16_imagenet1k_v1_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet VGG-16 followed by source_train initialization",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 0,
+    "target_label_mode": "all_available",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "source FC initialization, source CE, and pair semantics",
+    "target_label_usage": "target CE and pair semantics for every target_train sample",
+    "experiment_profile": "VDS2Raw fully supervised CCSA adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "multimodal_adapter": "official ImageNet RGB VGG-16 plus a lightweight NIR residual encoder; continuous AIS residual into the official 128-D embedding",
+    "ais_feature_profile": "continuous heading/length/width",
+    "ais_dropout_probability": 0.5,
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
+    "embedding": [
+      1024,
+      128
+    ],
+    "pair_protocol": "fixed exhaustive cross-domain table; all positives plus up to 3x unique negatives; two successive direction updates per batch",
+    "positive_pairs": 2974,
+    "negative_pairs": 7930,
+    "pairs_per_epoch": 10904,
+    "effective_batch_size": 256,
+    "micro_batch_size": 16,
+    "augmentation": "none; fixed resize256/center-crop224 preprocessing",
+    "normalization": "ImageNet",
+    "optimizer": {
+      "name": "Adadelta",
+      "lr": 1.0,
+      "rho": 0.95,
+      "eps": 1e-07
+    },
+    "loss": {
+      "alpha": 0.25,
+      "margin": 1.0
+    },
+    "early_stopping": {
+      "monitor": "target_test ACC, macro-F1 tie-break",
+      "patience": 8,
+      "min_epochs": 5
+    },
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_ccsa_seed43_run_config.json",
+    "completed_epochs": 12,
+    "stopped_early": true
+  },
+  "final": {
+    "epoch": 12,
+    "ACC": 0.5757575757575758,
+    "Precision_macro": 0.5277777777777778,
+    "Recall_macro": 0.55650623885918,
+    "F1_macro": 0.5256322624743678,
+    "val_samples": 33,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC_then_F1": {
+    "epoch": 4,
+    "ACC": 0.8787878787878788,
+    "Precision_macro": 0.8944444444444445,
+    "Recall_macro": 0.8787878787878788,
+    "F1_macro": 0.8685958685958686,
+    "val_samples": 33,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC": {
+    "epoch": 4,
+    "ACC": 0.8787878787878788,
+    "Precision_macro": 0.8944444444444445,
+    "Recall_macro": 0.8787878787878788,
+    "F1_macro": 0.8685958685958686,
+    "val_samples": 33,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ACC": 0.8484848484848485,
+      "Precision_macro": 0.8149122807017544,
+      "Recall_macro": 0.7757575757575758,
+      "F1_macro": 0.791005291005291,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 2,
+      "ACC": 0.7272727272727273,
+      "Precision_macro": 0.6018518518518519,
+      "Recall_macro": 0.5925133689839572,
+      "F1_macro": 0.5909937888198757,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 3,
+      "ACC": 0.7272727272727273,
+      "Precision_macro": 0.7066942719116631,
+      "Recall_macro": 0.6181818181818182,
+      "F1_macro": 0.6351851851851852,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 4,
+      "ACC": 0.8787878787878788,
+      "Precision_macro": 0.8944444444444445,
+      "Recall_macro": 0.8787878787878788,
+      "F1_macro": 0.8685958685958686,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 5,
+      "ACC": 0.6363636363636364,
+      "Precision_macro": 0.533471359558316,
+      "Recall_macro": 0.5016042780748663,
+      "F1_macro": 0.4981481481481482,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 6,
+      "ACC": 0.5151515151515151,
+      "Precision_macro": 0.42857142857142855,
+      "Recall_macro": 0.44884135472370773,
+      "F1_macro": 0.42771366919973736,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 7,
+      "ACC": 0.6060606060606061,
+      "Precision_macro": 0.5271164021164021,
+      "Recall_macro": 0.5654188948306595,
+      "F1_macro": 0.5316239316239316,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 8,
+      "ACC": 0.5757575757575758,
+      "Precision_macro": 0.5085978835978836,
+      "Recall_macro": 0.5458110516934046,
+      "F1_macro": 0.5125763125763124,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 9,
+      "ACC": 0.6060606060606061,
+      "Precision_macro": 0.5465686274509803,
+      "Recall_macro": 0.576114081996435,
+      "F1_macro": 0.54909899182345,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 10,
+      "ACC": 0.6060606060606061,
+      "Precision_macro": 0.5465686274509803,
+      "Recall_macro": 0.576114081996435,
+      "F1_macro": 0.54909899182345,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 11,
+      "ACC": 0.5757575757575758,
+      "Precision_macro": 0.5277777777777778,
+      "Recall_macro": 0.55650623885918,
+      "F1_macro": 0.5256322624743678,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    },
+    {
+      "epoch": 12,
+      "ACC": 0.5757575757575758,
+      "Precision_macro": 0.5277777777777778,
+      "Recall_macro": 0.55650623885918,
+      "F1_macro": 0.5256322624743678,
+      "val_samples": 33,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    }
+  ]
+}

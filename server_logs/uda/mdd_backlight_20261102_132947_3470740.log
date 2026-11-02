@@ -1,0 +1,224 @@
+[GPU-WAIT] mdd_backlight: require free >= 20000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-02T13:29:54+08:00 mdd_backlight: GPU 0: free=21895 MiB, util=30%; GPU 1: free=7364 MiB, util=100%
+[GPU-WAIT] 2026-11-02T13:30:24+08:00 mdd_backlight: GPU 0: free=21895 MiB, util=100%; GPU 1: free=7364 MiB, util=100%
+[GPU-WAIT] 2026-11-02T13:30:54+08:00 mdd_backlight: GPU 0: free=21895 MiB, util=100%; GPU 1: free=7404 MiB, util=100%
+[GPU-WAIT] 2026-11-02T13:31:24+08:00 mdd_backlight: GPU 0: free=21895 MiB, util=45%; GPU 1: free=7404 MiB, util=100%
+[GPU-WAIT] 2026-11-02T13:31:54+08:00 mdd_backlight: GPU 0: free=21895 MiB, util=0%; GPU 1: free=7804 MiB, util=97%
+[GPU-WAIT] 2026-11-02T13:32:24+08:00 mdd_backlight: GPU 0: free=21895 MiB, util=0%; GPU 1: free=7326 MiB, util=100%
+[GPU-SELECT] mdd_backlight: physical GPU 0; free=21895 MiB, util=0%; launching: /home/lixiang/envs/lx_pytorch/bin/python /home/lixiang/lx/JMDA_Com/MDD/train_mdd.py --target backlight --epochs 20 --backbone resnet50 --batch-size 16 --seed 42 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/20261102_132947_3470740 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261102_132947_3470740 --num-workers 8 --prefetch-factor 4 --multimodal --enhanced-augmentation --no-save-model --pin-memory --persistent-workers
+Controlled random seed: 42
+Namespace(target='backlight', epochs=20, batch_size=16, lr=0.004, lr_gamma=0.0002, lr_decay=0.75, momentum=0.9, wd=0.0005, margin=4.0, trade_off=1.0, bottleneck_dim=1024, print_freq=100, iters_per_epoch=1000, backbone='resnet50', enhanced_augmentation=True, multimodal=True, save_model=False, early_stop_patience=0, early_stop_min_delta=0.0, data_dir='/home/lixiang/lx/JMDA_Com/prepared_lists/20261102_132947_3470740', save_dir='/home/lixiang/lx/JMDA_Com/checkpoints/uda/20261102_132947_3470740', efficiency_output_dir='/home/lixiang/lx/JMDA_Com/efficiency_results/uda', seed=42, num_workers=8, prefetch_factor=4, eval_num_workers=0, worker_timeout_seconds=300, pin_memory=True, persistent_workers=True)
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515, target train: 113, target val: 36
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+Target val: exact VIS/IR pairs=36, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 8, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, eval={'num_workers': 0, 'pin_memory': True}
+MDD backbone: resnet50 (ImageNet pretrained), modalities=VIS+IR
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/MDD-MM/2b6130edd5c1
+  Epoch [1/20] iter [100/1000] loss=1.6792 cls=0.1896 mdd=1.4896 src_acc=93.75
+  Epoch [1/20] iter [200/1000] loss=2.4856 cls=0.3789 mdd=2.1067 src_acc=87.50
+  Epoch [1/20] iter [300/1000] loss=0.9199 cls=0.0622 mdd=0.8577 src_acc=100.00
+  Epoch [1/20] iter [400/1000] loss=1.7772 cls=0.0726 mdd=1.7046 src_acc=93.75
+  Epoch [1/20] iter [500/1000] loss=2.0404 cls=0.0046 mdd=2.0358 src_acc=100.00
+  Epoch [1/20] iter [600/1000] loss=1.7362 cls=0.0779 mdd=1.6583 src_acc=100.00
+  Epoch [1/20] iter [700/1000] loss=2.4356 cls=0.0458 mdd=2.3898 src_acc=100.00
+  Epoch [1/20] iter [800/1000] loss=2.1955 cls=0.0005 mdd=2.1951 src_acc=100.00
+  Epoch [1/20] iter [900/1000] loss=2.0796 cls=0.0040 mdd=2.0756 src_acc=100.00
+  Epoch [1/20] iter [1000/1000] loss=2.6921 cls=0.0695 mdd=2.6226 src_acc=93.75
+  Epoch [2/20] iter [100/1000] loss=1.6801 cls=0.0159 mdd=1.6642 src_acc=100.00
+  Epoch [2/20] iter [200/1000] loss=2.3296 cls=0.0213 mdd=2.3083 src_acc=100.00
+  Epoch [2/20] iter [300/1000] loss=2.6697 cls=0.0061 mdd=2.6637 src_acc=100.00
+  Epoch [2/20] iter [400/1000] loss=3.6031 cls=0.0019 mdd=3.6013 src_acc=100.00
+  Epoch [2/20] iter [500/1000] loss=2.3528 cls=0.0016 mdd=2.3512 src_acc=100.00
+  Epoch [2/20] iter [600/1000] loss=3.6300 cls=0.0031 mdd=3.6270 src_acc=100.00
+  Epoch [2/20] iter [700/1000] loss=3.2129 cls=0.0044 mdd=3.2085 src_acc=100.00
+  Epoch [2/20] iter [800/1000] loss=3.1259 cls=0.2361 mdd=2.8898 src_acc=93.75
+  Epoch [2/20] iter [900/1000] loss=3.1473 cls=0.0038 mdd=3.1435 src_acc=100.00
+  Epoch [2/20] iter [1000/1000] loss=3.0301 cls=0.0052 mdd=3.0250 src_acc=100.00
+  Epoch [3/20] iter [100/1000] loss=3.6465 cls=0.0079 mdd=3.6386 src_acc=100.00
+  Epoch [3/20] iter [200/1000] loss=2.8904 cls=0.0445 mdd=2.8459 src_acc=100.00
+  Epoch [3/20] iter [300/1000] loss=2.2748 cls=0.0038 mdd=2.2710 src_acc=100.00
+  Epoch [3/20] iter [400/1000] loss=2.7646 cls=0.0167 mdd=2.7479 src_acc=100.00
+  Epoch [3/20] iter [500/1000] loss=2.2247 cls=0.0157 mdd=2.2091 src_acc=100.00
+  Epoch [3/20] iter [600/1000] loss=4.9095 cls=0.0417 mdd=4.8677 src_acc=100.00
+  Epoch [3/20] iter [700/1000] loss=3.7600 cls=0.0271 mdd=3.7329 src_acc=100.00
+  Epoch [3/20] iter [800/1000] loss=2.9806 cls=0.0015 mdd=2.9791 src_acc=100.00
+  Epoch [3/20] iter [900/1000] loss=3.0562 cls=0.0064 mdd=3.0498 src_acc=100.00
+  Epoch [3/20] iter [1000/1000] loss=2.9509 cls=0.0006 mdd=2.9503 src_acc=100.00
+  Epoch [4/20] iter [100/1000] loss=2.6793 cls=0.0018 mdd=2.6775 src_acc=100.00
+  Epoch [4/20] iter [200/1000] loss=2.5889 cls=0.0051 mdd=2.5838 src_acc=100.00
+  Epoch [4/20] iter [300/1000] loss=2.8963 cls=0.0036 mdd=2.8927 src_acc=100.00
+  Epoch [4/20] iter [400/1000] loss=1.9506 cls=0.0003 mdd=1.9503 src_acc=100.00
+  Epoch [4/20] iter [500/1000] loss=3.4325 cls=0.0002 mdd=3.4323 src_acc=100.00
+  Epoch [4/20] iter [600/1000] loss=5.0547 cls=0.1086 mdd=4.9461 src_acc=93.75
+  Epoch [4/20] iter [700/1000] loss=2.8423 cls=0.0048 mdd=2.8375 src_acc=100.00
+  Epoch [4/20] iter [800/1000] loss=4.0239 cls=0.0716 mdd=3.9523 src_acc=93.75
+  Epoch [4/20] iter [900/1000] loss=2.3035 cls=0.0011 mdd=2.3024 src_acc=100.00
+  Epoch [4/20] iter [1000/1000] loss=2.8771 cls=0.0036 mdd=2.8736 src_acc=100.00
+  Epoch [5/20] iter [100/1000] loss=3.2795 cls=0.0049 mdd=3.2747 src_acc=100.00
+  Epoch [5/20] iter [200/1000] loss=2.2508 cls=0.0003 mdd=2.2505 src_acc=100.00
+  Epoch [5/20] iter [300/1000] loss=3.8583 cls=0.0519 mdd=3.8064 src_acc=100.00
+  Epoch [5/20] iter [400/1000] loss=4.7900 cls=0.0008 mdd=4.7892 src_acc=100.00
+  Epoch [5/20] iter [500/1000] loss=2.7799 cls=0.0018 mdd=2.7781 src_acc=100.00
+  Epoch [5/20] iter [600/1000] loss=3.5845 cls=0.1454 mdd=3.4391 src_acc=93.75
+  Epoch [5/20] iter [700/1000] loss=2.9011 cls=0.0039 mdd=2.8971 src_acc=100.00
+  Epoch [5/20] iter [800/1000] loss=3.7088 cls=0.0443 mdd=3.6645 src_acc=100.00
+  Epoch [5/20] iter [900/1000] loss=2.7654 cls=0.0042 mdd=2.7612 src_acc=100.00
+  Epoch [5/20] iter [1000/1000] loss=2.3394 cls=0.0021 mdd=2.3373 src_acc=100.00
+  Epoch [6/20] iter [100/1000] loss=2.6272 cls=0.0111 mdd=2.6161 src_acc=100.00
+  Epoch [6/20] iter [200/1000] loss=3.3548 cls=0.0013 mdd=3.3535 src_acc=100.00
+  Epoch [6/20] iter [300/1000] loss=2.9532 cls=0.0004 mdd=2.9528 src_acc=100.00
+  Epoch [6/20] iter [400/1000] loss=2.7327 cls=0.0039 mdd=2.7288 src_acc=100.00
+  Epoch [6/20] iter [500/1000] loss=2.7366 cls=0.0002 mdd=2.7364 src_acc=100.00
+  Epoch [6/20] iter [600/1000] loss=2.7580 cls=0.0049 mdd=2.7531 src_acc=100.00
+  Epoch [6/20] iter [700/1000] loss=3.7612 cls=0.0370 mdd=3.7242 src_acc=100.00
+  Epoch [6/20] iter [800/1000] loss=3.1447 cls=0.0028 mdd=3.1419 src_acc=100.00
+  Epoch [6/20] iter [900/1000] loss=3.1468 cls=0.0027 mdd=3.1441 src_acc=100.00
+  Epoch [6/20] iter [1000/1000] loss=2.9948 cls=0.0305 mdd=2.9644 src_acc=100.00
+  Epoch [7/20] iter [100/1000] loss=3.3159 cls=0.0043 mdd=3.3116 src_acc=100.00
+  Epoch [7/20] iter [200/1000] loss=2.8756 cls=0.0030 mdd=2.8726 src_acc=100.00
+  Epoch [7/20] iter [300/1000] loss=3.4807 cls=0.0063 mdd=3.4743 src_acc=100.00
+  Epoch [7/20] iter [400/1000] loss=3.2374 cls=0.0038 mdd=3.2337 src_acc=100.00
+  Epoch [7/20] iter [500/1000] loss=3.7132 cls=0.0052 mdd=3.7081 src_acc=100.00
+  Epoch [7/20] iter [600/1000] loss=3.3274 cls=0.0167 mdd=3.3107 src_acc=100.00
+  Epoch [7/20] iter [700/1000] loss=3.3722 cls=0.0026 mdd=3.3696 src_acc=100.00
+  Epoch [7/20] iter [800/1000] loss=2.8863 cls=0.0003 mdd=2.8859 src_acc=100.00
+  Epoch [7/20] iter [900/1000] loss=2.4758 cls=0.0001 mdd=2.4757 src_acc=100.00
+  Epoch [7/20] iter [1000/1000] loss=3.9700 cls=0.0060 mdd=3.9640 src_acc=100.00
+  Epoch [8/20] iter [100/1000] loss=3.0234 cls=0.0004 mdd=3.0230 src_acc=100.00
+  Epoch [8/20] iter [200/1000] loss=3.2393 cls=0.0223 mdd=3.2170 src_acc=100.00
+  Epoch [8/20] iter [300/1000] loss=3.5842 cls=0.0542 mdd=3.5300 src_acc=100.00
+  Epoch [8/20] iter [400/1000] loss=2.9847 cls=0.0243 mdd=2.9604 src_acc=100.00
+  Epoch [8/20] iter [500/1000] loss=2.6774 cls=0.0006 mdd=2.6768 src_acc=100.00
+  Epoch [8/20] iter [600/1000] loss=2.6629 cls=0.0145 mdd=2.6484 src_acc=100.00
+  Epoch [8/20] iter [700/1000] loss=2.9687 cls=0.0002 mdd=2.9685 src_acc=100.00
+  Epoch [8/20] iter [800/1000] loss=3.1285 cls=0.0051 mdd=3.1233 src_acc=100.00
+  Epoch [8/20] iter [900/1000] loss=3.0051 cls=0.0428 mdd=2.9622 src_acc=100.00
+  Epoch [8/20] iter [1000/1000] loss=3.1564 cls=0.0202 mdd=3.1362 src_acc=100.00
+  Epoch [9/20] iter [100/1000] loss=3.2336 cls=0.0308 mdd=3.2029 src_acc=100.00
+  Epoch [9/20] iter [200/1000] loss=2.1346 cls=0.0016 mdd=2.1330 src_acc=100.00
+  Epoch [9/20] iter [300/1000] loss=3.1193 cls=0.0826 mdd=3.0367 src_acc=93.75
+  Epoch [9/20] iter [400/1000] loss=3.0587 cls=0.0003 mdd=3.0584 src_acc=100.00
+  Epoch [9/20] iter [500/1000] loss=3.1170 cls=0.0005 mdd=3.1165 src_acc=100.00
+  Epoch [9/20] iter [600/1000] loss=2.9775 cls=0.0170 mdd=2.9605 src_acc=100.00
+  Epoch [9/20] iter [700/1000] loss=3.1144 cls=0.0005 mdd=3.1139 src_acc=100.00
+  Epoch [9/20] iter [800/1000] loss=3.3088 cls=0.0006 mdd=3.3082 src_acc=100.00
+  Epoch [9/20] iter [900/1000] loss=2.4435 cls=0.0003 mdd=2.4432 src_acc=100.00
+  Epoch [9/20] iter [1000/1000] loss=3.4831 cls=0.0257 mdd=3.4573 src_acc=100.00
+  Epoch [10/20] iter [100/1000] loss=3.9014 cls=0.0029 mdd=3.8985 src_acc=100.00
+  Epoch [10/20] iter [200/1000] loss=2.4515 cls=0.0005 mdd=2.4510 src_acc=100.00
+  Epoch [10/20] iter [300/1000] loss=3.3738 cls=0.0130 mdd=3.3608 src_acc=100.00
+  Epoch [10/20] iter [400/1000] loss=4.0289 cls=0.0039 mdd=4.0250 src_acc=100.00
+  Epoch [10/20] iter [500/1000] loss=2.9397 cls=0.0024 mdd=2.9373 src_acc=100.00
+  Epoch [10/20] iter [600/1000] loss=2.9950 cls=0.0006 mdd=2.9944 src_acc=100.00
+  Epoch [10/20] iter [700/1000] loss=3.1080 cls=0.0066 mdd=3.1014 src_acc=100.00
+  Epoch [10/20] iter [800/1000] loss=3.5802 cls=0.0030 mdd=3.5772 src_acc=100.00
+  Epoch [10/20] iter [900/1000] loss=3.2155 cls=0.0023 mdd=3.2132 src_acc=100.00
+  Epoch [10/20] iter [1000/1000] loss=2.5841 cls=0.0006 mdd=2.5835 src_acc=100.00
+  Epoch [11/20] iter [100/1000] loss=2.4288 cls=0.1908 mdd=2.2381 src_acc=93.75
+  Epoch [11/20] iter [200/1000] loss=3.6285 cls=0.0151 mdd=3.6134 src_acc=100.00
+  Epoch [11/20] iter [300/1000] loss=3.1208 cls=0.0007 mdd=3.1201 src_acc=100.00
+  Epoch [11/20] iter [400/1000] loss=2.9287 cls=0.0004 mdd=2.9283 src_acc=100.00
+  Epoch [11/20] iter [500/1000] loss=3.4411 cls=0.0074 mdd=3.4336 src_acc=100.00
+  Epoch [11/20] iter [600/1000] loss=3.2784 cls=0.0024 mdd=3.2760 src_acc=100.00
+  Epoch [11/20] iter [700/1000] loss=2.9241 cls=0.0033 mdd=2.9208 src_acc=100.00
+  Epoch [11/20] iter [800/1000] loss=3.7704 cls=0.0015 mdd=3.7688 src_acc=100.00
+  Epoch [11/20] iter [900/1000] loss=2.7090 cls=0.0167 mdd=2.6923 src_acc=100.00
+  Epoch [11/20] iter [1000/1000] loss=2.5848 cls=0.0071 mdd=2.5777 src_acc=100.00
+  Epoch [12/20] iter [100/1000] loss=3.0962 cls=0.1194 mdd=2.9768 src_acc=93.75
+  Epoch [12/20] iter [200/1000] loss=2.5494 cls=0.0077 mdd=2.5417 src_acc=100.00
+  Epoch [12/20] iter [300/1000] loss=2.7344 cls=0.0004 mdd=2.7341 src_acc=100.00
+  Epoch [12/20] iter [400/1000] loss=3.6629 cls=0.1058 mdd=3.5571 src_acc=93.75
+  Epoch [12/20] iter [500/1000] loss=3.7295 cls=0.0011 mdd=3.7285 src_acc=100.00
+  Epoch [12/20] iter [600/1000] loss=2.4003 cls=0.0012 mdd=2.3991 src_acc=100.00
+  Epoch [12/20] iter [700/1000] loss=3.3281 cls=0.0051 mdd=3.3230 src_acc=100.00
+  Epoch [12/20] iter [800/1000] loss=3.4459 cls=0.0004 mdd=3.4455 src_acc=100.00
+  Epoch [12/20] iter [900/1000] loss=3.0061 cls=0.0023 mdd=3.0039 src_acc=100.00
+  Epoch [12/20] iter [1000/1000] loss=2.8115 cls=0.0044 mdd=2.8072 src_acc=100.00
+  Epoch [13/20] iter [100/1000] loss=3.1801 cls=0.0067 mdd=3.1735 src_acc=100.00
+  Epoch [13/20] iter [200/1000] loss=3.5138 cls=0.0726 mdd=3.4412 src_acc=93.75
+  Epoch [13/20] iter [300/1000] loss=3.9361 cls=0.0005 mdd=3.9357 src_acc=100.00
+  Epoch [13/20] iter [400/1000] loss=3.6546 cls=0.0254 mdd=3.6292 src_acc=100.00
+  Epoch [13/20] iter [500/1000] loss=2.8098 cls=0.0042 mdd=2.8057 src_acc=100.00
+  Epoch [13/20] iter [600/1000] loss=4.7233 cls=0.0074 mdd=4.7158 src_acc=100.00
+  Epoch [13/20] iter [700/1000] loss=2.9696 cls=0.0015 mdd=2.9681 src_acc=100.00
+  Epoch [13/20] iter [800/1000] loss=2.7765 cls=0.0004 mdd=2.7761 src_acc=100.00
+  Epoch [13/20] iter [900/1000] loss=3.0886 cls=0.0133 mdd=3.0752 src_acc=100.00
+  Epoch [13/20] iter [1000/1000] loss=2.7258 cls=0.0052 mdd=2.7206 src_acc=100.00
+  Epoch [14/20] iter [100/1000] loss=2.4048 cls=0.0004 mdd=2.4044 src_acc=100.00
+  Epoch [14/20] iter [200/1000] loss=2.7076 cls=0.0049 mdd=2.7026 src_acc=100.00
+  Epoch [14/20] iter [300/1000] loss=3.7497 cls=0.0011 mdd=3.7487 src_acc=100.00
+  Epoch [14/20] iter [400/1000] loss=3.3761 cls=0.0056 mdd=3.3706 src_acc=100.00
+  Epoch [14/20] iter [500/1000] loss=3.0536 cls=0.0047 mdd=3.0488 src_acc=100.00
+  Epoch [14/20] iter [600/1000] loss=3.1366 cls=0.0007 mdd=3.1359 src_acc=100.00
+  Epoch [14/20] iter [700/1000] loss=3.1353 cls=0.0007 mdd=3.1345 src_acc=100.00
+  Epoch [14/20] iter [800/1000] loss=4.2157 cls=0.0375 mdd=4.1782 src_acc=100.00
+  Epoch [14/20] iter [900/1000] loss=3.2980 cls=0.0118 mdd=3.2862 src_acc=100.00
+  Epoch [14/20] iter [1000/1000] loss=2.7947 cls=0.0008 mdd=2.7940 src_acc=100.00
+  Epoch [15/20] iter [100/1000] loss=2.7190 cls=0.0011 mdd=2.7179 src_acc=100.00
+  Epoch [15/20] iter [200/1000] loss=4.0519 cls=0.0108 mdd=4.0411 src_acc=100.00
+  Epoch [15/20] iter [300/1000] loss=3.3781 cls=0.0031 mdd=3.3750 src_acc=100.00
+  Epoch [15/20] iter [400/1000] loss=3.2769 cls=0.0124 mdd=3.2645 src_acc=100.00
+  Epoch [15/20] iter [500/1000] loss=2.9735 cls=0.0013 mdd=2.9722 src_acc=100.00
+  Epoch [15/20] iter [600/1000] loss=3.2933 cls=0.0002 mdd=3.2931 src_acc=100.00
+  Epoch [15/20] iter [700/1000] loss=3.7677 cls=0.0171 mdd=3.7506 src_acc=100.00
+  Epoch [15/20] iter [800/1000] loss=3.1753 cls=0.0133 mdd=3.1620 src_acc=100.00
+  Epoch [15/20] iter [900/1000] loss=3.1647 cls=0.0046 mdd=3.1601 src_acc=100.00
+  Epoch [15/20] iter [1000/1000] loss=2.6185 cls=0.0096 mdd=2.6088 src_acc=100.00
+  Epoch [16/20] iter [100/1000] loss=3.3855 cls=0.0061 mdd=3.3793 src_acc=100.00
+  Epoch [16/20] iter [200/1000] loss=2.7725 cls=0.0115 mdd=2.7610 src_acc=100.00
+  Epoch [16/20] iter [300/1000] loss=2.6292 cls=0.0016 mdd=2.6276 src_acc=100.00
+  Epoch [16/20] iter [400/1000] loss=3.5220 cls=0.0040 mdd=3.5180 src_acc=100.00
+  Epoch [16/20] iter [500/1000] loss=3.0377 cls=0.0006 mdd=3.0371 src_acc=100.00
+  Epoch [16/20] iter [600/1000] loss=3.8699 cls=0.0491 mdd=3.8208 src_acc=100.00
+  Epoch [16/20] iter [700/1000] loss=3.1129 cls=0.0060 mdd=3.1069 src_acc=100.00
+  Epoch [16/20] iter [800/1000] loss=3.8889 cls=0.0131 mdd=3.8758 src_acc=100.00
+  Epoch [16/20] iter [900/1000] loss=3.0287 cls=0.0087 mdd=3.0200 src_acc=100.00
+  Epoch [16/20] iter [1000/1000] loss=3.4003 cls=0.0029 mdd=3.3974 src_acc=100.00
+  Epoch [17/20] iter [100/1000] loss=2.4187 cls=0.0001 mdd=2.4186 src_acc=100.00
+  Epoch [17/20] iter [200/1000] loss=2.4867 cls=0.0040 mdd=2.4828 src_acc=100.00
+  Epoch [17/20] iter [300/1000] loss=2.8799 cls=0.0007 mdd=2.8792 src_acc=100.00
+  Epoch [17/20] iter [400/1000] loss=4.8219 cls=0.1248 mdd=4.6971 src_acc=93.75
+  Epoch [17/20] iter [500/1000] loss=2.4462 cls=0.0016 mdd=2.4445 src_acc=100.00
+  Epoch [17/20] iter [600/1000] loss=4.1210 cls=0.2289 mdd=3.8921 src_acc=93.75
+  Epoch [17/20] iter [700/1000] loss=4.1164 cls=0.0827 mdd=4.0337 src_acc=93.75
+  Epoch [17/20] iter [800/1000] loss=3.3802 cls=0.0022 mdd=3.3780 src_acc=100.00
+  Epoch [17/20] iter [900/1000] loss=2.6617 cls=0.0026 mdd=2.6591 src_acc=100.00
+  Epoch [17/20] iter [1000/1000] loss=2.6862 cls=0.0083 mdd=2.6779 src_acc=100.00
+  Epoch [18/20] iter [100/1000] loss=2.9730 cls=0.0023 mdd=2.9707 src_acc=100.00
+  Epoch [18/20] iter [200/1000] loss=3.2915 cls=0.0009 mdd=3.2906 src_acc=100.00
+  Epoch [18/20] iter [300/1000] loss=2.6683 cls=0.2419 mdd=2.4264 src_acc=93.75
+  Epoch [18/20] iter [400/1000] loss=3.4513 cls=0.0014 mdd=3.4499 src_acc=100.00
+  Epoch [18/20] iter [500/1000] loss=3.2767 cls=0.1897 mdd=3.0870 src_acc=93.75
+  Epoch [18/20] iter [600/1000] loss=3.8347 cls=0.0074 mdd=3.8272 src_acc=100.00
+  Epoch [18/20] iter [700/1000] loss=2.9629 cls=0.0034 mdd=2.9594 src_acc=100.00
+  Epoch [18/20] iter [800/1000] loss=2.4219 cls=0.0003 mdd=2.4216 src_acc=100.00
+  Epoch [18/20] iter [900/1000] loss=3.3932 cls=0.0062 mdd=3.3870 src_acc=100.00
+  Epoch [18/20] iter [1000/1000] loss=2.2113 cls=0.0303 mdd=2.1809 src_acc=100.00
+  Epoch [19/20] iter [100/1000] loss=3.7159 cls=0.6068 mdd=3.1090 src_acc=87.50
+  Epoch [19/20] iter [200/1000] loss=3.1277 cls=0.0003 mdd=3.1274 src_acc=100.00
+  Epoch [19/20] iter [300/1000] loss=2.8109 cls=0.0066 mdd=2.8043 src_acc=100.00
+  Epoch [19/20] iter [400/1000] loss=2.4812 cls=0.0020 mdd=2.4792 src_acc=100.00
+  Epoch [19/20] iter [500/1000] loss=2.9103 cls=0.0052 mdd=2.9050 src_acc=100.00
+  Epoch [19/20] iter [600/1000] loss=3.5579 cls=0.0116 mdd=3.5463 src_acc=100.00
+  Epoch [19/20] iter [700/1000] loss=2.7805 cls=0.0030 mdd=2.7776 src_acc=100.00
+  Epoch [19/20] iter [800/1000] loss=3.2755 cls=0.0013 mdd=3.2742 src_acc=100.00
+  Epoch [19/20] iter [900/1000] loss=3.0374 cls=0.0004 mdd=3.0370 src_acc=100.00
+  Epoch [19/20] iter [1000/1000] loss=3.3458 cls=0.0072 mdd=3.3385 src_acc=100.00
+  Epoch [20/20] iter [100/1000] loss=2.7748 cls=0.0096 mdd=2.7652 src_acc=100.00
+  Epoch [20/20] iter [200/1000] loss=2.8894 cls=0.0041 mdd=2.8853 src_acc=100.00
+  Epoch [20/20] iter [300/1000] loss=2.6512 cls=0.0009 mdd=2.6503 src_acc=100.00
+  Epoch [20/20] iter [400/1000] loss=3.3054 cls=0.0032 mdd=3.3023 src_acc=100.00
+  Epoch [20/20] iter [500/1000] loss=2.8679 cls=0.0107 mdd=2.8572 src_acc=100.00
+  Epoch [20/20] iter [600/1000] loss=2.4950 cls=0.0011 mdd=2.4938 src_acc=100.00
+  Epoch [20/20] iter [700/1000] loss=3.1130 cls=0.0011 mdd=3.1119 src_acc=100.00
+  Epoch [20/20] iter [800/1000] loss=2.5154 cls=0.0015 mdd=2.5138 src_acc=100.00
+  Epoch [20/20] iter [900/1000] loss=2.4236 cls=0.0034 mdd=2.4201 src_acc=100.00
+  Epoch [20/20] iter [1000/1000] loss=3.2241 cls=0.0019 mdd=3.2222 src_acc=100.00
+Epoch [20/20] target val accuracy: 0.6111
+Val Precision (Macro): 0.6742 | Val Recall (Macro): 0.5870 | Val F1 (Macro): 0.5767 | Val class coverage: 9/9 | Val samples: 36
+Diagnostic peak epoch (backlight, not selected): 20
+Final target val accuracy (backlight, final epoch): 0.6111
+{"timestamp": "2026-11-02T14:36:52", "suite_id": "20261102_132947_3470740", "run_tag": "mdd_backlight", "method": "mdd", "protocol": "UDA", "target": "backlight", "seed": 42, "epochs": 20, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "final_checkpoint", "status": "success", "exit_code": 0, "duration_seconds": 4018.0, "final_acc": 0.6111, "best_acc": null, "final_acc_std": null, "precision_macro": 0.6742, "precision_macro_std": null, "recall_macro": 0.587, "recall_macro_std": null, "f1_macro": 0.5767, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 1, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/mdd_backlight_20261102_132947_3470740.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda", "error_type": null, "error_summary": null}
