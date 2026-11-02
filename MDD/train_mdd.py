@@ -40,19 +40,26 @@ from tllib.alignment.mdd import ClassificationMarginDisparityDiscrepancy \
     as MarginDisparityDiscrepancy, ImageClassifier
 from tllib.utils.data import ForeverDataIterator
 from tllib.utils.metric import accuracy
-from tllib.vision.models import resnet18
+from tllib.vision.models import resnet18, resnet50
 
 # 跨平台数据路径适配（服务器：export JMDA_DATA_ROOT=/mnt/data/lixiang/data/Data）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
-from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from uda_data import (
+    UdaImageListDataset,
+    assert_training_label_space,
+    uda_label_space,
+    format_class_space,
+    format_dropped,
+)
 from data_loader_options import (
     add_data_loader_args,
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
+from uda_multimodal import DualBackbone, paired_dataset, describe_pairing
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -67,14 +74,19 @@ class ResizeImage:
         return img.resize((self.size, self.size), Image.BILINEAR)
 
 
-def get_train_transform(resize_size=224):
-    return T.Compose([
+def get_train_transform(enhanced_augmentation=False):
+    operations = [
         ResizeImage(256),
         T.RandomResizedCrop(224, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.)),
         T.RandomHorizontalFlip(),
-        T.ToTensor(),
+    ]
+    if enhanced_augmentation:
+        operations.append(T.ColorJitter(brightness=0.25, contrast=0.25,
+                                        saturation=0.2, hue=0.05))
+    operations += [T.ToTensor(),
         T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ])
+    ]
+    return T.Compose(operations)
 
 
 def get_val_transform():
@@ -156,6 +168,15 @@ def main():
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
                         help='Number of iterations per epoch (tllib official default: 1000)')
+    parser.add_argument('--backbone', choices=['resnet18', 'resnet50'],
+                        default='resnet18')
+    parser.add_argument('--enhanced-augmentation', action='store_true')
+    parser.add_argument('--multimodal', action='store_true')
+    parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
+                        default=False)
+    parser.add_argument('--early-stop-patience', type=int, default=0,
+                        help='target-val epochs without improvement before stopping; 0 disables')
+    parser.add_argument('--early-stop-min-delta', type=float, default=0.0)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists_vis'))
@@ -166,24 +187,35 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
+    if args.early_stop_patience < 0:
+        raise ValueError('--early-stop-patience must be >= 0')
+    if args.early_stop_patience:
+        raise ValueError('target-validation early stopping is disabled by this protocol')
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
     os.makedirs(args.save_dir, exist_ok=True)
     print(args)
 
-    train_tf, val_tf = get_train_transform(), get_val_transform()
+    train_tf, val_tf = get_train_transform(args.enhanced_augmentation), get_val_transform()
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
     class_ids, label_map = uda_label_space(args.data_dir, args.target)
     num_classes = len(class_ids)
-    src_ds = UdaImageListDataset(os.path.join(args.data_dir, 'sunny_train.txt'),
-                                 train_tf, label_map)
-    tgt_ds = UdaImageListDataset(os.path.join(args.data_dir, f'{args.target}_train.txt'),
-                                 train_tf, label_map)
-    tgt_val_ds = UdaImageListDataset(os.path.join(args.data_dir, f'{args.target}_val.txt'),
-                                     val_tf, label_map)
+    dataset_factory = paired_dataset if args.multimodal else (
+        lambda path, transform, mapping: UdaImageListDataset(path, transform, mapping))
+    src_ds = dataset_factory(os.path.join(args.data_dir, 'sunny_train.txt'),
+                             train_tf, label_map)
+    tgt_ds = dataset_factory(os.path.join(args.data_dir, f'{args.target}_train.txt'),
+                             train_tf, label_map)
+    tgt_val_ds = dataset_factory(os.path.join(args.data_dir, f'{args.target}_val.txt'),
+                                 val_tf, label_map)
+    assert_training_label_space(src_ds, tgt_ds, class_ids)
     print(format_class_space(class_ids, num_classes))
     print(f'Source train: {len(src_ds)}, target train: {len(tgt_ds)}, target val: {len(tgt_val_ds)}')
     print(format_dropped('source train', src_ds))
+    if args.multimodal:
+        print(describe_pairing('Source train', src_ds))
+        print(describe_pairing('Target train', tgt_ds))
+        print(describe_pairing('Target val', tgt_val_ds))
 
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
@@ -197,7 +229,12 @@ def main():
     train_source_iter = ForeverDataIterator(src_loader)
     train_target_iter = ForeverDataIterator(tgt_loader)
 
-    backbone = resnet18(pretrained=True)
+    backbone_fn = resnet50 if args.backbone == 'resnet50' else resnet18
+    backbone = backbone_fn(pretrained=True)
+    if args.multimodal:
+        backbone = DualBackbone(backbone, backbone_fn(pretrained=True))
+    print(f'MDD backbone: {args.backbone} (ImageNet pretrained), '
+          f'modalities={"VIS+IR" if args.multimodal else "VIS"}')
     classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim,
                                  width=args.bottleneck_dim).to(device)
     mdd = MarginDisparityDiscrepancy(args.margin).to(device)
@@ -207,58 +244,65 @@ def main():
 
     best_acc = -float('inf')
     best_epoch = 0
+    epochs_without_improvement = 0
+    last_epoch = 0
     best_path = os.path.join(args.save_dir, f'mdd_{args.target}_best.pth')
     last_path = os.path.join(args.save_dir, f'mdd_{args.target}_last.pth')
     final_acc = None
+    if args.early_stop_patience:
+        print('WARNING: early stopping monitors labelled target validation accuracy; '
+              'this is target-validation-selected UDA, not strict label-free UDA.')
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
-        eff = EfficiencyLogger(args.efficiency_output_dir, 'MDD',
-                                seed=args.seed, device=str(device), modalities='VIS')
+        eff = EfficiencyLogger(args.efficiency_output_dir,
+                                'MDD-MM' if args.multimodal else 'MDD',
+                                seed=args.seed, device=str(device),
+                                modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
     for epoch in range(1, args.epochs + 1):
+        last_epoch = epoch
         if eff:
             eff.epoch_start(epoch)
         train_epoch(train_source_iter, train_target_iter, classifier, mdd,
                     optimizer, lr_scheduler, epoch, args, eff=eff)
+        if epoch < args.epochs:
+            if eff:
+                eff.epoch_end(epoch)
+            continue
         val_metrics = validate(tgt_val_loader, classifier, num_classes)
         acc = val_metrics['accuracy']
         final_acc = acc
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}')
         print(format_classification_metrics(val_metrics))
-        if acc > best_acc:
+        if acc > best_acc + args.early_stop_min_delta:
             best_acc = acc
             best_epoch = epoch
-            torch.save({
-                'epoch': epoch,
-                'state_dict': classifier.state_dict(),
-                'metrics': dict(val_metrics),
-                'target': args.target,
-            }, best_path)
-            print(f'Saved new official target-best checkpoint: {best_path}')
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
         if eff:
             eff.epoch_end(epoch)
+        if (args.early_stop_patience and
+                epochs_without_improvement >= args.early_stop_patience):
+            print(f'Early stopping at epoch {epoch}; best epoch={best_epoch}, '
+                  f'best target val accuracy={best_acc:.4f}')
+            break
 
-    torch.save({'epoch': args.epochs, 'state_dict': classifier.state_dict(),
-                'metrics': val_metrics, 'target': args.target}, last_path)
-    try:
-        checkpoint = torch.load(best_path, map_location=device, weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(best_path, map_location=device)
-    classifier.load_state_dict(checkpoint['state_dict'])
-    selected_metrics = validate(tgt_val_loader, classifier, num_classes)
-    print(f'Loaded official target-best checkpoint from epoch {best_epoch}: {best_path}')
-    print(format_classification_metrics(selected_metrics))
+    if args.save_model:
+        torch.save({'epoch': last_epoch, 'state_dict': classifier.state_dict(),
+                    'metrics': val_metrics, 'target': args.target}, last_path)
+    selected_metrics = val_metrics
     if eff:
         eff.finalize(extra_metrics={'final_acc': selected_metrics['accuracy'],
                                     'best_acc': best_acc,
-                                    'best_epoch': best_epoch,
+                                    'diagnostic_peak_epoch': best_epoch,
                                     'target': args.target})
-    print(f'Best checkpoint epoch ({args.target}): {best_epoch}')
-    print(f'Final target val accuracy ({args.target}, official target-best checkpoint): '
+    print(f'Diagnostic peak epoch ({args.target}, not selected): {best_epoch}')
+    print(f'Final target val accuracy ({args.target}, final epoch): '
           f'{selected_metrics["accuracy"]:.4f}')
 
 

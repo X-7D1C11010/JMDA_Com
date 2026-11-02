@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torchvision.transforms import functional as TF
 
 CLASS_NAMES = ("Cargo", "Fishing", "Sailing_Pleasure")
 DISPLAY_CLASS_NAMES = ("Cargo", "Fishing", "Sailing & Pleasure")
@@ -343,7 +344,15 @@ class NaturalImageRGBDataset(Dataset):
     for this overhead-imagery dataset; it does not change band semantics.
     """
 
-    def __init__(self, root, partition, statistics, augment=False, normalization="half"):
+    def __init__(
+        self,
+        root,
+        partition,
+        statistics,
+        augment=False,
+        normalization="half",
+        augmentation_strength="standard",
+    ):
         self.root = Path(root).expanduser().resolve()
         self.partition = partition
         self.paths = partition_files(self.root, partition)
@@ -358,22 +367,34 @@ class NaturalImageRGBDataset(Dataset):
             std = (0.229, 0.224, 0.225)
         else:
             raise ValueError(f"unknown RGB normalization {normalization!r}")
+        if augmentation_strength not in {"standard", "light"}:
+            raise ValueError(
+                f"unknown natural-image augmentation strength {augmentation_strength!r}"
+            )
         if augment:
+            if augmentation_strength == "light":
+                crop_scale = (0.9, 1.0)
+                crop_ratio = (0.95, 1.05)
+                color_jitter = (0.1, 0.1, 0.1, 0.05)
+            else:
+                crop_scale = (0.8, 1.0)
+                crop_ratio = (0.9, 1.1)
+                color_jitter = (0.2, 0.2, 0.2, 0.1)
             spatial = [
                 transforms.Resize(256, antialias=True),
                 transforms.RandomResizedCrop(
                     224,
-                    scale=(0.8, 1.0),
-                    ratio=(0.9, 1.1),
+                    scale=crop_scale,
+                    ratio=crop_ratio,
                     antialias=True,
                 ),
                 transforms.RandomHorizontalFlip(),
                 transforms.RandomVerticalFlip(),
                 transforms.ColorJitter(
-                    brightness=0.2,
-                    contrast=0.2,
-                    saturation=0.2,
-                    hue=0.1,
+                    brightness=color_jitter[0],
+                    contrast=color_jitter[1],
+                    saturation=color_jitter[2],
+                    hue=color_jitter[3],
                 ),
             ]
         else:
@@ -385,6 +406,7 @@ class NaturalImageRGBDataset(Dataset):
             spatial + [transforms.Normalize(mean=mean, std=std)]
         )
         self.normalization = normalization
+        self.augmentation_strength = augmentation_strength
 
     def __len__(self):
         return len(self.paths)
@@ -401,6 +423,106 @@ class NaturalImageRGBDataset(Dataset):
         rgb = rgb.div_(255.0)
         rgb = self.transform(rgb.clamp_(0.0, 1.0))
         return rgb, label
+
+
+class NaturalImageMultimodalDataset(Dataset):
+    """Aligned RGB+NIR+AIS view for ImageNet-initialized baselines.
+
+    RGB and NIR always receive the same crop and flips.  RGB keeps the
+    natural-image normalization required by the pretrained backbone; NIR is
+    scaled to ``[-1, 1]`` before the model repeats it to three channels.  AIS
+    remains in the dataset's train-fitted feature space, and ``ais_mask`` is
+    carried only as a missing-value gate rather than as a fourth modality.
+    """
+
+    def __init__(
+        self,
+        root,
+        partition,
+        statistics,
+        augment=False,
+        normalization="half",
+        augmentation_strength="standard",
+    ):
+        self.root = Path(root).expanduser().resolve()
+        self.partition = partition
+        self.paths = partition_files(self.root, partition)
+        self.samples = [
+            (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
+        ]
+        self.statistics = statistics
+        self.augment = bool(augment)
+        if normalization == "half":
+            self.rgb_mean, self.rgb_std = (0.5,) * 3, (0.5,) * 3
+        elif normalization == "imagenet":
+            self.rgb_mean = (0.485, 0.456, 0.406)
+            self.rgb_std = (0.229, 0.224, 0.225)
+        else:
+            raise ValueError(f"unknown RGB normalization {normalization!r}")
+        if augmentation_strength not in {"standard", "light"}:
+            raise ValueError(
+                f"unknown natural-image augmentation strength {augmentation_strength!r}"
+            )
+        if augmentation_strength == "light":
+            self.crop_scale = (0.9, 1.0)
+            self.crop_ratio = (0.95, 1.05)
+            jitter = (0.1, 0.1, 0.1, 0.05)
+        else:
+            self.crop_scale = (0.8, 1.0)
+            self.crop_ratio = (0.9, 1.1)
+            jitter = (0.2, 0.2, 0.2, 0.1)
+        self.color_jitter = transforms.ColorJitter(
+            brightness=jitter[0],
+            contrast=jitter[1],
+            saturation=jitter[2],
+            hue=jitter[3],
+        )
+        self.normalization = normalization
+        self.augmentation_strength = augmentation_strength
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        path = self.paths[index]
+        with np.load(path, allow_pickle=False) as item:
+            rgb = torch.from_numpy(item["rgb"].astype(np.float32)).div_(255.0)
+            nir = torch.from_numpy(item["nir"].astype(np.float32)).div_(255.0)
+            ais = torch.from_numpy(item["ais"].astype(np.float32))
+            ais_mask = torch.from_numpy(item["ais_mask"].astype(np.float32))
+            label = int(item["label"])
+        rgb = rgb.clamp_(0.0, 1.0)
+        nir = nir.clamp_(0.0, 1.0)
+        rgb = TF.resize(rgb, 256, antialias=True)
+        nir = TF.resize(nir, 256, antialias=True)
+        if self.augment:
+            top, left, height, width = transforms.RandomResizedCrop.get_params(
+                rgb, scale=self.crop_scale, ratio=self.crop_ratio
+            )
+            rgb = TF.resized_crop(
+                rgb, top, left, height, width, (224, 224), antialias=True
+            )
+            nir = TF.resized_crop(
+                nir, top, left, height, width, (224, 224), antialias=True
+            )
+            if bool(torch.rand(()) < 0.5):
+                rgb, nir = TF.hflip(rgb), TF.hflip(nir)
+                ais[0] = -ais[0]
+            if bool(torch.rand(()) < 0.5):
+                rgb, nir = TF.vflip(rgb), TF.vflip(nir)
+                ais[1] = -ais[1]
+            rgb = self.color_jitter(rgb)
+        else:
+            rgb = TF.center_crop(rgb, (224, 224))
+            nir = TF.center_crop(nir, (224, 224))
+        rgb = TF.normalize(rgb, self.rgb_mean, self.rgb_std)
+        nir = TF.normalize(nir, (0.5,), (0.5,))
+        return {
+            "rgb": rgb,
+            "nir": nir,
+            "ais": ais,
+            "ais_mask": ais_mask,
+        }, label
 
 
 class FixedPerClassSubset(Dataset):
@@ -452,6 +574,7 @@ __all__ = [
     "FixedPerClassSubset",
     "ImageStatistics",
     "NaturalImageRGBDataset",
+    "NaturalImageMultimodalDataset",
     "RGBView",
     "VDS2RawDataset",
     "audit_dataset",

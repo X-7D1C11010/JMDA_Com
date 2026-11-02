@@ -35,6 +35,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torchvision import transforms as T
 
 # Import CDAN components from original repo
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pytorch'))
@@ -48,13 +49,53 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
-from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from uda_data import (
+    UdaImageListDataset,
+    assert_training_label_space,
+    uda_label_space,
+    format_class_space,
+    format_dropped,
+)
 from data_loader_options import add_data_loader_args, data_loader_kwargs
+from uda_multimodal import paired_dataset, split_modalities, describe_pairing
+
+
+class DualResNetFc(nn.Module):
+    """CDAN feature extractor with independent VIS/IR ResNet branches."""
+
+    def __init__(self, resnet_name, class_num, bottleneck_dim=256):
+        super().__init__()
+        self.vis = ResNetFc(resnet_name=resnet_name, use_bottleneck=True,
+                            bottleneck_dim=bottleneck_dim, new_cls=True,
+                            class_num=class_num)
+        self.ir = ResNetFc(resnet_name=resnet_name, use_bottleneck=True,
+                           bottleneck_dim=bottleneck_dim, new_cls=True,
+                           class_num=class_num)
+        self.fusion = nn.Linear(bottleneck_dim * 2, bottleneck_dim)
+        self.fc = nn.Linear(bottleneck_dim, class_num)
+
+    def forward(self, images):
+        vis, ir = split_modalities(images)
+        vis_features, _ = self.vis(vis)
+        ir_features, _ = self.ir(ir)
+        features = self.fusion(torch.cat((vis_features, ir_features), dim=1))
+        return features, self.fc(features)
+
+    def get_parameters(self):
+        return [
+            {'params': self.vis.feature_layers.parameters(), 'lr_mult': 1, 'decay_mult': 2},
+            {'params': self.vis.bottleneck.parameters(), 'lr_mult': 10, 'decay_mult': 2},
+            {'params': self.ir.feature_layers.parameters(), 'lr_mult': 1, 'decay_mult': 2},
+            {'params': self.ir.bottleneck.parameters(), 'lr_mult': 10, 'decay_mult': 2},
+            {'params': self.fusion.parameters(), 'lr_mult': 10, 'decay_mult': 2},
+            {'params': self.fc.parameters(), 'lr_mult': 10, 'decay_mult': 2},
+        ]
 
 
 def evaluate_10crop(model, list_path, label_map, device, num_classes,
                     batch_size=4, num_workers=4, prefetch_factor=2,
-                    pin_memory=True, worker_timeout_seconds=300):
+                    pin_memory=True, worker_timeout_seconds=300,
+                    multimodal=False):
     """官方 train_image.py:22-45 的十裁剪测试协议（test_10crop=True 默认）：
     10 个裁剪视角分别前向，softmax 概率求和后取 argmax。
 
@@ -77,9 +118,11 @@ def evaluate_10crop(model, list_path, label_map, device, num_classes,
     reference_labels = None
     with torch.no_grad():
         for transform in transform_list:
+            dataset = (paired_dataset(list_path, transform, label_map)
+                       if multimodal else UdaImageListDataset(
+                           list_path, transform=transform, label_map=label_map))
             loader = DataLoader(
-                UdaImageListDataset(list_path, transform=transform,
-                                    label_map=label_map),
+                dataset,
                 batch_size=batch_size, shuffle=False, **eval_loader_kwargs,
             )
             view_probabilities = []
@@ -109,8 +152,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--num-iterations', type=int, default=100004,
-                        help='总训练迭代数（原参考实现 train_image.py:217 固定 100004）')
+    parser.add_argument('--num-iterations', type=int, default=2000,
+                        help='JMDA multimodal protocol budget (default: 2000 updates)')
     parser.add_argument('--test-interval', type=int, default=500,
                         help='评估间隔迭代数（原参考实现 --test_interval 默认 500）')
     parser.add_argument('--batch-size', type=int, default=36,
@@ -126,6 +169,16 @@ def main():
     parser.add_argument('--random', action='store_true',
                         help='使用随机多线性映射（原参考实现 --random 默认 False；'
                              '论文仅在外积维度 >4096 时启用）')
+    parser.add_argument('--backbone', choices=['ResNet18', 'ResNet50'],
+                        default='ResNet18')
+    parser.add_argument('--enhanced-augmentation', action='store_true',
+                        help='add color jitter to the official resize/crop/flip pipeline')
+    parser.add_argument('--multimodal', action='store_true')
+    parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
+                        default=False)
+    parser.add_argument('--early-stop-patience', type=int, default=0,
+                        help='target-val evaluations without improvement before stopping; 0 disables')
+    parser.add_argument('--early-stop-min-delta', type=float, default=0.0)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists_vis'))
@@ -136,6 +189,10 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=4, default_eval_workers=0)
     args = parser.parse_args()
+    if args.early_stop_patience < 0:
+        raise ValueError('--early-stop-patience must be >= 0')
+    if args.early_stop_patience:
+        raise ValueError('target-validation early stopping is disabled by this protocol')
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
 
@@ -145,7 +202,19 @@ def main():
 
     # 预处理恢复原参考实现 pre_process.py:image_train（Resize 256 + 随机裁剪 224）；
     # 评估由 evaluate_10crop 按官方十裁剪协议自建数据加载。
-    train_tf = prep.image_train(resize_size=256, crop_size=224)
+    if args.enhanced_augmentation:
+        train_tf = T.Compose([
+            prep.ResizeImage(256),
+            T.RandomResizedCrop(224, scale=(0.6, 1.0)),
+            T.RandomHorizontalFlip(),
+            T.ColorJitter(brightness=0.25, contrast=0.25,
+                          saturation=0.2, hue=0.05),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225]),
+        ])
+    else:
+        train_tf = prep.image_train(resize_size=256, crop_size=224)
 
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
     class_ids, label_map = uda_label_space(args.data_dir, args.target)
@@ -154,13 +223,20 @@ def main():
     tgt_train_list = os.path.join(args.data_dir, f'{args.target}_train.txt')
     tgt_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
 
-    src_ds = UdaImageListDataset(src_list, transform=train_tf, label_map=label_map)
-    tgt_ds = UdaImageListDataset(tgt_train_list, transform=train_tf, label_map=label_map)
+    dataset_factory = paired_dataset if args.multimodal else (
+        lambda path, transform, mapping: UdaImageListDataset(
+            path, transform=transform, label_map=mapping))
+    src_ds = dataset_factory(src_list, train_tf, label_map)
+    tgt_ds = dataset_factory(tgt_train_list, train_tf, label_map)
+    assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
     print(f'Source train: {len(src_ds)} images')
     print(f'Target train: {len(tgt_ds)} images')
     print(format_dropped('source train', src_ds))
+    if args.multimodal:
+        print(describe_pairing('Source train', src_ds))
+        print(describe_pairing('Target train', tgt_ds))
 
     loader_kwargs = data_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, '
@@ -170,10 +246,14 @@ def main():
     tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
                             drop_last=True, **loader_kwargs)
 
-    # ResNet-18 backbone with bottleneck（官方 ResNetFc 配置：bottleneck_dim=256）
-    model = ResNetFc(resnet_name='ResNet18', use_bottleneck=True,
-                     bottleneck_dim=256, new_cls=True, class_num=num_classes).to(device)
-    print('CDAN backbone: official CDAN/pytorch/network.py ResNetFc(ResNet18)')
+    if args.multimodal:
+        model = DualResNetFc(args.backbone, num_classes).to(device)
+        print(f'CDAN-MM backbone: dual {args.backbone} VIS+IR branches')
+    else:
+        model = ResNetFc(resnet_name=args.backbone, use_bottleneck=True,
+                         bottleneck_dim=256, new_cls=True,
+                         class_num=num_classes).to(device)
+        print(f'CDAN backbone: official CDAN/pytorch/network.py ResNetFc({args.backbone})')
     # 原参考实现 train_image.py:113-118：--random 默认 False 时不建 RandomLayer，
     # 判别器输入 = bottleneck×类别数 的外积；仅 --random 时用 1024 维随机映射。
     if args.random:
@@ -185,6 +265,7 @@ def main():
         random_layer = None
         ad_net = AdversarialNetwork(in_feature=256 * num_classes,
                                     hidden_size=1024).to(device)
+    ad_net.max_iter = float(args.num_iterations)
     print(f'Random projection (--random): {args.random}; '
           f'ad_net input dim={256 * num_classes if not args.random else 1024}')
 
@@ -200,14 +281,23 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     best_acc = -float('inf')
+    best_iteration = 0
+    evaluations_without_improvement = 0
     final_acc = None
+    best_path = os.path.join(args.save_dir,
+                             f'cdan_{args.target}_{args.backbone}_best.pth')
+    if args.early_stop_patience:
+        print('WARNING: early stopping monitors labelled target validation accuracy; '
+              'this is target-validation-selected UDA, not strict label-free UDA.')
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
-        eff = EfficiencyLogger(args.efficiency_output_dir, 'CDAN',
-                                seed=args.seed, device=str(device), modalities='VIS')
+        eff = EfficiencyLogger(args.efficiency_output_dir,
+                                'CDAN-MM' if args.multimodal else 'CDAN',
+                                seed=args.seed, device=str(device),
+                                modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
     # 原参考实现 train_image.py:145-192 的迭代制训练：
@@ -218,12 +308,10 @@ def main():
     len_train_target = len(tgt_loader)
     iter_source = iter(src_loader)
     iter_target = iter(tgt_loader)
-    block = -1
+    block = 0
     for iter_num in range(args.num_iterations):
-        if iter_num % args.test_interval == 0:
-            block += 1
-            if eff:
-                eff.epoch_start(block)
+        if iter_num == 0 and eff:
+            eff.epoch_start(block)
         model.train()
         ad_net.train()
         # 原参考实现 train_image.py:166：逐迭代 inv 调度（0 基迭代号）
@@ -276,29 +364,46 @@ def main():
                   f'coeff={calc_coeff(iter_num):.4f} '
                   f'lr={optimizer.param_groups[0]["lr"]:.2e}')
 
-        if (iter_num % args.test_interval == args.test_interval - 1 or
-                iter_num == args.num_iterations - 1):
+        # Target labels never control optimization or stopping. Evaluate only
+        # the final in-memory model; --test-interval remains a logging block size.
+        if iter_num == args.num_iterations - 1:
             val_metrics = evaluate_10crop(model, tgt_val_list, label_map,
                                           device, num_classes,
                                           num_workers=args.eval_num_workers,
                                           prefetch_factor=args.prefetch_factor,
                                           pin_memory=args.pin_memory,
-                                          worker_timeout_seconds=args.worker_timeout_seconds)
+                                          worker_timeout_seconds=args.worker_timeout_seconds,
+                                          multimodal=args.multimodal)
             acc = val_metrics['accuracy']
             final_acc = acc
             print(f'iter [{iter_num + 1}/{args.num_iterations}] '
                   f'target val accuracy (10-crop): {acc:.4f}')
             print(format_classification_metrics(val_metrics))
-            best_acc = max(best_acc, acc)
+            improved = acc > best_acc + args.early_stop_min_delta
+            if improved:
+                best_acc = acc
+                best_iteration = iter_num + 1
+                evaluations_without_improvement = 0
+            else:
+                evaluations_without_improvement += 1
             if eff:
                 eff.epoch_end(block)
+            if (args.early_stop_patience and
+                    evaluations_without_improvement >= args.early_stop_patience):
+                print(f'Early stopping at iteration {iter_num + 1}; '
+                      f'best iteration={best_iteration}, '
+                      f'best target val accuracy={best_acc:.4f}')
+                break
 
-    torch.save(model.state_dict(), os.path.join(args.save_dir, f'cdan_{args.target}_last.pth'))
+    if args.save_model:
+        torch.save(model.state_dict(), os.path.join(
+            args.save_dir, f'cdan_{args.target}_last.pth'))
     if eff:
         eff.finalize(extra_metrics={'final_acc': final_acc,
                                     'diagnostic_peak_acc': best_acc,
                                     'target': args.target})
-    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
+    print(f'Final target val accuracy ({args.target}, iteration {args.num_iterations}): '
+          f'{final_acc:.4f}')
     print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
 
 

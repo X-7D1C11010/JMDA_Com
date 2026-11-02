@@ -27,9 +27,15 @@ $MethodOrder = if ($env:VDS2RAW_METHOD_ORDER) {
     @('ccsa', 'dsne', 'mcft3')
 }
 $expectedMethods = @('ccsa', 'dsne', 'mcft3')
-if ($MethodOrder.Count -ne 3 -or
-    (Compare-Object ($MethodOrder | Sort-Object) $expectedMethods)) {
-    throw 'VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once.'
+if ($MethodOrder.Count -lt 1 -or $MethodOrder.Count -gt 3) {
+    throw 'VDS2RAW_METHOD_ORDER must contain one to three methods from: ccsa dsne mcft3.'
+}
+$unknownMethods = @($MethodOrder | Where-Object { $_ -notin $expectedMethods })
+$duplicateMethods = @(
+    $MethodOrder | Group-Object | Where-Object { $_.Count -gt 1 }
+)
+if ($unknownMethods.Count -or $duplicateMethods.Count) {
+    throw 'VDS2RAW_METHOD_ORDER contains an unknown or duplicate method.'
 }
 
 if (-not (Test-Path -LiteralPath $DataRoot -PathType Container)) {
@@ -56,15 +62,40 @@ function Get-EnvNonNegativeInt([string]$Name, [int]$Default) {
     return $parsed
 }
 
+function Get-EnvPositiveDouble([string]$Name, [double]$Default) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($value)) { return $Default }
+    $parsed = 0.0
+    if (-not [double]::TryParse(
+        $value,
+        [Globalization.NumberStyles]::Float,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [ref]$parsed
+    ) -or $parsed -le 0) {
+        throw "$Name must be a positive number: $value"
+    }
+    return $parsed
+}
+
 $CcsaEpochs = Get-EnvInt 'VDS2RAW_CCSA_EPOCHS' 80
 $DsneEpochs = Get-EnvInt 'VDS2RAW_DSNE_EPOCHS' 20
 $McftEpochs = Get-EnvInt 'VDS2RAW_MCFT_EPOCHS' 500
 $CcsaSourceEpochs = Get-EnvInt 'VDS2RAW_CCSA_SOURCE_EPOCHS' 50
-$DsneSourceEpochs = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_EPOCHS' 50
+$DsneSourceEpochs = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_EPOCHS' 80
 $CcsaBatch = Get-EnvInt 'VDS2RAW_CCSA_BATCH_SIZE' 256
 $DsneBatch = Get-EnvInt 'VDS2RAW_DSNE_BATCH_SIZE' 32
+$DsneSourceBatch = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_BATCH_SIZE' 16
 $McftBatch = Get-EnvInt 'VDS2RAW_MCFT_BATCH_SIZE' 32
 $DsneLayers = Get-EnvInt 'VDS2RAW_DSNE_LAYERS' 101
+$DsneSourceWarmup = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_SOURCE_HEAD_WARMUP_EPOCHS' 10
+$DsneSourceHeadLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_HEAD_LR' 0.01
+$DsneSourceBackboneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_BACKBONE_LR' 0.001
+$CcsaEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_PATIENCE' 8
+$CcsaEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_MIN_EPOCHS' 5
+$DsneEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_PATIENCE' 6
+$DsneEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_MIN_EPOCHS' 10
+$McftEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE' 30
+$McftEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS' 50
 $legacyTargetValue = [Environment]::GetEnvironmentVariable(
     'VDS2RAW_TARGET_SAMPLES_PER_CLASS'
 )
@@ -88,8 +119,9 @@ $DsneTargetPerClass = if ($env:VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS) {
     0
 }
 $McftEvalFrequency = Get-EnvInt 'VDS2RAW_MCFT_EVAL_FREQUENCY' 1
-if ($Mode -eq 'formal' -and
-    ($CcsaTargetPerClass -ne 0 -or $DsneTargetPerClass -ne 0)) {
+if ($Mode -eq 'formal' -and (
+    ($MethodOrder -contains 'ccsa' -and $CcsaTargetPerClass -ne 0) -or
+    ($MethodOrder -contains 'dsne' -and $DsneTargetPerClass -ne 0))) {
     throw ('Formal VDS2Raw runs require all target_train labels: set both ' +
         'target-samples-per-class values to 0.')
 }
@@ -113,9 +145,14 @@ if ($Mode -eq 'smoke') {
     $DsneSourceEpochs = 1
     $CcsaBatch = 8
     $DsneBatch = 4
+    $DsneSourceBatch = 4
     $McftBatch = 4
     $DsneLayers = 101
+    $DsneSourceWarmup = 0
     $McftEvalFrequency = 1
+    $CcsaEarlyPatience = 0
+    $DsneEarlyPatience = 0
+    $McftEarlyPatience = 0
     $MaxBatches = 1
     $PretrainedArgs = @('--no-pretrained')
 }
@@ -139,6 +176,10 @@ $config = [ordered]@{
     ccsa_source_epochs = $CcsaSourceEpochs
     dsne_epochs = $DsneEpochs
     dsne_source_epochs = $DsneSourceEpochs
+    dsne_source_batch_size = $DsneSourceBatch
+    dsne_source_head_warmup_epochs = $DsneSourceWarmup
+    dsne_source_head_lr = $DsneSourceHeadLr
+    dsne_source_backbone_lr = $DsneSourceBackboneLr
     mcft_epochs = $McftEpochs
     ccsa_batch_size = $CcsaBatch
     dsne_batch_size = $DsneBatch
@@ -148,6 +189,15 @@ $config = [ordered]@{
     ccsa_target_samples_per_class = $CcsaTargetPerClass
     dsne_target_samples_per_class = $DsneTargetPerClass
     dsne_feature_normalization = $true
+    ccsa_early_stopping = @{
+        patience = $CcsaEarlyPatience; min_epochs = $CcsaEarlyMinEpochs
+    }
+    dsne_early_stopping = @{
+        patience = $DsneEarlyPatience; min_epochs = $DsneEarlyMinEpochs
+    }
+    mcft_early_stopping = @{
+        patience = $McftEarlyPatience; min_epochs = $McftEarlyMinEpochs
+    }
     model_selection = 'best target_test ACC with macro-F1 tie-break'
     test_selection_bias = $true
     ccsa_source_checkpoint = if ($CcsaSourceCheckpoint) { $CcsaSourceCheckpoint } else { $null }
@@ -201,18 +251,30 @@ foreach ($seed in $Seeds) {
         (Join-Path $RepoRoot 'vds2raw\train_ccsa.py'),
         '--epochs', "$CcsaEpochs", '--source-epochs', "$CcsaSourceEpochs",
         '--batch-size', "$CcsaBatch",
+        '--early-stopping-patience', "$CcsaEarlyPatience",
+        '--early-stopping-min-epochs', "$CcsaEarlyMinEpochs",
         '--target-samples-per-class', "$CcsaTargetPerClass"
     ) + $common + $smokeArgs + $PretrainedArgs + $ccsaCheckpointArgs + $ccsaBackboneArgs
     $dsneArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_dsne.py'),
         '--epochs', "$DsneEpochs", '--batch-size', "$DsneBatch",
-        '--source-epochs', "$DsneSourceEpochs", '--nlayers', "$DsneLayers",
+        '--source-epochs', "$DsneSourceEpochs",
+        '--source-batch-size', "$DsneSourceBatch",
+        '--source-head-warmup-epochs', "$DsneSourceWarmup",
+        '--source-head-lr', "$DsneSourceHeadLr",
+        '--source-backbone-lr', "$DsneSourceBackboneLr",
+        '--early-stopping-patience', "$DsneEarlyPatience",
+        '--early-stopping-min-epochs', "$DsneEarlyMinEpochs",
+        '--augmentation-strength', 'light', '--class-balanced-source',
+        '--class-balanced-batches', '--nlayers', "$DsneLayers",
         '--target-samples-per-class', "$DsneTargetPerClass", '--fn'
     ) + $common + $smokeArgs + $PretrainedArgs + $dsneCheckpointArgs + $dsneBackboneArgs
     $mcftArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_mcft.py'),
         '--epochs', "$McftEpochs", '--batch-size', "$McftBatch",
-        '--eval-frequency', "$McftEvalFrequency", '--early-stopping-patience', '0'
+        '--eval-frequency', "$McftEvalFrequency",
+        '--early-stopping-patience', "$McftEarlyPatience",
+        '--early-stopping-min-epochs', "$McftEarlyMinEpochs"
     ) + $common + $smokeArgs
     foreach ($method in $MethodOrder) {
         switch ($method) {
@@ -224,9 +286,17 @@ foreach ($seed in $Seeds) {
 }
 
 if ($env:VDS2RAW_RUN_COMPLEXITY_BENCHMARK -ne '0') {
+    $benchmarkMethodMap = @{
+        ccsa = 'vds_ccsa'
+        dsne = 'vds_dsne'
+        mcft3 = 'vds_mcft3'
+    }
+    $benchmarkMethods = ($MethodOrder | ForEach-Object {
+        $benchmarkMethodMap[$_]
+    }) -join ','
     $benchmarkArguments = @(
         (Join-Path $RepoRoot 'tools\benchmark_efficiency.py'),
-        '--methods', 'vds_ccsa,vds_dsne,vds_mcft3',
+        '--methods', $benchmarkMethods,
         '--num-classes', '3', '--protocol', 'benchmark',
         '--benchmark_train_batch_size', '1',
         '--efficiency_output_dir', (Join-Path $RunDir 'efficiency')

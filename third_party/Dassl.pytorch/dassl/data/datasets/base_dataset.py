@@ -22,14 +22,18 @@ class Datum:
         classname (str): class name.
     """
 
-    def __init__(self, impath="", label=0, domain=0, classname=""):
+    def __init__(self, impath="", label=0, domain=0, classname="", irpath=""):
         assert isinstance(impath, str)
         assert check_isfile(impath)
+        assert isinstance(irpath, str)
+        if irpath:
+            assert check_isfile(irpath)
 
         self._impath = impath
         self._label = label
         self._domain = domain
         self._classname = classname
+        self._irpath = irpath
 
     @property
     def impath(self):
@@ -46,6 +50,10 @@ class Datum:
     @property
     def classname(self):
         return self._classname
+
+    @property
+    def irpath(self):
+        return self._irpath
 
 
 class DatasetBase:

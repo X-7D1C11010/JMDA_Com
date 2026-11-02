@@ -1,3 +1,5 @@
+import random
+import numpy as np
 import torch
 import torchvision.transforms as T
 try:
@@ -255,17 +257,18 @@ class DatasetWrapper(TorchDataset):
         }
 
         img0 = read_image(item.impath)
+        ir0 = read_image(item.irpath).convert("L").convert("RGB") if item.irpath else None
 
         if self.transform is not None:
             if isinstance(self.transform, (list, tuple)):
                 for i, tfm in enumerate(self.transform):
-                    img = self._transform_image(tfm, img0)
+                    img = self._transform_paired(tfm, img0, ir0)
                     keyname = "img"
                     if (i + 1) > 1:
                         keyname += str(i + 1)
                     output[keyname] = img
             else:
-                img = self._transform_image(self.transform, img0)
+                img = self._transform_paired(self.transform, img0, ir0)
                 output["img"] = img
         else:
             output["img"] = img0
@@ -274,6 +277,30 @@ class DatasetWrapper(TorchDataset):
             output["img0"] = self.to_tensor(img0)  # without any augmentation
 
         return output
+
+    def _transform_paired(self, tfm, vis, ir):
+        if ir is None:
+            return self._transform_image(tfm, vis)
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        torch_state = torch.get_rng_state()
+        vis_tensor = self._transform_image(tfm, vis)
+        end_python_state = random.getstate()
+        end_numpy_state = np.random.get_state()
+        end_torch_state = torch.get_rng_state()
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        torch.set_rng_state(torch_state)
+        ir_tensor = self._transform_image(tfm, ir)
+        random.setstate(end_python_state)
+        np.random.set_state(end_numpy_state)
+        torch.set_rng_state(end_torch_state)
+        # Dassl has already applied CLIP normalization. Convert the IR branch
+        # to JMDA's grayscale RGB normalization (mean=std=0.5).
+        mean = ir_tensor.new_tensor(self.cfg.INPUT.PIXEL_MEAN).view(3, 1, 1)
+        std = ir_tensor.new_tensor(self.cfg.INPUT.PIXEL_STD).view(3, 1, 1)
+        ir_tensor = ((ir_tensor * std + mean) - 0.5) / 0.5
+        return torch.cat((vis_tensor, ir_tensor), dim=0)
 
     def _transform_image(self, tfm, img0):
         img_list = []

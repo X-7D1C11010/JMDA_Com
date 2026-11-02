@@ -35,12 +35,13 @@ import os
 import sys
 import argparse
 import hashlib
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils import model_zoo
-from torchvision import transforms
+from torchvision import transforms, models as tv_models
 
 # Import CORAL loss from original repo
 sys.path.insert(0, os.path.dirname(__file__))
@@ -51,12 +52,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
-from uda_data import UdaImageListDataset, uda_label_space, format_class_space, format_dropped
+from uda_data import (
+    UdaImageListDataset,
+    assert_training_label_space,
+    uda_label_space,
+    format_class_space,
+    format_dropped,
+)
 from data_loader_options import (
     add_data_loader_args,
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
+from uda_multimodal import paired_dataset, split_modalities, describe_pairing
 
 
 ALEXNET_URL = 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth'
@@ -109,16 +117,55 @@ def load_pretrained_alexnet(backbone, weights_path=''):
           f'compatible tensors={len(compatible)}, randomly initialized={missing}')
 
 
-def get_transforms():
+class ResNetDeepCORAL(nn.Module):
+    """Deep CORAL with an ImageNet ResNet-50 image encoder."""
+
+    def __init__(self, num_classes, multimodal=False):
+        super().__init__()
+        self.multimodal = bool(multimodal)
+        backbone = tv_models.resnet50(pretrained=True)
+        branch_dim = backbone.fc.in_features
+        backbone.fc = nn.Identity()
+        self.sharedNet = backbone
+        self.irNet = None
+        if self.multimodal:
+            self.irNet = tv_models.resnet50(pretrained=True)
+            self.irNet.fc = nn.Identity()
+        feature_dim = branch_dim * (2 if self.multimodal else 1)
+        self.fc = nn.Linear(feature_dim, num_classes)
+        self.fc.weight.data.normal_(0, 0.005)
+
+    def features(self, images):
+        if not self.multimodal:
+            return self.sharedNet(images)
+        vis, ir = split_modalities(images)
+        return torch.cat((self.sharedNet(vis), self.irNet(ir)), dim=1)
+
+    def forward(self, source, target):
+        return (self.fc(self.features(source)), self.fc(self.features(target)))
+
+
+def get_transforms(backbone='alexnet', enhanced_augmentation=False):
     # DeepCORAL/data_loader.py:get_office31_dataloader: Scale(227), ToTensor,
     # ImageNet Normalize. Scale is replaced by its current torchvision name.
-    train_tf = transforms.Compose([
-        transforms.Resize((227, 227)),
+    crop_size = 224 if backbone == 'resnet50' else 227
+    train_ops = [transforms.Resize((256, 256))]
+    if enhanced_augmentation:
+        train_ops += [
+            transforms.RandomResizedCrop(crop_size, scale=(0.6, 1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(brightness=0.25, contrast=0.25,
+                                   saturation=0.2, hue=0.05),
+        ]
+    else:
+        train_ops = [transforms.Resize((crop_size, crop_size))]
+    train_ops += [
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
+    ]
+    train_tf = transforms.Compose(train_ops)
     val_tf = transforms.Compose([
-        transforms.Resize((227, 227)),
+        transforms.Resize((256, 256)), transforms.CenterCrop(crop_size),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
@@ -131,7 +178,8 @@ def evaluate(model, loader, device, num_classes):
     with torch.no_grad():
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
-            out = model.fc(model.sharedNet(imgs))
+            features = model.features(imgs) if hasattr(model, 'features') else model.sharedNet(imgs)
+            out = model.fc(features)
             pred = out.argmax(1)
             all_labels.extend(labels.cpu().tolist())
             all_predictions.extend(pred.cpu().tolist())
@@ -144,6 +192,8 @@ def main():
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
     parser.add_argument('--epochs', type=int, default=20,
                         help='训练轮数（Deep CORAL 参考实验为 20）')
+    parser.add_argument('--max-iterations', type=int, default=0,
+                        help='exact optimizer-update budget; 0 uses --epochs')
     parser.add_argument('--source-batch-size', type=int, default=200,
                         help='官方 main.py BATCH_SIZE[0]')
     parser.add_argument('--target-batch-size', type=int, default=56,
@@ -154,6 +204,15 @@ def main():
                         help='官方 main.py 定义 5e-4 但实际未传给 SGD，故默认 0')
     parser.add_argument('--alexnet-weights', type=str, default='',
                         help='离线 torchvision AlexNet ImageNet state_dict；为空则使用官方 URL/cache')
+    parser.add_argument('--backbone', choices=['alexnet', 'resnet50'], default='alexnet')
+    parser.add_argument('--enhanced-augmentation', action='store_true',
+                        help='enable random crop, horizontal flip, and color jitter')
+    parser.add_argument('--multimodal', action='store_true')
+    parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
+                        default=False)
+    parser.add_argument('--early-stop-patience', type=int, default=0,
+                        help='target-val epochs without improvement before stopping; 0 disables')
+    parser.add_argument('--early-stop-min-delta', type=float, default=0.0)
     parser.add_argument('--data-dir', type=str,
                         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                              'data_lists_vis'))
@@ -171,7 +230,13 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    train_tf, val_tf = get_transforms()
+    if args.early_stop_patience < 0:
+        raise ValueError('--early-stop-patience must be >= 0')
+    if args.early_stop_patience:
+        raise ValueError('target-validation early stopping is disabled by this protocol')
+    if args.epochs < 1 or args.max_iterations < 0:
+        raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
+    train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
 
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
     class_ids, label_map = uda_label_space(args.data_dir, args.target)
@@ -180,15 +245,23 @@ def main():
     tgt_train_list = os.path.join(args.data_dir, f'{args.target}_train.txt')
     tgt_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
 
-    src_ds = UdaImageListDataset(src_list, transform=train_tf, label_map=label_map)
-    tgt_ds = UdaImageListDataset(tgt_train_list, transform=train_tf, label_map=label_map)
-    tgt_val_ds = UdaImageListDataset(tgt_val_list, transform=val_tf, label_map=label_map)
+    dataset_factory = paired_dataset if args.multimodal else (
+        lambda path, transform, mapping: UdaImageListDataset(
+            path, transform=transform, label_map=mapping))
+    src_ds = dataset_factory(src_list, train_tf, label_map)
+    tgt_ds = dataset_factory(tgt_train_list, train_tf, label_map)
+    tgt_val_ds = dataset_factory(tgt_val_list, val_tf, label_map)
+    assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
     print(f'Source train: {len(src_ds)} images')
     print(f'Target train: {len(tgt_ds)} images')
     print(f'Target val:   {len(tgt_val_ds)} images')
     print(format_dropped('source train', src_ds))
+    if args.multimodal:
+        print(describe_pairing('Source train', src_ds))
+        print(describe_pairing('Target train', tgt_ds))
+        print(describe_pairing('Target val', tgt_val_ds))
 
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
@@ -200,12 +273,21 @@ def main():
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
                                 shuffle=False, **eval_loader_kwargs)
 
-    model = DeepCORAL(num_classes=num_classes).to(device)
-    load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
-    print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
+    if args.backbone == 'resnet50':
+        model = ResNetDeepCORAL(num_classes=num_classes,
+                                multimodal=args.multimodal).to(device)
+        print('DeepCORAL architecture: ImageNet ResNet-50 '
+              + ('dual VIS+IR branches' if args.multimodal else 'VIS branch'))
+    else:
+        if args.multimodal:
+            raise ValueError('--multimodal requires --backbone resnet50')
+        model = DeepCORAL(num_classes=num_classes).to(device)
+        load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
+        print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
     # 官方 main.py：新分类层为 10x lr，主干为 base lr，momentum=0.9。
     optimizer = optim.SGD([
         {'params': model.sharedNet.parameters()},
+        *([{'params': model.irNet.parameters()}] if getattr(model, 'irNet', None) is not None else []),
         {'params': model.fc.parameters(), 'lr': 10 * args.lr},
     ], lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
@@ -213,29 +295,49 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     best_acc = -float('inf')
+    best_epoch = 0
+    epochs_without_improvement = 0
     final_acc = None
+    best_path = os.path.join(args.save_dir,
+                             f'deepcoral_{args.target}_{args.backbone}_best.pth')
+    if args.early_stop_patience:
+        print('WARNING: early stopping monitors labelled target validation accuracy; '
+              'this is target-validation-selected UDA, not strict label-free UDA.')
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
-        eff = EfficiencyLogger(args.efficiency_output_dir, 'DeepCORAL',
-                                seed=args.seed, device=str(device), modalities='VIS')
+        eff = EfficiencyLogger(args.efficiency_output_dir,
+                                'DeepCORAL-MM' if args.multimodal else 'DeepCORAL',
+                                seed=args.seed, device=str(device),
+                                modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
-    for epoch in range(args.epochs):
+    n_batches = min(len(src_loader), len(tgt_loader))
+    if n_batches < 1:
+        raise ValueError('DeepCORAL requires at least one full source and target batch')
+    planned_updates = args.max_iterations or args.epochs * n_batches
+    outer_epochs = math.ceil(planned_updates / n_batches)
+    print(f'DeepCORAL optimizer-update budget: {planned_updates} '
+          f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
+    global_step = 0
+    for epoch in range(outer_epochs):
         if eff:
             eff.epoch_start(epoch)
         model.train()
         # 原参考实现 main.py:148：CORAL 权重 λ=(e+1)/EPOCHS 随 epoch 线性递增
-        _lambda = (epoch + 1) / args.epochs
+        _lambda = ((global_step + 1) / planned_updates if args.max_iterations
+                   else (epoch + 1) / args.epochs)
         # 原参考实现 main.py:29：train_steps = min(len(source), len(target))，
         # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
         tgt_iter = iter(tgt_loader)
-        n_batches = min(len(src_loader), len(tgt_loader))
+        batches_this_epoch = min(n_batches, planned_updates - global_step)
 
-        for i in range(n_batches):
+        for i in range(batches_this_epoch):
+            if args.max_iterations:
+                _lambda = (global_step + 1) / planned_updates
             if eff:
                 eff.step_start()
             src_imgs, src_labels = next(src_iter)
@@ -257,30 +359,49 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            global_step += 1
             if eff:
                 eff.step_end()
 
             if (i + 1) % 10 == 0:
-                print(f'  Epoch [{epoch+1}/{args.epochs}] batch [{i+1}/{n_batches}] '
+                print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
+                      f'update [{global_step}/{planned_updates}] '
                       f'lambda={_lambda:.4f} '
                       f'loss_cls={loss_cls.item():.4f} loss_coral={loss_coral.item():.4f}')
 
+        if global_step < planned_updates:
+            if eff:
+                eff.epoch_end(epoch)
+            continue
         val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
         acc = val_metrics['accuracy']
         final_acc = acc
-        print(f'Epoch [{epoch+1}/{args.epochs}] target val accuracy: {acc:.4f}')
+        print(f'After update [{global_step}/{planned_updates}] target val accuracy: {acc:.4f}')
         print(format_classification_metrics(val_metrics))
-        best_acc = max(best_acc, acc)
+        improved = acc > best_acc + args.early_stop_min_delta
+        if improved:
+            best_acc = acc
+            best_epoch = epoch + 1
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
         if eff:
             eff.epoch_end(epoch)
+        if (args.early_stop_patience and
+                epochs_without_improvement >= args.early_stop_patience):
+            print(f'Early stopping at epoch {epoch + 1}; best epoch={best_epoch}, '
+                  f'best target val accuracy={best_acc:.4f}')
+            break
 
-    torch.save(model.state_dict(), os.path.join(args.save_dir, f'deepcoral_{args.target}_last.pth'))
+    if args.save_model:
+        torch.save(model.state_dict(), os.path.join(
+            args.save_dir, f'deepcoral_{args.target}_last.pth'))
     if eff:
         eff.finalize(extra_metrics={'final_acc': final_acc,
                                     'diagnostic_peak_acc': best_acc,
                                     'target': args.target})
-    print(f'Final target val accuracy ({args.target}): {final_acc:.4f}')
-    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
+    print(f'Final target val accuracy ({args.target}, final update '
+          f'{global_step}/{planned_updates}): {final_acc:.4f}')
 
 
 if __name__ == '__main__':

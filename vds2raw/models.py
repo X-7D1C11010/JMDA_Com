@@ -17,6 +17,61 @@ from torchvision.models import (
 from MCFT.mcft_model import MViT
 
 
+CONTINUOUS_AIS_INDICES = (0, 1, 2, 3)
+
+
+def _split_modalities(inputs):
+    """Return RGB, aligned NIR/IR, AIS values, and the AIS validity mask."""
+    if torch.is_tensor(inputs):
+        return inputs, None, None, None
+    if not isinstance(inputs, dict):
+        raise TypeError(
+            "model input must be an image tensor or a multimodal dictionary"
+        )
+    if "rgb" not in inputs:
+        raise KeyError("multimodal model input is missing 'rgb'")
+    return (
+        inputs["rgb"],
+        inputs.get("nir", inputs.get("ir")),
+        inputs.get("ais"),
+        inputs.get("ais_mask"),
+    )
+
+
+def _single_channel(image):
+    if image is None:
+        return None
+    if image.ndim != 4 or image.shape[1] not in (1, 3):
+        raise ValueError(
+            f"NIR/IR input must have shape [B,1,H,W] or [B,3,H,W], got {tuple(image.shape)}"
+        )
+    return image if image.shape[1] == 1 else image.mean(dim=1, keepdim=True)
+
+
+def _auxiliary_image_encoder(output_dim):
+    """Memory-bounded NIR/IR residual branch for ImageNet RGB baselines."""
+    return nn.Sequential(
+        nn.Conv2d(1, 32, kernel_size=5, stride=2, padding=2, bias=False),
+        nn.BatchNorm2d(32),
+        nn.GELU(),
+        nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(64),
+        nn.GELU(),
+        nn.AdaptiveAvgPool2d(1),
+        nn.Flatten(),
+        nn.Linear(64, output_dim),
+    )
+
+
+def _modality_dropout(features, probability, training):
+    if not training or not probability:
+        return features
+    keep = (
+        torch.rand(features.shape[0], 1, device=features.device) >= probability
+    ).to(features.dtype)
+    return features * keep / (1.0 - probability)
+
+
 def _load_backbone_state(module, checkpoint, prefix=""):
     """Load a portable backbone state dict, optionally from a full model."""
     source = Path(checkpoint).expanduser().resolve()
@@ -93,9 +148,22 @@ class CCSAOfficeModel(nn.Module):
     """
 
     def __init__(
-        self, num_classes=3, pretrained=True, pretrained_backbone_checkpoint=""
+        self,
+        num_classes=3,
+        pretrained=True,
+        pretrained_backbone_checkpoint="",
+        multimodal=False,
+        use_ais=False,
+        ais_dropout_probability=0.5,
     ):
         super().__init__()
+        if use_ais and not multimodal:
+            raise ValueError("AIS fusion requires multimodal=True")
+        if not 0.0 <= ais_dropout_probability < 1.0:
+            raise ValueError("ais_dropout_probability must be in [0, 1)")
+        self.multimodal = bool(multimodal)
+        self.use_ais = bool(use_ais)
+        self.ais_dropout_probability = float(ais_dropout_probability)
         weights = (
             VGG16_Weights.IMAGENET1K_V1
             if pretrained and not pretrained_backbone_checkpoint
@@ -116,6 +184,23 @@ class CCSAOfficeModel(nn.Module):
             nn.ReLU(inplace=True),
         )
         self.classifier = nn.Linear(128, num_classes)
+        if self.multimodal:
+            self.nir_encoder = _auxiliary_image_encoder(128)
+            self.nir_residual_scale = nn.Parameter(torch.tensor(0.1))
+        if self.use_ais:
+            self.register_buffer(
+                "ais_feature_indices",
+                torch.tensor(CONTINUOUS_AIS_INDICES, dtype=torch.long),
+                persistent=False,
+            )
+            self.ais_encoder = nn.Sequential(
+                nn.LayerNorm(len(CONTINUOUS_AIS_INDICES)),
+                nn.Linear(len(CONTINUOUS_AIS_INDICES), 128),
+                nn.GELU(),
+                nn.Dropout(0.3),
+                nn.Linear(128, 128),
+            )
+            self.ais_residual_scale = nn.Parameter(torch.tensor(0.1))
         for module in self.embedding.modules():
             if isinstance(module, nn.Linear):
                 nn.init.normal_(module.weight, mean=0.0, std=0.01)
@@ -124,7 +209,26 @@ class CCSAOfficeModel(nn.Module):
         nn.init.zeros_(self.classifier.bias)
 
     def embed(self, images):
-        return self.embedding(self.avgpool(self.features(images)))
+        rgb, nir, ais, ais_mask = _split_modalities(images)
+        embedding = self.embedding(self.avgpool(self.features(rgb)))
+        if self.multimodal:
+            if nir is None:
+                raise ValueError("multimodal CCSA requires aligned NIR/IR input")
+            embedding = embedding + self.nir_residual_scale * self.nir_encoder(
+                _single_channel(nir)
+            )
+        if self.use_ais:
+            if ais is None or ais_mask is None:
+                raise ValueError("three-modal CCSA requires AIS values and ais_mask")
+            indices = self.ais_feature_indices
+            ais_features = self.ais_encoder(
+                ais.index_select(1, indices) * ais_mask.index_select(1, indices)
+            )
+            ais_features = _modality_dropout(
+                ais_features, self.ais_dropout_probability, self.training
+            )
+            embedding = embedding + self.ais_residual_scale * ais_features
+        return embedding
 
     def forward(self, first, second=None):
         first_features = self.embed(first)
@@ -141,7 +245,14 @@ class CCSAOfficeModel(nn.Module):
             parameter.requires_grad = not enabled
 
     def source_initialization_parameters(self):
-        return list(self.embedding.parameters()) + list(self.classifier.parameters())
+        parameters = list(self.embedding.parameters()) + list(self.classifier.parameters())
+        if self.multimodal:
+            parameters.extend(self.nir_encoder.parameters())
+            parameters.append(self.nir_residual_scale)
+        if self.use_ais:
+            parameters.extend(self.ais_encoder.parameters())
+            parameters.append(self.ais_residual_scale)
+        return parameters
 
 
 def dsne_loss(
@@ -321,8 +432,18 @@ class DSNEOfficeModel(nn.Module):
         pretrained_backbone_checkpoint="",
         dropout=False,
         l2_normalize=False,
+        multimodal=False,
+        use_ais=False,
+        ais_dropout_probability=0.5,
     ):
         super().__init__()
+        if use_ais and not multimodal:
+            raise ValueError("AIS fusion requires multimodal=True")
+        if not 0.0 <= ais_dropout_probability < 1.0:
+            raise ValueError("ais_dropout_probability must be in [0, 1)")
+        self.multimodal = bool(multimodal)
+        self.use_ais = bool(use_ais)
+        self.ais_dropout_probability = float(ais_dropout_probability)
         self.features = timm.create_model(
             "resnetv2_101.a1h_in1k",
             pretrained=pretrained and not pretrained_backbone_checkpoint,
@@ -342,6 +463,23 @@ class DSNEOfficeModel(nn.Module):
         self.embeds = nn.Sequential(*layers)
         self.l2_normalize = l2_normalize
         self.output = nn.Linear(embed_size, num_classes)
+        if self.multimodal:
+            self.nir_encoder = _auxiliary_image_encoder(embed_size)
+            self.nir_residual_scale = nn.Parameter(torch.tensor(0.1))
+        if self.use_ais:
+            self.register_buffer(
+                "ais_feature_indices",
+                torch.tensor(CONTINUOUS_AIS_INDICES, dtype=torch.long),
+                persistent=False,
+            )
+            self.ais_encoder = nn.Sequential(
+                nn.LayerNorm(len(CONTINUOUS_AIS_INDICES)),
+                nn.Linear(len(CONTINUOUS_AIS_INDICES), embed_size),
+                nn.GELU(),
+                nn.Dropout(0.3),
+                nn.Linear(embed_size, embed_size),
+            )
+            self.ais_residual_scale = nn.Parameter(torch.tensor(0.1))
         for module in self.embeds.modules():
             if isinstance(module, nn.Linear):
                 nn.init.normal_(module.weight, mean=0.0, std=0.01)
@@ -350,11 +488,39 @@ class DSNEOfficeModel(nn.Module):
         nn.init.zeros_(self.output.bias)
 
     def forward(self, images, return_embedding=False):
-        features = self.embeds(self.features(images))
+        rgb, nir, ais, ais_mask = _split_modalities(images)
+        features = self.embeds(self.features(rgb))
+        if self.multimodal:
+            if nir is None:
+                raise ValueError("multimodal d-SNE requires aligned NIR/IR input")
+            features = features + self.nir_residual_scale * self.nir_encoder(
+                _single_channel(nir)
+            )
+        if self.use_ais:
+            if ais is None or ais_mask is None:
+                raise ValueError("three-modal d-SNE requires AIS values and ais_mask")
+            indices = self.ais_feature_indices
+            ais_features = self.ais_encoder(
+                ais.index_select(1, indices) * ais_mask.index_select(1, indices)
+            )
+            ais_features = _modality_dropout(
+                ais_features, self.ais_dropout_probability, self.training
+            )
+            features = features + self.ais_residual_scale * ais_features
         if self.l2_normalize:
             features = F.normalize(features, p=2, dim=1)
         logits = self.output(features)
         return (logits, features) if return_embedding else logits
+
+    def source_head_parameters(self):
+        parameters = list(self.embeds.parameters()) + list(self.output.parameters())
+        if self.multimodal:
+            parameters.extend(self.nir_encoder.parameters())
+            parameters.append(self.nir_residual_scale)
+        if self.use_ais:
+            parameters.extend(self.ais_encoder.parameters())
+            parameters.append(self.ais_residual_scale)
+        return parameters
 
     def load_source_checkpoint(self, path):
         payload = torch.load(path, map_location="cpu", weights_only=False)

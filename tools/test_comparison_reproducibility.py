@@ -26,6 +26,20 @@ COMPARISON_ENTRYPOINTS = (
 
 
 class ComparisonReproducibilityTests(unittest.TestCase):
+    def test_ccsa_dsne_mcft_suite_uses_waiting_gpu_gate(self):
+        launcher = (ROOT / "scripts/run_ccsa_dsne_mcft.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("tools/run_on_available_gpu.py", launcher)
+        self.assertIn("JMDA_GPU_MAX_UTIL_PERCENT", launcher)
+        self.assertIn("JMDA_GPU_STABLE_CHECKS", launcher)
+        self.assertIn("JMDA_GPU_CANDIDATES", launcher)
+        self.assertIn("JMDA_METHOD_ORDER", launcher)
+        self.assertIn("JMDA_CCSA_MIN_FREE_MIB", launcher)
+        self.assertIn("JMDA_DSNE_MIN_FREE_MIB", launcher)
+        self.assertIn("JMDA_MCFT_MIN_FREE_MIB", launcher)
+        self.assertIn('gpu_args+=(--gpus "$GPU_CANDIDATES")', launcher)
+
     def test_every_launched_comparison_entrypoint_applies_seed(self):
         for relative_path in COMPARISON_ENTRYPOINTS:
             with self.subTest(entrypoint=relative_path):
@@ -41,12 +55,24 @@ class ComparisonReproducibilityTests(unittest.TestCase):
 
     def test_sda_entrypoints_resolve_their_declared_label_mode(self):
         ccsa = (ROOT / "CCSA/train_ccsa.py").read_text(encoding="utf-8")
-        self.assertIn("_sda_{args.target_labels_per_class}shot_seed", ccsa)
+        self.assertIn("def target_training_list_path", ccsa)
+        self.assertIn("if labels_per_class == 0", ccsa)
+        self.assertIn("target_training_list_path(", ccsa)
 
         dsne = (ROOT / "d-SNE/train_dsne.py").read_text(encoding="utf-8")
         self.assertIn("def target_training_list_path", dsne)
         self.assertIn("if labels_per_class == 0", dsne)
         self.assertIn("target_training_list_path(", dsne)
+
+    def test_supervised_suite_defaults_to_all_target_training_labels(self):
+        launcher = (ROOT / "scripts/run_ccsa_dsne_mcft.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('SDA_CCSA_LABELS_PER_CLASS:-0', launcher)
+        self.assertIn('SDA_DSNE_LABELS_PER_CLASS:-0', launcher)
+        self.assertIn('CCSA_TARGET_LABEL_POLICY="all"', launcher)
+        self.assertIn('正式对比要求 CCSA、d-SNE、MCFT 使用全部 target_train 标签', launcher)
+        self.assertIn('for method in "${METHOD_ORDER[@]}"', launcher)
 
     def test_requested_methods_use_target_driven_class_space_and_save_metrics(self):
         for relative_path in (

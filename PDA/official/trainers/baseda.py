@@ -71,7 +71,7 @@ class Base_CustomCLIP(nn.Module):
         logits = logit_scale * image_features @ text_features.t().cuda(image_features.device)
 
         return logits
-    
+
 
 @TRAINER_REGISTRY.register()
 class BaseDA(TrainerXU):
@@ -86,10 +86,13 @@ class BaseDA(TrainerXU):
         """Generic training loops."""
 
         self.before_train()
+        self._early_stop = False
         for self.epoch in range(self.start_epoch, self.max_epoch):
             self.before_epoch()
             self.run_epoch()
             self.after_epoch()
+            if self._early_stop:
+                break
         self.after_train()
 
     def run_epoch(self):
@@ -182,16 +185,30 @@ class BaseDA(TrainerXU):
         meet_checkpoint_freq = ((self.epoch + 1) % self.cfg.TRAIN.CHECKPOINT_FREQ == 0 
                                 if self.cfg.TRAIN.CHECKPOINT_FREQ > 0 else False)
 
-        if do_test:
+        if do_test and self.cfg.TEST.FINAL_MODEL == "best_val":
             curr_result = self.test()
-            is_best = curr_result > self.best_result
+            patience = getattr(self.cfg.TRAIN, "EARLY_STOP_PATIENCE", 0)
+            min_delta = getattr(self.cfg.TRAIN, "EARLY_STOP_MIN_DELTA", 0.0)
+            if not hasattr(self, "_epochs_without_improvement"):
+                self._epochs_without_improvement = 0
+            is_best = curr_result > self.best_result + min_delta
             if is_best:
                 self.best_result = curr_result
+                self._epochs_without_improvement = 0
                 if self.save:
                     self.save_model(self.epoch, self.output_dir, model_name="model-best.pth.tar")
+            else:
+                self._epochs_without_improvement += 1
+            if patience > 0 and self._epochs_without_improvement >= patience:
+                print(
+                    "Early stopping at epoch {}; best target val result={:.4f}".format(
+                        self.epoch + 1, self.best_result
+                    )
+                )
+                self._early_stop = True
             self.set_model_mode("train")
         
-        if self.save and (meet_checkpoint_freq or last_epoch):
+        if self.save and (meet_checkpoint_freq or last_epoch or self._early_stop):
             self.save_model(self.epoch, self.output_dir)
              
     @torch.no_grad()
@@ -279,4 +296,4 @@ class BaseDA(TrainerXU):
             print("Loading weights to {} " 'from "{}" (epoch = {})'.format(name, model_path, epoch))
             # set strict=False
             self._models[name].load_state_dict(state_dict, strict=False)
-    
+

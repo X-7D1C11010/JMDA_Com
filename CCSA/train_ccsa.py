@@ -19,7 +19,6 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from torchvision.models import VGG16_Weights, vgg16
 
 
@@ -29,21 +28,34 @@ sys.path.insert(0, os.path.join(ROOT, 'tools'))
 from classification_metrics import classification_metrics, format_classification_metrics
 from domain_pairing import CrossDomainPairDataset
 from metrics_io import save_metric_history
+from multimodal_batches import batch_size, batch_slice, batch_to_device
+from paired_transforms import PairedNaturalImageTransform
 from reproducibility import seed_everything
-from uda_data import UdaImageListDataset, format_dropped, uda_label_space
+from uda_data import PairedUdaImageListDataset, format_dropped, uda_label_space
 
 
 IMAGE_SIZE = 224
 
 
+def auxiliary_ir_encoder(output_dim):
+    return nn.Sequential(
+        nn.Conv2d(1, 32, kernel_size=5, stride=2, padding=2, bias=False),
+        nn.BatchNorm2d(32), nn.GELU(),
+        nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(64), nn.GELU(),
+        nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(64, output_dim),
+    )
+
+
 def get_transforms():
-    """Static preprocessing, matching the release's non-augmented pair table."""
-    common = [
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ]
-    return transforms.Compose(common), transforms.Compose(common)
+    """Static, synchronized VIS/IR preprocessing for the fixed pair table."""
+    kwargs = {
+        'size': IMAGE_SIZE,
+        'resize': IMAGE_SIZE,
+        'rgb_mean': (0.485, 0.456, 0.406),
+        'rgb_std': (0.229, 0.224, 0.225),
+    }
+    return PairedNaturalImageTransform(**kwargs), PairedNaturalImageTransform(**kwargs)
 
 
 def euclidean_distance(x, y, eps=1e-8):
@@ -107,6 +119,8 @@ class CCSA(nn.Module):
         if pretrained_backbone:
             _strict_load_backbone(self.features, pretrained_backbone)
         self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        self.ir_encoder = auxiliary_ir_encoder(128)
+        self.ir_residual_scale = nn.Parameter(torch.tensor(0.1))
         self.encoder = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 1024),
@@ -121,7 +135,16 @@ class CCSA(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def embed(self, images):
-        return self.encoder(self.avgpool(self.features(images)))
+        if torch.is_tensor(images):
+            rgb, ir = images, None
+        else:
+            rgb, ir = images['rgb'], images.get('nir', images.get('ir'))
+        embedding = self.encoder(self.avgpool(self.features(rgb)))
+        if ir is not None:
+            if ir.shape[1] == 3:
+                ir = ir.mean(dim=1, keepdim=True)
+            embedding = embedding + self.ir_residual_scale * self.ir_encoder(ir)
+        return embedding
 
     def forward(self, first, second=None):
         first_features = self.embed(first)
@@ -137,7 +160,12 @@ class CCSA(nn.Module):
             parameter.requires_grad = not enabled
 
     def source_initialization_parameters(self):
-        return list(self.encoder.parameters()) + list(self.classifier.parameters())
+        return (
+            list(self.encoder.parameters())
+            + list(self.classifier.parameters())
+            + list(self.ir_encoder.parameters())
+            + [self.ir_residual_scale]
+        )
 
     def load_source_checkpoint(self, checkpoint):
         source = Path(checkpoint).expanduser().resolve()
@@ -155,7 +183,7 @@ def evaluate(model, loader, device, num_classes):
     labels_all, predictions_all = [], []
     with torch.no_grad():
         for images, labels in loader:
-            predictions = model(images.to(device)).argmax(1).cpu().tolist()
+            predictions = model(batch_to_device(images, device)).argmax(1).cpu().tolist()
             labels_all.extend(labels.tolist())
             predictions_all.extend(predictions)
     return classification_metrics(labels_all, predictions_all, num_classes=num_classes)
@@ -172,12 +200,15 @@ def train_source_initialization(model, loader, device, criterion, args):
         model.train()
         loss_sum, item_count = 0.0, 0
         for batch_index, (images, labels) in enumerate(loader, 1):
-            images, labels = images.to(device), labels.to(device)
+            images, labels = batch_to_device(images, device), labels.to(device)
+            item_count = batch_size(images)
             optimizer.zero_grad()
-            for start in range(0, images.shape[0], args.micro_batch_size):
-                stop = min(start + args.micro_batch_size, images.shape[0])
-                loss = criterion(model(images[start:stop]), labels[start:stop])
-                ((stop - start) / images.shape[0] * loss).backward()
+            for start in range(0, item_count, args.micro_batch_size):
+                stop = min(start + args.micro_batch_size, item_count)
+                loss = criterion(
+                    model(batch_slice(images, start, stop)), labels[start:stop]
+                )
+                ((stop - start) / item_count * loss).backward()
                 loss_sum += loss.item() * (stop - start)
                 item_count += stop - start
             optimizer.step()
@@ -194,12 +225,13 @@ def train_pair_direction(model, optimizer, criterion, first_images, first_labels
                          second_images, pair_labels, args):
     """One released CCSA direction with an effective pair batch."""
     optimizer.zero_grad()
-    count = first_images.shape[0]
+    count = batch_size(first_images)
     ce_sum, csa_sum = 0.0, 0.0
     for start in range(0, count, args.micro_batch_size):
         stop = min(start + args.micro_batch_size, count)
         logits, _, first_features, second_features = model(
-            first_images[start:stop], second_images[start:stop]
+            batch_slice(first_images, start, stop),
+            batch_slice(second_images, start, stop),
         )
         ce = criterion(logits, first_labels[start:stop])
         csa = contrastive_loss(
@@ -212,6 +244,21 @@ def train_pair_direction(model, optimizer, criterion, first_images, first_labels
         csa_sum += csa.item() * (stop - start)
     optimizer.step()
     return ce_sum / count, csa_sum / count
+
+
+DEFAULT_TARGET_LABELS_PER_CLASS = 0
+
+
+def target_training_list_path(data_dir, target, labels_per_class, sda_seed):
+    """Resolve the labelled target cohort; zero means every target-train label."""
+    if labels_per_class < 0:
+        raise ValueError('target labels per class cannot be negative')
+    if labels_per_class == 0:
+        return os.path.join(data_dir, f'{target}_train.txt')
+    return os.path.join(
+        data_dir,
+        f'{target}_sda_{labels_per_class}shot_seed{sda_seed}.txt',
+    )
 
 
 def main():
@@ -234,11 +281,17 @@ def main():
     parser.add_argument('--eps', type=float, default=1e-7,
                         help='Keras Adadelta epsilon used by the release.')
     parser.add_argument('--alpha', type=float, default=0.25)
-    parser.add_argument('--target-labels-per-class', type=int, default=10)
+    parser.add_argument(
+        '--target-labels-per-class', type=int,
+        default=DEFAULT_TARGET_LABELS_PER_CLASS,
+        help='Labelled target samples per class; 0 uses all target-train labels.',
+    )
     parser.add_argument('--sda-seed', type=int, default=42)
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--max-train-batches', type=int, default=0,
                         help='Smoke-test only: cap batches per epoch; 0 uses all pairs.')
+    parser.add_argument('--early-stopping-patience', type=int, default=8)
+    parser.add_argument('--early-stopping-min-epochs', type=int, default=5)
     parser.add_argument('--data-dir', default=os.path.join(ROOT, 'data_lists'))
     parser.add_argument('--save-dir', default=os.path.join(os.path.dirname(__file__), 'output'))
     parser.add_argument('--efficiency_output_dir', default=None)
@@ -248,11 +301,14 @@ def main():
     if min(
         args.epochs, args.source_epochs, args.batch_size,
         args.source_batch_size, args.micro_batch_size,
-        args.target_labels_per_class,
     ) <= 0:
-        raise ValueError('epoch, batch and CCSA per-class counts must be positive')
+        raise ValueError('epoch and batch counts must be positive')
+    if args.target_labels_per_class < 0:
+        raise ValueError('target labels per class cannot be negative')
     if args.source_checkpoint and args.pretrained_backbone:
         raise ValueError('source-checkpoint and pretrained-backbone are mutually exclusive')
+    if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
+        raise ValueError('early stopping settings cannot be negative')
 
     args.seed = seed_everything(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -271,22 +327,32 @@ def main():
 
     train_tf, eval_tf = get_transforms()
     source_list = os.path.join(args.data_dir, 'sunny_train.txt')
-    target_list = os.path.join(
+    target_list = target_training_list_path(
         args.data_dir,
-        f'{args.target}_sda_{args.target_labels_per_class}shot_seed{args.sda_seed}.txt',
+        args.target,
+        args.target_labels_per_class,
+        args.sda_seed,
     )
     target_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
     if not os.path.isfile(target_list):
         raise FileNotFoundError(
-            f'SDA subset list missing: {target_list}. Run tools/make_sda_lists.py first.'
+            f'Labelled target-training list missing: {target_list}. '
+            'Prepare the protocol lists first.'
         )
 
-    source = UdaImageListDataset(source_list, train_tf, label_map)
-    target = UdaImageListDataset(target_list, train_tf, label_map)
-    target_val = UdaImageListDataset(target_val_list, eval_tf, label_map)
+    source = PairedUdaImageListDataset(source_list, train_tf, label_map)
+    target = PairedUdaImageListDataset(target_list, train_tf, label_map)
+    target_val = PairedUdaImageListDataset(target_val_list, eval_tf, label_map)
     print(format_dropped('source train', source))
     print(format_dropped('target labelled train', target))
     print(format_dropped('target validation', target_val))
+    if args.target_labels_per_class == 0:
+        print('CCSA target label mode: all available target-training labels')
+    else:
+        print(
+            f'CCSA target label mode: {args.target_labels_per_class}-shot '
+            f'per class (subset seed {args.sda_seed})'
+        )
 
     pair_dataset = CrossDomainPairDataset(
         source, target, negative_ratio=3, seed=args.seed
@@ -359,7 +425,7 @@ def main():
         from efficiency_common import EfficiencyLogger
         efficiency = EfficiencyLogger(
             args.efficiency_output_dir, 'CCSA', seed=args.seed,
-            device=str(device), modalities='VIS', protocol='SDA',
+            device=str(device), modalities='VIS+IR', protocol='SDA',
             target_label_count=len(target),
             target_labels_per_class=args.target_labels_per_class,
             backbone='VGG-16 conv + 1024/128 head (paper Office configuration)',
@@ -370,6 +436,9 @@ def main():
     history = []
     best_metrics = None
     best_epoch = None
+    evaluations_without_improvement = 0
+    stopped_early = False
+    completed_epoch = 0
     run_stem = f'ccsa_{args.target}_seed{args.seed}'
     best_checkpoint = os.path.join(args.save_dir, f'{run_stem}_best.pth')
     for epoch in range(1, args.epochs + 1):
@@ -380,9 +449,9 @@ def main():
                           target_labels, pair_labels) in enumerate(pair_loader, 1):
             if efficiency:
                 efficiency.step_start()
-            source_images = source_images.to(device)
+            source_images = batch_to_device(source_images, device)
             source_labels = source_labels.to(device)
-            target_images = target_images.to(device)
+            target_images = batch_to_device(target_images, device)
             target_labels = target_labels.to(device)
             pair_labels = pair_labels.to(device)
             if efficiency:
@@ -412,14 +481,27 @@ def main():
 
         metrics = evaluate(model, target_val_loader, device, num_classes)
         history.append((epoch, metrics))
+        completed_epoch = epoch
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {metrics["accuracy"]:.4f}')
         print(f'  {format_classification_metrics(metrics)}')
         if best_metrics is None or metrics['accuracy'] > best_metrics['accuracy']:
             best_metrics = dict(metrics)
             best_epoch = epoch
             torch.save(model.state_dict(), best_checkpoint)
+            evaluations_without_improvement = 0
+        else:
+            evaluations_without_improvement += 1
         if efficiency:
             efficiency.epoch_end(epoch - 1)
+        if (args.early_stopping_patience
+                and epoch >= args.early_stopping_min_epochs
+                and evaluations_without_improvement >= args.early_stopping_patience):
+            stopped_early = True
+            print(
+                f'Early stopping after {evaluations_without_improvement} '
+                'target-val epochs without ACC improvement.'
+            )
+            break
 
     last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
     torch.save(model.state_dict(), last_checkpoint)
@@ -436,6 +518,11 @@ def main():
             'label_map': label_map, 'epochs': args.epochs, 'seed': args.seed,
             'target_labels_per_class': args.target_labels_per_class,
             'architecture': 'paper Office-31 VGG-16 conv + FC1024/128',
+            'input_modalities': 'VIS_RGB+IR_grayscale',
+            'multimodal_adapter': (
+                'official RGB VGG-16 plus a lightweight IR residual encoder; '
+                'CCSA objective and official 1024/128 head unchanged'
+            ),
             'source_initialization_epochs': args.source_epochs,
             'source_initialization_checkpoint': source_provenance,
             'pretrained_backbone': args.pretrained_backbone or (
@@ -449,6 +536,13 @@ def main():
             'positive_pairs': pair_dataset.positive_pairs,
             'negative_pairs': pair_dataset.negative_pairs,
             'max_train_batches': args.max_train_batches,
+            'completed_epochs': completed_epoch,
+            'stopped_early': stopped_early,
+            'early_stopping': {
+                'monitor': 'target_val ACC',
+                'patience': args.early_stopping_patience,
+                'min_epochs': args.early_stopping_min_epochs,
+            },
         },
     )
     final_metrics = history[-1][1]

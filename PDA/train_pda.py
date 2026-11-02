@@ -33,7 +33,14 @@ from dassl.utils import set_random_seed, setup_logger
 from class_names import load_class_names
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
-from uda_data import UdaImageListDataset, format_class_space, format_dropped, uda_label_space
+from uda_data import (
+    UdaImageListDataset,
+    assert_training_label_space,
+    format_class_space,
+    format_dropped,
+    uda_label_space,
+)
+from data_paths import exact_ir_partner
 
 # Importing the released package registers the official PDA trainer.
 from trainers import PDA as OfficialPDA  # noqa: F401,E402
@@ -64,30 +71,48 @@ class JMDAUda(DatasetBase):
         target_val_ds = _dataset_from_list(
             os.path.join(list_dir, f"{target}_val.txt"), label_map
         )
+        assert_training_label_space(source_ds, target_train_ds, class_ids)
 
-        train_x = [
-            Datum(impath=path, label=label, domain=0,
-                  classname=class_names[label])
-            for path, label in source_ds.samples
-        ]
+        multimodal = bool(getattr(cfg.DATASET, "MULTIMODAL", False))
+
+        def datum(path, label, domain, classname):
+            irpath = exact_ir_partner(path) if multimodal else ""
+            if multimodal and irpath is None:
+                return None
+            return Datum(impath=path, irpath=irpath or "", label=label,
+                         domain=domain, classname=classname)
+
+        train_x = [datum(path, label, 0, class_names[label])
+                   for path, label in source_ds.samples]
+        train_x = [item for item in train_x if item is not None]
         # Intentionally erase target-train labels. Official PDA parse_batch_train
         # reads only batch_u["img"], and construct_bank(source=False) generates
         # CLIP pseudo-labels, so -1 is never used as a classification target.
-        train_u = [
-            Datum(impath=path, label=-1, domain=1, classname="")
-            for path, _ in target_train_ds.samples
-        ]
-        target_val = [
-            Datum(impath=path, label=label, domain=1,
-                  classname=class_names[label])
-            for path, label in target_val_ds.samples
-        ]
+        train_u = [datum(path, -1, 1, "")
+                   for path, _ in target_train_ds.samples]
+        train_u = [item for item in train_u if item is not None]
+        target_val = [datum(path, label, 1, class_names[label])
+                      for path, label in target_val_ds.samples]
+        target_val = [item for item in target_val if item is not None]
+        expected = set(range(len(class_ids)))
+        source_support = {item.label for item in train_x}
+        target_support = {
+            label for path, label in target_train_ds.samples
+            if (not multimodal or exact_ir_partner(path) is not None)
+        }
+        if source_support != expected or target_support != expected:
+            raise ValueError(
+                "PDA exact-pair filtering changed class support: "
+                f"expected={sorted(expected)}, source={sorted(source_support)}, "
+                f"target={sorted(target_support)}"
+            )
 
         print(format_class_space(class_ids, len(class_ids)))
         print(f"PDA/Dassl train_x (labelled source): {len(train_x)}")
         print(f"PDA/Dassl train_u (unlabelled target, labels=-1): {len(train_u)}")
         print(f"PDA/Dassl target val (evaluation only): {len(target_val)}")
         print(format_dropped("source train", source_ds))
+        print(f"PDA modalities: {'VIS+IR exact pairs' if multimodal else 'VIS'}")
         super().__init__(train_x=train_x, train_u=train_u,
                          val=target_val, test=target_val)
 
@@ -113,6 +138,7 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.DATASET.LIST_DIR = os.path.abspath(args.data_dir)
     cfg.DATASET.TARGET = args.target
     cfg.DATASET.CLASS_NAMES = tuple(target_class_names)
+    cfg.DATASET.MULTIMODAL = bool(getattr(args, "multimodal", False))
 
     cfg.DATALOADER.NUM_WORKERS = args.num_workers
     cfg.DATALOADER.TEST.NUM_WORKERS = args.eval_num_workers
@@ -128,7 +154,11 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.INPUT.INTERPOLATION = "bicubic"
     cfg.INPUT.PIXEL_MEAN = [0.48145466, 0.4578275, 0.40821073]
     cfg.INPUT.PIXEL_STD = [0.26862954, 0.26130258, 0.27577711]
-    cfg.INPUT.TRANSFORMS = ("random_resized_crop", "random_flip", "normalize")
+    input_transforms = ["random_resized_crop", "random_flip"]
+    if getattr(args, "enhanced_augmentation", False):
+        input_transforms.append("colorjitter")
+    input_transforms.append("normalize")
+    cfg.INPUT.TRANSFORMS = tuple(input_transforms)
 
     cfg.MODEL.BACKBONE.NAME = "ViT-B/16"
     cfg.MODEL.BACKBONE.PATH = os.path.abspath(os.path.expanduser(args.clip_cache_dir))
@@ -146,6 +176,8 @@ def build_cfg(args, target_class_names, output_dir):
 
     cfg.TRAIN.COUNT_ITER = "train_x"
     cfg.TRAIN.PRINT_FREQ = 10
+    cfg.TRAIN.EARLY_STOP_PATIENCE = 0
+    cfg.TRAIN.EARLY_STOP_MIN_DELTA = 0.0
     cfg.TRAINER.NAME = "PDA"
     cfg.TRAINER.PDA = CN()
     cfg.TRAINER.PDA.PREC = "fp16" if torch.cuda.is_available() else "fp32"
@@ -168,8 +200,8 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.WARM_UP = 1
     cfg.EPOCH = 0
     cfg.DOMAINS = f"sunny-{args.target}"
-    cfg.SAVE_MODEL = True
-    cfg.TEST.FINAL_MODEL = "best_val"
+    cfg.SAVE_MODEL = bool(getattr(args, "save_model", False))
+    cfg.TEST.FINAL_MODEL = "last_step"
     cfg.TEST.SPLIT = "test"
     cfg.OUTPUT_DIR = output_dir
     cfg.SEED = args.seed
@@ -213,6 +245,13 @@ def parse_args():
                         default=torch.cuda.is_available())
     parser.add_argument("--persistent-workers", action=argparse.BooleanOptionalAction,
                         default=True)
+    parser.add_argument("--enhanced-augmentation", action="store_true")
+    parser.add_argument("--multimodal", action="store_true")
+    parser.add_argument("--save-model", action=argparse.BooleanOptionalAction,
+                        default=False)
+    parser.add_argument("--early-stop-patience", type=int, default=0,
+                        help="target-val epochs without improvement before stopping; 0 disables")
+    parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
     parser.add_argument("--efficiency_output_dir", default=None)
     return parser.parse_args()
 
@@ -221,6 +260,10 @@ def main():
     args = parse_args()
     if args.epochs < 1:
         raise ValueError("--epochs must be >= 1")
+    if args.early_stop_patience < 0:
+        raise ValueError("--early-stop-patience must be >= 0")
+    if args.early_stop_patience:
+        raise ValueError("target-validation early stopping is disabled by this protocol")
     if (args.num_workers < 0 or args.eval_num_workers < 0 or
             args.prefetch_factor < 1 or args.worker_timeout_seconds < 1):
         raise ValueError("invalid DataLoader worker/prefetch settings")
@@ -241,7 +284,13 @@ def main():
     print("PDA implementation: official upstream trainer + official Dassl TrainerXU")
     print("PDA protocol: UDA (source labels + target images/pseudo-labels; "
           "target-train labels erased to -1)")
-    print(f"PDA official target-best checkpoint directory: {output_dir}")
+    print("PDA model selection: final epoch in memory; target validation does "
+          "not select a checkpoint")
+    print(f"PDA checkpoint saving: {args.save_model}")
+    if args.early_stop_patience:
+        print("WARNING: early stopping monitors labelled target validation "
+              "accuracy; this is target-validation-selected UDA, not strict "
+              "label-free UDA.")
     print(f"DataLoader settings: train_workers={args.num_workers}, "
           f"eval_workers={args.eval_num_workers}, "
           f"prefetch={args.prefetch_factor}, pin_memory={args.pin_memory}, "
@@ -254,7 +303,8 @@ def main():
         eff = EfficiencyLogger(
             args.efficiency_output_dir, "PDA", seed=args.seed,
             device="cuda" if torch.cuda.is_available() else "cpu",
-            modalities="VIS", protocol="UDA", backbone="CLIP ViT-B/16",
+            modalities="VIS+IR" if args.multimodal else "VIS",
+            protocol="UDA", backbone="CLIP ViT-B/16",
             pretraining="OpenAI CLIP",
         )
         eff.epoch_start(0)
@@ -268,20 +318,10 @@ def main():
         eff.finalize(extra_metrics={
             "final_acc": metrics["accuracy"],
             "target": args.target,
-            "model_selection": "official_target_best",
+            "model_selection": "final_epoch_no_target_selection",
         })
-
-    best_path = os.path.join(output_dir, "prompt_learner", "model-best.pth.tar")
-    best_epoch = "unknown"
-    if os.path.isfile(best_path):
-        try:
-            checkpoint = torch.load(best_path, map_location="cpu", weights_only=False)
-        except TypeError:
-            checkpoint = torch.load(best_path, map_location="cpu")
-        best_epoch = checkpoint.get("epoch", "unknown")
     print(format_classification_metrics(metrics))
-    print(f"Best checkpoint epoch ({args.target}): {best_epoch}")
-    print(f"Final target val accuracy ({args.target}, official PDA target-best checkpoint): "
+    print(f"Final target val accuracy ({args.target}, final epoch): "
           f"{metrics['accuracy']:.4f}")
 
 

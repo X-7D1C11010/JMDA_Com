@@ -36,7 +36,8 @@
 #   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_MDD_EPOCHS /
 #   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  各方法训练轮数；默认分别为
 #     100 / 20 / 20 / 20 / 20，与当前采用的各自发布配方一致
-#   CDAN_NUM_ITERATIONS  CDAN 总迭代数（默认官方 100004）
+#   CDAN_NUM_ITERATIONS  CDAN 总迭代数（多模态协议默认 2000）
+#   UDA_IMAGE_BATCH_SIZE  双分支 ResNet-50/CLIP 每域批次（默认16）
 #   UDA_NUM_WORKERS / UDA_PREFETCH_FACTOR  对比方法加载进程/每进程预取（默认8/4）
 #   UDA_PIN_MEMORY / UDA_PERSISTENT_WORKERS  对比方法 pinned/persistent worker（默认1/1）
 #   DEEPCORAL_ALEXNET_WEIGHTS  可选的离线 torchvision AlexNet 权重文件
@@ -92,7 +93,8 @@ UDA_DEEPCORAL_EPOCHS="${UDA_DEEPCORAL_EPOCHS:-20}"
 UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
 UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
 UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
-CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-100004}"
+CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-2000}"
+UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
 UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"
 UDA_PREFETCH_FACTOR="${UDA_PREFETCH_FACTOR:-4}"
 UDA_PIN_MEMORY="${UDA_PIN_MEMORY:-1}"
@@ -151,6 +153,7 @@ if [[ "$PROTOCOL" = "uda" ]]; then
   require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
   require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
   require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
+  require_positive_integer "UDA_IMAGE_BATCH_SIZE" "$UDA_IMAGE_BATCH_SIZE"
   require_nonnegative_integer "UDA_NUM_WORKERS" "$UDA_NUM_WORKERS"
   require_positive_integer "UDA_PREFETCH_FACTOR" "$UDA_PREFETCH_FACTOR"
   if [[ "$UDA_PIN_MEMORY" != "0" && "$UDA_PIN_MEMORY" != "1" ]]; then
@@ -600,18 +603,14 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
   done
 
 elif [ "$PROTOCOL" = "uda" ]; then
-  # ---- 其他 UDA 对比方法（均为单模态 VIS，使用不要求 IR 配对的全量 VIS 清单）----
-  VIS_LIST_DIR="${FAIR_LIST_DIR}_vis"
-  echo "生成单模态 VIS 方法使用的全量 VIS 清单（同一 union/hash 划分，不做配对裁剪）..."
-  if ! "$PYTHON" "$HERE/tools/prepare_paired_protocol_lists.py" \
-    --data-root "$DATA_ROOT" \
-    --output-dir "$VIS_LIST_DIR" \
-    --targets "${TARGETS[@]}" \
-    --modality vis; then
-    echo "VIS 清单生成失败；尚未启动训练。"
+  # ---- VIS+IR exact-paired multimodal extensions; final epoch, no checkpoints ----
+  RESNET50_WEIGHT="$TORCH_HOME/hub/checkpoints/resnet50-0676ba61.pth"
+  if [ ! -f "$RESNET50_WEIGHT" ]; then
+    echo "缺少 ResNet-50 ImageNet 权重: $RESNET50_WEIGHT"
+    echo "请先在本地运行 tools/download_official_uda_weights.py 并上传 pretrained_weights。"
     exit 1
   fi
-  UDA_COMMON=(--seed "$SEED" --data-dir "$VIS_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT" --num-workers "$UDA_NUM_WORKERS" --prefetch-factor "$UDA_PREFETCH_FACTOR")
+  UDA_COMMON=(--seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT" --num-workers "$UDA_NUM_WORKERS" --prefetch-factor "$UDA_PREFETCH_FACTOR" --multimodal --enhanced-augmentation --no-save-model)
   if [ "$UDA_PIN_MEMORY" = "1" ]; then
     UDA_COMMON+=(--pin-memory)
   else
@@ -622,20 +621,16 @@ elif [ "$PROTOCOL" = "uda" ]; then
   else
     UDA_COMMON+=(--no-persistent-workers)
   fi
+  echo "UDA multimodal protocol: VIS+IR exact pairs, ResNet-50 dual branches, batch=$UDA_IMAGE_BATCH_SIZE, CDAN iterations=$CDAN_NUM_ITERATIONS, final epoch only, no checkpoint"
   echo "UDA DataLoader: workers=$UDA_NUM_WORKERS prefetch=$UDA_PREFETCH_FACTOR pin_memory=$UDA_PIN_MEMORY persistent_workers=$UDA_PERSISTENT_WORKERS"
   for t in "${TARGETS[@]}"; do
-    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$UDA_DANN_EPOCHS" "${UDA_COMMON[@]}"
-    if [ -n "$DEEPCORAL_ALEXNET_WEIGHTS" ]; then
-      run "deepcoral_$t"  "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" "${UDA_COMMON[@]}" --alexnet-weights "$DEEPCORAL_ALEXNET_WEIGHTS"
-    else
-      run "deepcoral_$t"  "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" "${UDA_COMMON[@]}"
-    fi
-    # CDAN 官方配置为迭代制（train_image.py: num_iterations=100004），不用 --epochs
-    run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" "${UDA_COMMON[@]}"
-    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$UDA_MDD_EPOCHS" "${UDA_COMMON[@]}"
-    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" --epochs "$UDA_MCC_EPOCHS" "${UDA_COMMON[@]}"
+    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$UDA_DANN_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" --backbone resnet50 --source-batch-size "$UDA_IMAGE_BATCH_SIZE" --target-batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone ResNet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$UDA_MDD_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" --epochs "$UDA_MCC_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
-    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$UDA_PDA_EPOCHS" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
+    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$UDA_PDA_EPOCHS" --batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
   done
 
 else

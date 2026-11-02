@@ -6,16 +6,20 @@ from pathlib import Path
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.domain_pairing import CrossDomainPairDataset
+from tools.domain_pairing import (
+    CrossDomainPairDataset,
+    DSNEClassCoverageBatchSampler,
+)
+from tools.multimodal_batches import batch_size, batch_to_device
 from tools.reproducibility import seed_everything
 from vds2raw.common import (
     better_metrics,
-    evaluate_rgb,
+    evaluate_inputs,
     load_selected_checkpoint,
     metric_line,
     save_checkpoint,
@@ -25,7 +29,7 @@ from vds2raw.common import (
     save_run_config,
 )
 from vds2raw.dataset import (
-    NaturalImageRGBDataset,
+    NaturalImageMultimodalDataset,
     audit_dataset,
     fixed_samples_per_class,
     load_or_compute_statistics,
@@ -66,45 +70,111 @@ def train_direction(
 
 
 def train_source_model(model, loader, device, args):
-    """Official ImageNet -> labelled-source supervised fine-tuning stage."""
-    optimizer = torch.optim.SGD(
-        model.parameters(),
-        lr=args.lr,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-    )
+    """Train the released d-SNE head before end-to-end source fine-tuning."""
+    head_parameters = model.source_head_parameters()
+    for parameter in model.features.parameters():
+        parameter.requires_grad = args.source_head_warmup_epochs == 0
+
+    if args.source_head_warmup_epochs:
+        optimizer = torch.optim.SGD(
+            head_parameters,
+            lr=args.source_head_lr,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+        )
+    else:
+        optimizer = torch.optim.SGD(
+            [
+                {
+                    "params": model.features.parameters(),
+                    "lr": args.source_backbone_lr,
+                },
+                {"params": head_parameters, "lr": args.source_head_lr},
+            ],
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+        )
     criterion = nn.CrossEntropyLoss()
     history = []
     for epoch in range(1, args.source_epochs + 1):
+        if epoch == args.source_head_warmup_epochs + 1 and args.source_head_warmup_epochs:
+            for parameter in model.features.parameters():
+                parameter.requires_grad = True
+            optimizer = torch.optim.SGD(
+                [
+                    {
+                        "params": model.features.parameters(),
+                        "lr": args.source_backbone_lr,
+                    },
+                    {"params": head_parameters, "lr": args.source_head_lr},
+                ],
+                momentum=args.momentum,
+                weight_decay=args.weight_decay,
+            )
         model.train()
+        if epoch <= args.source_head_warmup_epochs:
+            # Keep the ImageNet batch-normalization statistics fixed while the
+            # randomly initialized 4096/512/classifier head is being warmed up.
+            model.features.eval()
         loss_sum = 0.0
         sample_count = 0
+        correct = 0
         for batch_index, (images, labels) in enumerate(loader, 1):
-            images, labels = images.to(device), labels.to(device)
+            images, labels = batch_to_device(images, device), labels.to(device)
             logits = model(images)
             loss = criterion(logits, labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            loss_sum += loss.item() * images.shape[0]
-            sample_count += images.shape[0]
+            current_batch_size = batch_size(images)
+            loss_sum += loss.item() * current_batch_size
+            sample_count += current_batch_size
+            correct += int((logits.argmax(1) == labels).sum().item())
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
         epoch_ce = loss_sum / max(sample_count, 1)
+        stage = (
+            "head_warmup"
+            if epoch <= args.source_head_warmup_epochs
+            else "end_to_end_fine_tune"
+        )
         history.append(
             {
                 "epoch": epoch,
                 "ce": epoch_ce,
-                "lr": optimizer.param_groups[0]["lr"],
+                "accuracy": correct / max(sample_count, 1),
+                "stage": stage,
+                "backbone_lr": (
+                    0.0 if stage == "head_warmup" else args.source_backbone_lr
+                ),
+                "head_lr": args.source_head_lr,
                 "samples": sample_count,
             }
         )
         if epoch == 1 or epoch % 10 == 0 or epoch == args.source_epochs:
             print(
                 f"d-SNE source fine-tune [{epoch}/{args.source_epochs}] "
-                f"CE={epoch_ce:.4f}"
+                f"stage={stage} CE={epoch_ce:.4f} "
+                f"ACC={correct / max(sample_count, 1):.4f}"
             )
+    for parameter in model.features.parameters():
+        parameter.requires_grad = True
     return history
+
+
+def balanced_source_sampler(dataset, seed):
+    """Oversample source classes uniformly without discarding any sample."""
+    counts = {}
+    for _, label in dataset.samples:
+        counts[int(label)] = counts.get(int(label), 0) + 1
+    weights = [1.0 / counts[int(label)] for _, label in dataset.samples]
+    generator = torch.Generator().manual_seed(int(seed))
+    return WeightedRandomSampler(
+        weights,
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    )
 
 
 def load_model_state(model, path):
@@ -128,10 +198,10 @@ def evaluate_budget(
     args,
 ):
     selected = load_selected_checkpoint(checkpoint, model, device)
-    target_val = NaturalImageRGBDataset(
+    target_val = NaturalImageMultimodalDataset(
         data_root, "target_val", statistics, augment=False, normalization="half"
     )
-    target_test = NaturalImageRGBDataset(
+    target_test = NaturalImageMultimodalDataset(
         data_root, "target_test", statistics, augment=False, normalization="half"
     )
     val_loader = DataLoader(
@@ -146,10 +216,10 @@ def evaluate_budget(
         shuffle=False,
         num_workers=args.num_workers,
     )
-    val_metrics, val_predictions = evaluate_rgb(
+    val_metrics, val_predictions = evaluate_inputs(
         model, val_loader, device, return_predictions=True
     )
-    test_metrics, test_predictions = evaluate_rgb(
+    test_metrics, test_predictions = evaluate_inputs(
         model, test_loader, device, return_predictions=True
     )
     print(metric_line(f"SELECTED target_test peak (budget={budget})", test_metrics))
@@ -187,10 +257,14 @@ def main():
     parser.add_argument("--save-dir", default=str(ROOT / "runs" / "vds2raw"))
     parser.add_argument("--stats-file", default="")  # shared runner compatibility
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--source-epochs", type=int, default=50)
+    parser.add_argument("--source-epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--source-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--source-backbone-lr", type=float, default=1e-3)
+    parser.add_argument("--source-head-lr", type=float, default=1e-2)
+    parser.add_argument("--source-head-warmup-epochs", type=int, default=10)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--alpha", type=float, default=0.1)
@@ -212,6 +286,36 @@ def main():
     parser.add_argument("--fn", dest="fn", action="store_true", default=True)
     parser.add_argument("--no-fn", dest="fn", action="store_false")
     parser.add_argument("--train-src", action="store_true")
+    parser.add_argument(
+        "--augmentation-strength",
+        choices=("standard", "light"),
+        default="light",
+    )
+    parser.add_argument(
+        "--class-balanced-source",
+        dest="class_balanced_source",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-class-balanced-source",
+        dest="class_balanced_source",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--class-balanced-batches",
+        dest="class_balanced_batches",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-class-balanced-batches",
+        dest="class_balanced_batches",
+        action="store_false",
+    )
+    parser.add_argument("--early-stopping-patience", type=int, default=6)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=10)
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
@@ -219,8 +323,24 @@ def main():
     parser.add_argument("--skip-audit", action="store_true")
     args = parser.parse_args()
 
-    if args.epochs <= 0 or args.source_epochs <= 0 or args.batch_size <= 0:
-        raise ValueError("epochs, source-epochs and batch-size must be positive")
+    if any(
+        value <= 0
+        for value in (
+            args.epochs,
+            args.source_epochs,
+            args.batch_size,
+            args.source_batch_size,
+        )
+    ):
+        raise ValueError("epoch and batch counts must be positive")
+    if not 0 <= args.source_head_warmup_epochs <= args.source_epochs:
+        raise ValueError("source-head-warmup-epochs must be in [0, source-epochs]")
+    if args.source_backbone_lr <= 0 or args.source_head_lr <= 0:
+        raise ValueError("source learning rates must be positive")
+    if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
+        raise ValueError("early stopping settings cannot be negative")
+    if not 0.0 <= args.ais_dropout_probability < 1.0:
+        raise ValueError("ais-dropout-probability must be in [0, 1)")
     if args.target_samples_per_class < 0:
         raise ValueError("target-samples-per-class cannot be negative")
     if args.nlayers != 101:
@@ -247,19 +367,29 @@ def main():
         print("Dataset audit:", audit_dataset(data_root))
     statistics = load_or_compute_statistics(data_root, args.stats_file or None)
 
-    source_train = NaturalImageRGBDataset(
-        data_root, "source_train", statistics, augment=True, normalization="half"
+    source_train = NaturalImageMultimodalDataset(
+        data_root,
+        "source_train",
+        statistics,
+        augment=True,
+        normalization="half",
+        augmentation_strength=args.augmentation_strength,
     )
-    target_full = NaturalImageRGBDataset(
-        data_root, "target_train", statistics, augment=True, normalization="half"
+    target_full = NaturalImageMultimodalDataset(
+        data_root,
+        "target_train",
+        statistics,
+        augment=True,
+        normalization="half",
+        augmentation_strength=args.augmentation_strength,
     )
     target_train = fixed_samples_per_class(
         target_full, args.target_samples_per_class, args.seed
     )
-    target_val = NaturalImageRGBDataset(
+    target_val = NaturalImageMultimodalDataset(
         data_root, "target_val", statistics, augment=False, normalization="half"
     )
-    target_test = NaturalImageRGBDataset(
+    target_test = NaturalImageMultimodalDataset(
         data_root, "target_test", statistics, augment=False, normalization="half"
     )
     if args.target_samples_per_class == 0:
@@ -274,24 +404,41 @@ def main():
         )
 
     generator = torch.Generator().manual_seed(args.seed)
+    source_sampler = (
+        balanced_source_sampler(source_train, args.seed)
+        if args.class_balanced_source
+        else None
+    )
     source_loader = DataLoader(
         source_train,
-        batch_size=args.batch_size,
-        shuffle=True,
+        batch_size=args.source_batch_size,
+        shuffle=source_sampler is None,
+        sampler=source_sampler,
         num_workers=args.num_workers,
         generator=generator,
     )
     pairs = CrossDomainPairDataset(
         source_train, target_train, negative_ratio=args.ratio, seed=args.seed
     )
-    pair_loader = DataLoader(
-        pairs,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        drop_last=False,
-        generator=generator,
-    )
+    pair_batch_sampler = None
+    if args.class_balanced_batches:
+        pair_batch_sampler = DSNEClassCoverageBatchSampler(
+            pairs, args.batch_size, seed=args.seed
+        )
+        pair_loader = DataLoader(
+            pairs,
+            batch_sampler=pair_batch_sampler,
+            num_workers=args.num_workers,
+        )
+    else:
+        pair_loader = DataLoader(
+            pairs,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            drop_last=False,
+            generator=generator,
+        )
     val_loader = DataLoader(
         target_val,
         batch_size=args.eval_batch_size,
@@ -317,6 +464,9 @@ def main():
         pretrained_backbone_checkpoint=args.pretrained_backbone,
         dropout=args.dropout,
         l2_normalize=args.l2n,
+        multimodal=True,
+        use_ais=True,
+        ais_dropout_probability=args.ais_dropout_probability,
     ).to(device)
     source_checkpoint = save_dir / f"vds2raw_dsne_seed{args.seed}_source_tuned.pth"
     source_history = []
@@ -343,10 +493,17 @@ def main():
     best_by_budget = {budget: None for budget in report_budgets}
     metadata = {
         "method": "d-SNE",
-        "implementation": "official natural-image configuration, PyTorch port",
+        "implementation": (
+            "official natural-image d-SNE head/loss with shared-backbone RGB+NIR "
+            "fusion, continuous-AIS residual adaptation, VDS2Raw source-tuning "
+            "and class-coverage sampling"
+        ),
         "seed": args.seed,
         "epochs": args.epochs,
         "source_fine_tune_epochs": args.source_epochs,
+        "source_head_warmup_epochs": args.source_head_warmup_epochs,
+        "source_batch_size": args.source_batch_size,
+        "source_class_balanced_sampling": args.class_balanced_source,
         "source_checkpoint_input": args.source_checkpoint,
         "pretrained_backbone_checkpoint_input": args.pretrained_backbone,
         "source_initialization_provenance": (
@@ -380,16 +537,31 @@ def main():
         "selection_partition": "target_test",
         "diagnostic_partition": "target_val",
         "test_selection_bias": True,
-        "modalities": ["RGB"],
+        "modalities": ["RGB", "NIR", "AIS"],
+        "auxiliary_inputs": ["AIS_validity_mask"],
+        "multimodal_adapter": (
+            "official ImageNet RGB ResNetV2-101 plus a lightweight NIR residual "
+            "encoder; continuous AIS residual into the official 512-D embedding"
+        ),
+        "ais_feature_profile": "continuous heading/length/width",
+        "ais_dropout_probability": args.ais_dropout_probability,
         "num_classes": 3,
         "backbone": "ImageNet-pretrained ResNetV2-101",
         "embedding": [4096, 512],
         "feature_normalization_loss": args.fn,
         "output_l2_normalization": args.l2n,
         "train_source_direction_during_adaptation": args.train_src,
-        "pair_protocol": "all positives + equal-count sampled negatives",
+        "adaptation_class_coverage_batches": args.class_balanced_batches,
+        "pair_protocol": (
+            "all positives + equal-count sampled negatives; class-balanced "
+            "target-anchor batch resampling" if args.class_balanced_batches else
+            "all positives + equal-count sampled negatives"
+        ),
         "batch_size": args.batch_size,
-        "augmentation": "resize256/random-resized-crop224/H+V flip/color-jitter",
+        "augmentation": (
+            "resize256/random-resized-crop224/H+V flip/color-jitter "
+            f"({args.augmentation_strength})"
+        ),
         "normalization": "0.5 mean / 0.5 std, as released d-SNE defaults",
         "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before d-SNE normalization",
         "optimizer": {
@@ -397,6 +569,17 @@ def main():
             "lr": args.lr,
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
+        },
+        "source_optimizer": {
+            "name": "SGD",
+            "backbone_lr": args.source_backbone_lr,
+            "head_lr": args.source_head_lr,
+            "head_warmup_epochs": args.source_head_warmup_epochs,
+        },
+        "early_stopping": {
+            "monitor": "target_test ACC, macro-F1 tie-break",
+            "patience": args.early_stopping_patience,
+            "min_epochs": args.early_stopping_min_epochs,
         },
         "loss": {
             "alpha": args.alpha,
@@ -421,7 +604,13 @@ def main():
     )
 
     val_history, test_history, train_history = [], [], []
+    best_test_metrics = None
+    evaluations_without_improvement = 0
+    stopped_early = False
+    completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
+        if pair_batch_sampler is not None:
+            pair_batch_sampler.set_epoch(epoch)
         model.train()
         target_ce_sum = 0.0
         dsne_sum = 0.0
@@ -430,9 +619,9 @@ def main():
         completed_batches = 0
         for batch_index, batch in enumerate(pair_loader, 1):
             source_images, source_labels, target_images, target_labels, _ = batch
-            source_images = source_images.to(device)
+            source_images = batch_to_device(source_images, device)
             source_labels = source_labels.to(device)
-            target_images = target_images.to(device)
+            target_images = batch_to_device(target_images, device)
             target_labels = target_labels.to(device)
             if args.train_src:
                 source_ce, source_adaptation = train_direction(
@@ -488,8 +677,9 @@ def main():
                 "batches": completed_batches,
             }
         )
-        val_metrics = evaluate_rgb(model, val_loader, device)
-        test_metrics = evaluate_rgb(model, test_loader, device)
+        val_metrics = evaluate_inputs(model, val_loader, device)
+        test_metrics = evaluate_inputs(model, test_loader, device)
+        completed_epoch = epoch
         val_history.append((epoch, val_metrics))
         test_history.append((epoch, test_metrics))
         print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_val", val_metrics))
@@ -508,6 +698,26 @@ def main():
                     target_val_metrics=val_metrics,
                     target_test_metrics=test_metrics,
                 )
+
+        if better_metrics(test_metrics, best_test_metrics):
+            best_test_metrics = dict(test_metrics)
+            evaluations_without_improvement = 0
+        else:
+            evaluations_without_improvement += 1
+        if (
+            args.early_stopping_patience
+            and epoch >= args.early_stopping_min_epochs
+            and evaluations_without_improvement >= args.early_stopping_patience
+        ):
+            stopped_early = True
+            print(
+                "Early stopping: target_test did not improve for "
+                f"{evaluations_without_improvement} epochs."
+            )
+            break
+
+    metadata["completed_epochs"] = completed_epoch
+    metadata["stopped_early"] = stopped_early
 
     last_checkpoint = save_dir / f"vds2raw_dsne_seed{args.seed}_last.pth"
     save_checkpoint(

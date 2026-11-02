@@ -134,6 +134,8 @@ def main():
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--max-train-batches', type=int, default=0,
                         help='Smoke-test only: cap batches per epoch; 0 uses all data.')
+    parser.add_argument('--early-stopping-patience', type=int, default=30)
+    parser.add_argument('--early-stopping-min-epochs', type=int, default=50)
     parser.add_argument('--data-dir', default=os.path.join(ROOT, 'data_lists'))
     parser.add_argument('--save-dir', default=os.path.join(os.path.dirname(__file__), 'output'))
     parser.add_argument('--efficiency_output_dir', default=None)
@@ -142,6 +144,8 @@ def main():
 
     if args.eval_frequency <= 0:
         raise ValueError('--eval-frequency must be positive')
+    if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
+        raise ValueError('early stopping settings cannot be negative')
     args.seed = seed_everything(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -208,9 +212,13 @@ def main():
     history = []
     best_metrics = None
     best_epoch = None
+    evaluations_without_improvement = 0
+    stopped_early = False
+    completed_epoch = 0
     run_stem = f'mcft_{args.target}_seed{args.seed}'
     best_checkpoint = os.path.join(args.save_dir, f'{run_stem}_best.pth')
     for epoch in range(1, args.epochs + 1):
+        completed_epoch = epoch
         if efficiency:
             efficiency.epoch_start(epoch - 1)
         model.train()
@@ -253,8 +261,20 @@ def main():
                 best_metrics = dict(metrics)
                 best_epoch = epoch
                 torch.save(model.state_dict(), best_checkpoint)
+                evaluations_without_improvement = 0
+            else:
+                evaluations_without_improvement += 1
         if efficiency:
             efficiency.epoch_end(epoch - 1)
+        if (should_evaluate and args.early_stopping_patience
+                and epoch >= args.early_stopping_min_epochs
+                and evaluations_without_improvement >= args.early_stopping_patience):
+            stopped_early = True
+            print(
+                f'Early stopping after {evaluations_without_improvement} '
+                'target-val evaluations without ACC improvement.'
+            )
+            break
 
     last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
     torch.save(model.state_dict(), last_checkpoint)
@@ -273,6 +293,13 @@ def main():
             'seed': args.seed, 'input_modalities': 'VIS_RGB+IR_grayscale',
             'official_modality_adaptation': 'HSI->VIS; LiDAR->IR',
             'max_train_batches': args.max_train_batches,
+            'completed_epochs': completed_epoch,
+            'stopped_early': stopped_early,
+            'early_stopping': {
+                'monitor': 'target_val ACC',
+                'patience_evaluations': args.early_stopping_patience,
+                'min_epochs': args.early_stopping_min_epochs,
+            },
         },
     )
     final_metrics = history[-1][1]

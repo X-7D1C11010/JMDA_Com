@@ -16,6 +16,7 @@ from vds2raw.common import (
 )
 from vds2raw.dataset import (
     CLASS_NAMES,
+    NaturalImageMultimodalDataset,
     NaturalImageRGBDataset,
     PARTITIONS,
     VDS2RawDataset,
@@ -109,6 +110,25 @@ class VDS2RawStatisticsTests(unittest.TestCase):
         from vds2raw.train_dsne import DEFAULT_TARGET_SAMPLES_PER_CLASS
 
         self.assertEqual(DEFAULT_TARGET_SAMPLES_PER_CLASS, 0)
+
+    def test_natural_multimodal_view_returns_all_three_modalities(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_fixture(root)
+            statistics = compute_image_statistics(root)
+            dataset = NaturalImageMultimodalDataset(
+                root,
+                "source_train",
+                statistics,
+                augment=False,
+                normalization="half",
+            )
+            inputs, label = dataset[0]
+            self.assertEqual(label, 0)
+            self.assertEqual(inputs["rgb"].shape, (3, 224, 224))
+            self.assertEqual(inputs["nir"].shape, (1, 224, 224))
+            self.assertEqual(inputs["ais"].shape, (13,))
+            self.assertEqual(inputs["ais_mask"].shape, (13,))
 
     def test_dataset_returns_float32_and_respects_resize(self):
         with tempfile.TemporaryDirectory() as temporary:

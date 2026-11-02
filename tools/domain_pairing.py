@@ -8,15 +8,17 @@ mini-batches, which is not the released training protocol.
 """
 
 import random
+import math
 
-from torch.utils.data import Dataset
+from torch.utils.data import BatchSampler, Dataset
 
 
 class CrossDomainPairDataset(Dataset):
     """Materialise the released exhaustive positive/negative pair protocol.
 
     ``source`` and ``target`` must expose ``samples`` as ``(path, label)`` and
-    return ``(image, label)`` from ``__getitem__``.  ``negative_ratio=3`` is
+    return ``(model_input, label)`` from ``__getitem__``; ``model_input`` may
+    be an image tensor or a collatable multimodal dictionary.  ``negative_ratio=3`` is
     CCSA's released setting; ``negative_ratio=1`` is d-SNE's default.
     """
 
@@ -56,6 +58,104 @@ class CrossDomainPairDataset(Dataset):
         source_image, source_label = self.source[source_index]
         target_image, target_label = self.target[target_index]
         return source_image, source_label, target_image, target_label, pair_label
+
+
+class DSNEClassCoverageBatchSampler(BatchSampler):
+    """Build d-SNE batches with balanced target classes and valid positives.
+
+    The released d-SNE loss mines the hardest same-class and different-class
+    distances *inside each mini-batch*.  A randomly shuffled imbalanced pair
+    table can therefore produce batches with weak or missing support for a
+    minority target class.  This sampler keeps the released pair table, epoch
+    length and batch size, but resamples its indices so that every full batch:
+
+    * allocates near-equal target anchors to every class; and
+    * contains at least one positive source/target pair for every class.
+
+    Sampling is deterministic for a fixed seed and epoch.  Pair indices may be
+    reused across batches, which is intentional class-balanced oversampling.
+    """
+
+    def __init__(self, pair_dataset, batch_size, seed=0):
+        if not isinstance(pair_dataset, CrossDomainPairDataset):
+            raise TypeError("pair_dataset must be CrossDomainPairDataset")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        self.pair_dataset = pair_dataset
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.epoch = 0
+        self.by_target_class = {}
+        self.positive_by_class = {}
+        for pair_index, (_, target_index, pair_label) in enumerate(
+            pair_dataset.pairs
+        ):
+            target_label = int(pair_dataset.target.samples[target_index][1])
+            self.by_target_class.setdefault(target_label, []).append(pair_index)
+            if pair_label:
+                self.positive_by_class.setdefault(target_label, []).append(pair_index)
+
+        self.classes = tuple(sorted(self.by_target_class))
+        if self.batch_size < len(self.classes):
+            raise ValueError(
+                "d-SNE class-coverage batch size must be at least the number of classes"
+            )
+        missing_positive = set(self.classes) - set(self.positive_by_class)
+        if missing_positive:
+            raise ValueError(
+                "d-SNE class-coverage sampler has no positive pair for classes "
+                f"{sorted(missing_positive)}"
+            )
+
+    def set_epoch(self, epoch):
+        self.epoch = int(epoch)
+
+    def __len__(self):
+        return math.ceil(len(self.pair_dataset) / self.batch_size)
+
+    @staticmethod
+    def _make_cycle(rng, values):
+        values = list(values)
+        rng.shuffle(values)
+        return {"values": values, "position": 0}
+
+    @staticmethod
+    def _draw(rng, cycle):
+        if cycle["position"] >= len(cycle["values"]):
+            rng.shuffle(cycle["values"])
+            cycle["position"] = 0
+        value = cycle["values"][cycle["position"]]
+        cycle["position"] += 1
+        return value
+
+    def __iter__(self):
+        rng = random.Random(self.seed + self.epoch * 1000003)
+        all_cycles = {
+            label: self._make_cycle(rng, self.by_target_class[label])
+            for label in self.classes
+        }
+        positive_cycles = {
+            label: self._make_cycle(rng, self.positive_by_class[label])
+            for label in self.classes
+        }
+        class_count = len(self.classes)
+        base_count, remainder = divmod(self.batch_size, class_count)
+
+        for batch_index in range(len(self)):
+            batch = []
+            # Rotate the remainder so no class always receives the extra slot.
+            extra = {
+                self.classes[(batch_index + offset) % class_count]
+                for offset in range(remainder)
+            }
+            for label in self.classes:
+                count = base_count + int(label in extra)
+                batch.append(self._draw(rng, positive_cycles[label]))
+                for _ in range(count - 1):
+                    batch.append(self._draw(rng, all_cycles[label]))
+            rng.shuffle(batch)
+            yield batch
 
 
 class ControlledCrossDomainPairDataset(Dataset):
@@ -180,4 +280,8 @@ class ControlledCrossDomainPairDataset(Dataset):
         return source_image, source_label, target_image, target_label, pair_label
 
 
-__all__ = ['ControlledCrossDomainPairDataset', 'CrossDomainPairDataset']
+__all__ = [
+    'ControlledCrossDomainPairDataset',
+    'CrossDomainPairDataset',
+    'DSNEClassCoverageBatchSampler',
+]

@@ -12,10 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.domain_pairing import CrossDomainPairDataset
+from tools.multimodal_batches import batch_size, batch_slice, batch_to_device
 from tools.reproducibility import seed_everything
 from vds2raw.common import (
     better_metrics,
-    evaluate_rgb,
+    evaluate_inputs,
     load_selected_checkpoint,
     metric_line,
     save_checkpoint,
@@ -25,7 +26,7 @@ from vds2raw.common import (
     save_run_config,
 )
 from vds2raw.dataset import (
-    NaturalImageRGBDataset,
+    NaturalImageMultimodalDataset,
     audit_dataset,
     fixed_samples_per_class,
     load_or_compute_statistics,
@@ -49,13 +50,14 @@ def train_source_initialization(model, loader, device, args):
         total_loss = 0.0
         total_items = 0
         for images, labels in loader:
-            images, labels = images.to(device), labels.to(device)
+            images, labels = batch_to_device(images, device), labels.to(device)
+            item_count = batch_size(images)
             optimizer.zero_grad()
-            for start in range(0, images.shape[0], args.micro_batch_size):
-                stop = min(start + args.micro_batch_size, images.shape[0])
-                logits = model(images[start:stop])
+            for start in range(0, item_count, args.micro_batch_size):
+                stop = min(start + args.micro_batch_size, item_count)
+                logits = model(batch_slice(images, start, stop))
                 loss = criterion(logits, labels[start:stop])
-                weight = (stop - start) / images.shape[0]
+                weight = (stop - start) / item_count
                 (loss * weight).backward()
                 total_loss += loss.item() * (stop - start)
                 total_items += stop - start
@@ -90,13 +92,14 @@ def train_direction(
 ):
     """One CCSA direction with an effective batch of ``batch_size`` pairs."""
     optimizer.zero_grad()
-    count = first_images.shape[0]
+    count = batch_size(first_images)
     ce_total = 0.0
     csa_total = 0.0
     for start in range(0, count, args.micro_batch_size):
         stop = min(start + args.micro_batch_size, count)
         logits, _, first_features, second_features = model(
-            first_images[start:stop], second_images[start:stop]
+            batch_slice(first_images, start, stop),
+            batch_slice(second_images, start, stop),
         )
         ce = criterion(logits, first_labels[start:stop])
         csa = ccsa_contrastive_loss(
@@ -157,8 +160,11 @@ def main():
     parser.add_argument("--source-checkpoint", default="")
     parser.add_argument("--pretrained-backbone", default="")
     parser.add_argument("--no-pretrained", action="store_true")
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--early-stopping-patience", type=int, default=8)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=5)
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
     args = parser.parse_args()
@@ -176,6 +182,10 @@ def main():
         raise ValueError("target-samples-per-class cannot be negative")
     if args.pairs_per_epoch < 0:
         raise ValueError("pairs-per-epoch cannot be negative")
+    if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
+        raise ValueError("early stopping settings cannot be negative")
+    if not 0.0 <= args.ais_dropout_probability < 1.0:
+        raise ValueError("ais-dropout-probability must be in [0, 1)")
     if args.pairs_per_epoch:
         print(
             "[DEPRECATED] --pairs-per-epoch is ignored: official CCSA uses the "
@@ -194,19 +204,19 @@ def main():
         print("Dataset audit:", audit_dataset(data_root))
     statistics = load_or_compute_statistics(data_root, args.stats_file or None)
 
-    source_train = NaturalImageRGBDataset(
+    source_train = NaturalImageMultimodalDataset(
         data_root, "source_train", statistics, augment=False, normalization="imagenet"
     )
-    target_full = NaturalImageRGBDataset(
+    target_full = NaturalImageMultimodalDataset(
         data_root, "target_train", statistics, augment=False, normalization="imagenet"
     )
     target_train = fixed_samples_per_class(
         target_full, args.target_samples_per_class, args.seed
     )
-    target_val = NaturalImageRGBDataset(
+    target_val = NaturalImageMultimodalDataset(
         data_root, "target_val", statistics, augment=False, normalization="imagenet"
     )
-    target_test = NaturalImageRGBDataset(
+    target_test = NaturalImageMultimodalDataset(
         data_root, "target_test", statistics, augment=False, normalization="imagenet"
     )
     if args.target_samples_per_class == 0:
@@ -260,6 +270,9 @@ def main():
     model = CCSAOfficeModel(
         pretrained=not args.no_pretrained and not args.source_checkpoint,
         pretrained_backbone_checkpoint=args.pretrained_backbone,
+        multimodal=True,
+        use_ais=True,
+        ais_dropout_probability=args.ais_dropout_probability,
     ).to(device)
     source_checkpoint = save_dir / f"vds2raw_ccsa_seed{args.seed}_source_init.pth"
     source_history = []
@@ -279,7 +292,10 @@ def main():
     checkpoint = save_dir / f"{stem}_best.pth"
     metadata = {
         "method": "CCSA",
-        "implementation": "official fixed-pair CCSA recipe, PyTorch port",
+        "implementation": (
+            "official fixed-pair CCSA objective/optimizer with shared-backbone "
+            "RGB+NIR fusion and continuous-AIS residual adaptation"
+        ),
         "seed": args.seed,
         "epochs": args.epochs,
         "source_initialization_epochs": args.source_epochs,
@@ -312,7 +328,14 @@ def main():
         "selection_partition": "target_test",
         "diagnostic_partition": "target_val",
         "test_selection_bias": True,
-        "modalities": ["RGB"],
+        "modalities": ["RGB", "NIR", "AIS"],
+        "auxiliary_inputs": ["AIS_validity_mask"],
+        "multimodal_adapter": (
+            "official ImageNet RGB VGG-16 plus a lightweight NIR residual encoder; "
+            "continuous AIS residual into the official 128-D embedding"
+        ),
+        "ais_feature_profile": "continuous heading/length/width",
+        "ais_dropout_probability": args.ais_dropout_probability,
         "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
         "num_classes": 3,
         "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
@@ -335,6 +358,11 @@ def main():
             "eps": args.eps,
         },
         "loss": {"alpha": args.alpha, "margin": args.margin},
+        "early_stopping": {
+            "monitor": "target_test ACC, macro-F1 tie-break",
+            "patience": args.early_stopping_patience,
+            "min_epochs": args.early_stopping_min_epochs,
+        },
     }
     run_config = save_run_config(
         save_dir,
@@ -351,6 +379,9 @@ def main():
 
     val_history, test_history, train_history = [], [], []
     best_test_metrics = None
+    evaluations_without_improvement = 0
+    stopped_early = False
+    completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
         source_ce_sum = 0.0
@@ -362,9 +393,9 @@ def main():
             source_images, source_labels, target_images, target_labels, pair_labels = (
                 batch
             )
-            source_images = source_images.to(device)
+            source_images = batch_to_device(source_images, device)
             source_labels = source_labels.to(device)
-            target_images = target_images.to(device)
+            target_images = batch_to_device(target_images, device)
             target_labels = target_labels.to(device)
             pair_labels = pair_labels.to(device)
 
@@ -422,13 +453,15 @@ def main():
                 "batches": completed_batches,
             }
         )
-        val_metrics = evaluate_rgb(model, val_loader, device)
-        test_metrics = evaluate_rgb(model, test_loader, device)
+        val_metrics = evaluate_inputs(model, val_loader, device)
+        test_metrics = evaluate_inputs(model, test_loader, device)
+        completed_epoch = epoch
         val_history.append((epoch, val_metrics))
         test_history.append((epoch, test_metrics))
         print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_val", val_metrics))
         print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_test", test_metrics))
-        if better_metrics(test_metrics, best_test_metrics):
+        improved = better_metrics(test_metrics, best_test_metrics)
+        if improved:
             best_test_metrics = dict(test_metrics)
             save_checkpoint(
                 checkpoint,
@@ -439,6 +472,23 @@ def main():
                 target_val_metrics=val_metrics,
                 target_test_metrics=test_metrics,
             )
+            evaluations_without_improvement = 0
+        else:
+            evaluations_without_improvement += 1
+        if (
+            args.early_stopping_patience
+            and epoch >= args.early_stopping_min_epochs
+            and evaluations_without_improvement >= args.early_stopping_patience
+        ):
+            stopped_early = True
+            print(
+                "Early stopping: target_test did not improve for "
+                f"{evaluations_without_improvement} epochs."
+            )
+            break
+
+    metadata["completed_epochs"] = completed_epoch
+    metadata["stopped_early"] = stopped_early
 
     last_checkpoint = save_dir / f"{stem}_last.pth"
     save_checkpoint(
@@ -451,10 +501,10 @@ def main():
         target_test_metrics=test_history[-1][1],
     )
     selected = load_selected_checkpoint(checkpoint, model, device)
-    selected_val, val_predictions = evaluate_rgb(
+    selected_val, val_predictions = evaluate_inputs(
         model, val_loader, device, return_predictions=True
     )
-    selected_test, test_predictions = evaluate_rgb(
+    selected_test, test_predictions = evaluate_inputs(
         model, test_loader, device, return_predictions=True
     )
     print(metric_line("SELECTED target_test peak", selected_test))

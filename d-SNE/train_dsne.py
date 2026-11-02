@@ -20,7 +20,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,8 +30,10 @@ DEFAULT_TARGET_LABELS_PER_CLASS = 0
 from classification_metrics import classification_metrics, format_classification_metrics
 from domain_pairing import CrossDomainPairDataset
 from metrics_io import save_metric_history
+from multimodal_batches import batch_size, batch_to_device
+from paired_transforms import PairedNaturalImageTransform
 from reproducibility import seed_everything
-from uda_data import UdaImageListDataset, format_dropped, uda_label_space
+from uda_data import PairedUdaImageListDataset, format_dropped, uda_label_space
 
 
 def target_training_list_path(data_dir, target, labels_per_class, sda_seed):
@@ -48,29 +49,20 @@ def target_training_list_path(data_dir, target, labels_per_class, sda_seed):
 
 
 def get_transforms(args):
-    train_steps = [transforms.Resize(args.resize)]
-    if args.random_crop:
-        train_steps.append(transforms.RandomResizedCrop(args.size, scale=(0.8, 1.0)))
-    else:
-        train_steps.append(transforms.CenterCrop(args.size))
-    if args.flip:
-        train_steps.append(transforms.RandomHorizontalFlip())
-    if args.vertical_flip:
-        train_steps.append(transforms.RandomVerticalFlip())
-    if args.random_color:
-        train_steps.append(
-            transforms.ColorJitter(
-                brightness=args.color_jitter, contrast=args.color_jitter,
-                saturation=args.color_jitter, hue=0.1,
-            )
-        )
-    normalise = transforms.Normalize([args.mean] * 3, [args.std] * 3)
-    train_steps.extend([transforms.ToTensor(), normalise])
-    eval_steps = [
-        transforms.Resize(args.resize), transforms.CenterCrop(args.size),
-        transforms.ToTensor(), normalise,
-    ]
-    return transforms.Compose(train_steps), transforms.Compose(eval_steps)
+    common = {
+        'size': args.size,
+        'resize': args.resize,
+        'rgb_mean': (args.mean,) * 3,
+        'rgb_std': (args.std,) * 3,
+    }
+    train = PairedNaturalImageTransform(
+        **common,
+        random_crop=args.random_crop,
+        horizontal_flip=args.flip,
+        vertical_flip=args.vertical_flip,
+        color_jitter=args.color_jitter if args.random_color else 0.0,
+    )
+    return train, PairedNaturalImageTransform(**common)
 
 
 def dsne_loss(fts, ys, ftt, yt, margin=1.0, fn=False):
@@ -88,6 +80,16 @@ def dsne_loss(fts, ys, ftt, yt, margin=1.0, fn=False):
     max_intra = intra.max(dim=1).values
     min_inter = revised_inter.min(dim=1).values
     return F.relu(max_intra - min_inter + margin).mean()
+
+
+def auxiliary_ir_encoder(output_dim):
+    return nn.Sequential(
+        nn.Conv2d(1, 32, kernel_size=5, stride=2, padding=2, bias=False),
+        nn.BatchNorm2d(32), nn.GELU(),
+        nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(64), nn.GELU(),
+        nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(64, output_dim),
+    )
 
 
 class BasicBlockV2(nn.Module):
@@ -231,6 +233,8 @@ class DSNE(nn.Module):
         if use_dropout:
             embedding_layers.append(nn.Dropout(0.5))
         self.embeds = nn.Sequential(*embedding_layers)
+        self.ir_encoder = auxiliary_ir_encoder(embed_size)
+        self.ir_residual_scale = nn.Parameter(torch.tensor(0.1))
         self.use_l2n = use_l2n
         self.output = nn.Linear(embed_size, num_classes)
         for module in self.embeds.modules():
@@ -241,7 +245,15 @@ class DSNE(nn.Module):
         nn.init.zeros_(self.output.bias)
 
     def forward(self, images, return_embedding=False):
-        features = self.embeds(self.features(images))
+        if torch.is_tensor(images):
+            rgb, ir = images, None
+        else:
+            rgb, ir = images['rgb'], images.get('nir', images.get('ir'))
+        features = self.embeds(self.features(rgb))
+        if ir is not None:
+            if ir.shape[1] == 3:
+                ir = ir.mean(dim=1, keepdim=True)
+            features = features + self.ir_residual_scale * self.ir_encoder(ir)
         if self.use_l2n:
             features = F.normalize(features, p=2, dim=1)
         logits = self.output(features)
@@ -293,7 +305,7 @@ def evaluate(model, loader, device, num_classes):
     labels_all, predictions_all = [], []
     with torch.no_grad():
         for images, labels in loader:
-            predictions = model(images.to(device)).argmax(1).cpu().tolist()
+            predictions = model(batch_to_device(images, device)).argmax(1).cpu().tolist()
             labels_all.extend(labels.tolist())
             predictions_all.extend(predictions)
     return classification_metrics(labels_all, predictions_all, num_classes=num_classes)
@@ -328,13 +340,14 @@ def train_source(model, loader, eval_loader, device, criterion, args, num_classe
         running_loss = 0.0
         items = 0
         for batch_index, (images, labels) in enumerate(loader, 1):
-            images, labels = images.to(device), labels.to(device)
+            images, labels = batch_to_device(images, device), labels.to(device)
             optimizer.zero_grad()
             loss = criterion(model(images), labels)
             loss.backward()
             optimizer.step()
-            running_loss += loss.item() * images.shape[0]
-            items += images.shape[0]
+            current_batch_size = batch_size(images)
+            running_loss += loss.item() * current_batch_size
+            items += current_batch_size
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
         metrics = evaluate(model, eval_loader, device, num_classes)
@@ -423,6 +436,8 @@ def main():
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--max-train-batches', type=int, default=0,
                         help='Smoke-test only: cap batches per epoch; 0 uses all pairs.')
+    parser.add_argument('--early-stopping-patience', type=int, default=6)
+    parser.add_argument('--early-stopping-min-epochs', type=int, default=10)
     parser.add_argument('--data-dir', default=os.path.join(ROOT, 'data_lists'))
     parser.add_argument('--save-dir', default=os.path.join(os.path.dirname(__file__), 'output'))
     parser.add_argument('--efficiency_output_dir', default=None)
@@ -445,6 +460,8 @@ def main():
         raise ValueError('formal d-SNE reproduction requires ResNetV2-101')
     if args.source_checkpoint and args.pretrained_backbone:
         raise ValueError('source-checkpoint and pretrained-backbone are mutually exclusive')
+    if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
+        raise ValueError('early stopping settings cannot be negative')
 
     args.seed = seed_everything(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -476,10 +493,10 @@ def main():
             'Run tools/prepare_paired_protocol_lists.py first.'
         )
 
-    source = UdaImageListDataset(source_list, train_tf, label_map)
-    source_eval = UdaImageListDataset(source_list, eval_tf, label_map)
-    target = UdaImageListDataset(target_list, train_tf, label_map)
-    target_val = UdaImageListDataset(target_val_list, eval_tf, label_map)
+    source = PairedUdaImageListDataset(source_list, train_tf, label_map)
+    source_eval = PairedUdaImageListDataset(source_list, eval_tf, label_map)
+    target = PairedUdaImageListDataset(target_list, train_tf, label_map)
+    target_val = PairedUdaImageListDataset(target_val_list, eval_tf, label_map)
     print(format_dropped('source train', source))
     print(format_dropped('target labelled train', target))
     print(format_dropped('target validation', target_val))
@@ -589,7 +606,7 @@ def main():
         from efficiency_common import EfficiencyLogger
         efficiency = EfficiencyLogger(
             args.efficiency_output_dir, 'd-SNE', seed=args.seed,
-            device=str(device), modalities='VIS', protocol='SDA',
+            device=str(device), modalities='VIS+IR', protocol='SDA',
             target_label_count=len(target),
             target_labels_per_class=args.target_labels_per_class,
             backbone=f'ResNet-{args.nlayers} + released 4096/{args.embed_size} head',
@@ -636,9 +653,23 @@ def main():
             'horizontal_flip': args.flip, 'vertical_flip': args.vertical_flip,
             'color_jitter': args.random_color,
         },
+        'input_modalities': 'VIS_RGB+IR_grayscale',
+        'multimodal_adapter': (
+            'official RGB ResNetV2 plus a lightweight IR residual encoder; '
+            'official 4096/512 head and d-SNE objective unchanged'
+        ),
         'normalization': {'mean': args.mean, 'std': args.std},
         'max_train_batches': args.max_train_batches,
+        'early_stopping': {
+            'monitor': 'target_val ACC',
+            'patience': args.early_stopping_patience,
+            'min_epochs': args.early_stopping_min_epochs,
+        },
     }
+    early_best = None
+    evaluations_without_improvement = 0
+    stopped_early = False
+    completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
         if efficiency:
             efficiency.epoch_start(epoch - 1)
@@ -647,9 +678,9 @@ def main():
                           target_labels, _) in enumerate(pair_loader, 1):
             if efficiency:
                 efficiency.step_start()
-            source_images = source_images.to(device)
+            source_images = batch_to_device(source_images, device)
             source_labels = source_labels.to(device)
-            target_images = target_images.to(device)
+            target_images = batch_to_device(target_images, device)
             target_labels = target_labels.to(device)
             if efficiency:
                 efficiency.dataloader_done()
@@ -677,6 +708,7 @@ def main():
 
         metrics = evaluate(model, target_val_loader, device, num_classes)
         history.append((epoch, metrics))
+        completed_epoch = epoch
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {metrics["accuracy"]:.4f}')
         print(f'  {format_classification_metrics(metrics)}')
         for budget in budgets:
@@ -690,12 +722,29 @@ def main():
                     checkpoint_payload(model, epoch, metrics, metadata),
                     checkpoint_by_budget[budget],
                 )
+        if early_best is None or metrics['accuracy'] > early_best:
+            early_best = metrics['accuracy']
+            evaluations_without_improvement = 0
+        else:
+            evaluations_without_improvement += 1
         if efficiency:
             efficiency.epoch_end(epoch - 1)
+        if (args.early_stopping_patience
+                and epoch >= args.early_stopping_min_epochs
+                and evaluations_without_improvement >= args.early_stopping_patience):
+            stopped_early = True
+            print(
+                f'Early stopping after {evaluations_without_improvement} '
+                'target-val epochs without ACC improvement.'
+            )
+            break
+
+    metadata['completed_epochs'] = completed_epoch
+    metadata['stopped_early'] = stopped_early
 
     last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
     torch.save(
-        checkpoint_payload(model, args.epochs, history[-1][1], metadata),
+        checkpoint_payload(model, completed_epoch, history[-1][1], metadata),
         last_checkpoint,
     )
     budget_results = {}

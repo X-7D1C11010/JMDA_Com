@@ -17,11 +17,21 @@ CCSA_EPOCHS="${VDS2RAW_CCSA_EPOCHS:-80}"
 DSNE_EPOCHS="${VDS2RAW_DSNE_EPOCHS:-20}"
 MCFT_EPOCHS="${VDS2RAW_MCFT_EPOCHS:-500}"
 CCSA_SOURCE_EPOCHS="${VDS2RAW_CCSA_SOURCE_EPOCHS:-50}"
-DSNE_SOURCE_EPOCHS="${VDS2RAW_DSNE_SOURCE_EPOCHS:-50}"
+DSNE_SOURCE_EPOCHS="${VDS2RAW_DSNE_SOURCE_EPOCHS:-80}"
 CCSA_BATCH="${VDS2RAW_CCSA_BATCH_SIZE:-256}"
 DSNE_BATCH="${VDS2RAW_DSNE_BATCH_SIZE:-32}"
+DSNE_SOURCE_BATCH="${VDS2RAW_DSNE_SOURCE_BATCH_SIZE:-16}"
 MCFT_BATCH="${VDS2RAW_MCFT_BATCH_SIZE:-32}"
 DSNE_LAYERS="${VDS2RAW_DSNE_LAYERS:-101}"
+DSNE_SOURCE_WARMUP="${VDS2RAW_DSNE_SOURCE_HEAD_WARMUP_EPOCHS:-10}"
+DSNE_SOURCE_HEAD_LR="${VDS2RAW_DSNE_SOURCE_HEAD_LR:-0.01}"
+DSNE_SOURCE_BACKBONE_LR="${VDS2RAW_DSNE_SOURCE_BACKBONE_LR:-0.001}"
+CCSA_EARLY_PATIENCE="${VDS2RAW_CCSA_EARLY_STOPPING_PATIENCE:-8}"
+CCSA_EARLY_MIN_EPOCHS="${VDS2RAW_CCSA_EARLY_STOPPING_MIN_EPOCHS:-5}"
+DSNE_EARLY_PATIENCE="${VDS2RAW_DSNE_EARLY_STOPPING_PATIENCE:-6}"
+DSNE_EARLY_MIN_EPOCHS="${VDS2RAW_DSNE_EARLY_STOPPING_MIN_EPOCHS:-10}"
+MCFT_EARLY_PATIENCE="${VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE:-30}"
+MCFT_EARLY_MIN_EPOCHS="${VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS:-50}"
 LEGACY_TARGET_PER_CLASS="${VDS2RAW_TARGET_SAMPLES_PER_CLASS:-}"
 CCSA_TARGET_PER_CLASS="${VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-0}}"
 DSNE_TARGET_PER_CLASS="${VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS:-${LEGACY_TARGET_PER_CLASS:-0}}"
@@ -33,8 +43,8 @@ GPU_CANDIDATES="${VDS2RAW_GPU_CANDIDATES:-}"
 CCSA_MIN_FREE_MIB="${VDS2RAW_CCSA_MIN_FREE_MIB:-18000}"
 DSNE_MIN_FREE_MIB="${VDS2RAW_DSNE_MIN_FREE_MIB:-30000}"
 MCFT_MIN_FREE_MIB="${VDS2RAW_MCFT_MIN_FREE_MIB:-10000}"
-if [ "${#METHOD_ORDER[@]}" -ne 3 ]; then
-  echo "VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once." >&2
+if [ "${#METHOD_ORDER[@]}" -lt 1 ] || [ "${#METHOD_ORDER[@]}" -gt 3 ]; then
+  echo "VDS2RAW_METHOD_ORDER must contain one to three methods from: ccsa dsne mcft3." >&2
   exit 1
 fi
 CCSA_ORDER_COUNT=0; DSNE_ORDER_COUNT=0; MCFT_ORDER_COUNT=0
@@ -46,13 +56,14 @@ for method in "${METHOD_ORDER[@]}"; do
     *) echo "Unknown VDS2Raw method in order: $method" >&2; exit 1 ;;
   esac
 done
-if [ "$CCSA_ORDER_COUNT" -ne 1 ] || [ "$DSNE_ORDER_COUNT" -ne 1 ] \
-  || [ "$MCFT_ORDER_COUNT" -ne 1 ]; then
-  echo "VDS2RAW_METHOD_ORDER must contain ccsa, dsne and mcft3 exactly once." >&2
+if [ "$CCSA_ORDER_COUNT" -gt 1 ] || [ "$DSNE_ORDER_COUNT" -gt 1 ] \
+  || [ "$MCFT_ORDER_COUNT" -gt 1 ]; then
+  echo "VDS2RAW_METHOD_ORDER cannot contain duplicate methods." >&2
   exit 1
 fi
 if [ "$MODE" = formal ] && \
-   { [ "$CCSA_TARGET_PER_CLASS" -ne 0 ] || [ "$DSNE_TARGET_PER_CLASS" -ne 0 ]; }; then
+   { { [ "$CCSA_ORDER_COUNT" -gt 0 ] && [ "$CCSA_TARGET_PER_CLASS" -ne 0 ]; } \
+     || { [ "$DSNE_ORDER_COUNT" -gt 0 ] && [ "$DSNE_TARGET_PER_CLASS" -ne 0 ]; }; }; then
   echo "Formal VDS2Raw runs require all target_train labels: set both target-samples-per-class values to 0." >&2
   exit 1
 fi
@@ -71,7 +82,9 @@ PRETRAINED_ARGS=()
 if [ "$MODE" = smoke ]; then
   CCSA_EPOCHS=1; DSNE_EPOCHS=1; MCFT_EPOCHS=1
   CCSA_SOURCE_EPOCHS=1; DSNE_SOURCE_EPOCHS=1
-  CCSA_BATCH=8; DSNE_BATCH=4; MCFT_BATCH=4; DSNE_LAYERS=101; MCFT_EVAL=1
+  CCSA_BATCH=8; DSNE_BATCH=4; DSNE_SOURCE_BATCH=4; MCFT_BATCH=4
+  DSNE_LAYERS=101; DSNE_SOURCE_WARMUP=0; MCFT_EVAL=1
+  CCSA_EARLY_PATIENCE=0; DSNE_EARLY_PATIENCE=0; MCFT_EARLY_PATIENCE=0
   MAX_BATCH_ARGS=(--max-train-batches 1)
   PRETRAINED_ARGS=(--no-pretrained)
 fi
@@ -136,6 +149,8 @@ for seed in "${SEEDS[@]}"; do
           "$PYTHON_BIN" "$HERE/vds2raw/train_ccsa.py" \
           --epochs "$CCSA_EPOCHS" --source-epochs "$CCSA_SOURCE_EPOCHS" \
           --batch-size "$CCSA_BATCH" \
+          --early-stopping-patience "$CCSA_EARLY_PATIENCE" \
+          --early-stopping-min-epochs "$CCSA_EARLY_MIN_EPOCHS" \
           --target-samples-per-class "$CCSA_TARGET_PER_CLASS" \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
           "${CCSA_CKPT_ARGS[@]}" "${CCSA_BACKBONE_ARGS[@]}"
@@ -144,7 +159,14 @@ for seed in "${SEEDS[@]}"; do
         run_one "dsne_seed$seed" "$DSNE_MIN_FREE_MIB" \
           "$PYTHON_BIN" "$HERE/vds2raw/train_dsne.py" \
           --epochs "$DSNE_EPOCHS" --source-epochs "$DSNE_SOURCE_EPOCHS" \
-          --batch-size "$DSNE_BATCH" --nlayers "$DSNE_LAYERS" \
+          --batch-size "$DSNE_BATCH" --source-batch-size "$DSNE_SOURCE_BATCH" \
+          --source-head-warmup-epochs "$DSNE_SOURCE_WARMUP" \
+          --source-head-lr "$DSNE_SOURCE_HEAD_LR" \
+          --source-backbone-lr "$DSNE_SOURCE_BACKBONE_LR" \
+          --early-stopping-patience "$DSNE_EARLY_PATIENCE" \
+          --early-stopping-min-epochs "$DSNE_EARLY_MIN_EPOCHS" \
+          --augmentation-strength light --class-balanced-source \
+          --class-balanced-batches --nlayers "$DSNE_LAYERS" \
           --target-samples-per-class "$DSNE_TARGET_PER_CLASS" --fn \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}" "${PRETRAINED_ARGS[@]}" \
           "${DSNE_CKPT_ARGS[@]}" "${DSNE_BACKBONE_ARGS[@]}"
@@ -153,7 +175,9 @@ for seed in "${SEEDS[@]}"; do
         run_one "mcft3_seed$seed" "$MCFT_MIN_FREE_MIB" \
           "$PYTHON_BIN" "$HERE/vds2raw/train_mcft.py" \
           --epochs "$MCFT_EPOCHS" --batch-size "$MCFT_BATCH" \
-          --eval-frequency "$MCFT_EVAL" --early-stopping-patience 0 \
+          --eval-frequency "$MCFT_EVAL" \
+          --early-stopping-patience "$MCFT_EARLY_PATIENCE" \
+          --early-stopping-min-epochs "$MCFT_EARLY_MIN_EPOCHS" \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
         ;;
     esac
@@ -161,13 +185,22 @@ for seed in "${SEEDS[@]}"; do
 done
 
 BENCHMARK_ARGS=()
+BENCHMARK_METHODS=()
+for method in "${METHOD_ORDER[@]}"; do
+  case "$method" in
+    ccsa) BENCHMARK_METHODS+=(vds_ccsa) ;;
+    dsne) BENCHMARK_METHODS+=(vds_dsne) ;;
+    mcft3) BENCHMARK_METHODS+=(vds_mcft3) ;;
+  esac
+done
+BENCHMARK_METHODS_CSV="$(IFS=,; echo "${BENCHMARK_METHODS[*]}")"
 if [ "$MODE" = smoke ]; then
   BENCHMARK_ARGS=(--smoke)
 fi
 if [ "${VDS2RAW_RUN_COMPLEXITY_BENCHMARK:-1}" = "1" ]; then
   run_one "complexity" "$MCFT_MIN_FREE_MIB" \
     "$PYTHON_BIN" "$HERE/tools/benchmark_efficiency.py" \
-    --methods vds_ccsa,vds_dsne,vds_mcft3 \
+    --methods "$BENCHMARK_METHODS_CSV" \
     --num-classes 3 --protocol benchmark \
     --benchmark_train_batch_size 1 \
     --efficiency_output_dir "$RUN_DIR/efficiency" \

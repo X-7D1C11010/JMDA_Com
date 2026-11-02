@@ -30,7 +30,10 @@ import os
 from PIL import Image
 from torch.utils.data import Dataset
 
-from data_paths import remap_data_path
+try:
+    from .data_paths import exact_ir_partner, remap_data_path
+except ImportError:  # Training scripts add tools/ directly to sys.path.
+    from data_paths import exact_ir_partner, remap_data_path
 
 
 def read_image_list(list_path):
@@ -55,17 +58,48 @@ def uda_label_space(data_dir, target):
     返回 ``(class_ids, label_map)``：``class_ids`` 为升序原始类别 id，
     ``label_map`` 把原始 id 压到连续下标。
     """
-    present = set()
+    split_support = {}
     for split in ('train', 'val'):
         list_path = os.path.join(data_dir, f'{target}_{split}.txt')
         if not os.path.isfile(list_path):
             raise FileNotFoundError(f'missing list file: {list_path}')
-        present.update(label for _, label in read_image_list(list_path))
+        split_support[split] = {
+            label for _, label in read_image_list(list_path)
+        }
+    present = split_support['train']
     if not present:
         raise ValueError(f'no samples found for target domain {target}')
+    if split_support['val'] != present:
+        only_train = sorted(present - split_support['val'])
+        only_val = sorted(split_support['val'] - present)
+        raise ValueError(
+            f'target train/val class support differs for {target}: '
+            f'train-only={only_train}, val-only={only_val}'
+        )
     class_ids = sorted(present)
     label_map = {old: new for new, old in enumerate(class_ids)}
     return class_ids, label_map
+
+
+def assert_training_label_space(source_dataset, target_dataset, class_ids):
+    """Fail fast unless source and target training sets cover the same classes.
+
+    Both datasets must already have been filtered with the same ``label_map``.
+    This check guards against a stale/corrupt list or an accidental independent
+    remapping in a method-specific loader.
+    """
+    expected = set(range(len(class_ids)))
+    source_labels = {label for _, label in source_dataset.samples}
+    target_labels = {label for _, label in target_dataset.samples}
+    if source_labels != expected or target_labels != expected:
+        raise ValueError(
+            'source/target training label support mismatch after remapping: '
+            f'expected={sorted(expected)}, source={sorted(source_labels)}, '
+            f'target={sorted(target_labels)}, original_target_ids={class_ids}'
+        )
+    if source_dataset.label_map != target_dataset.label_map:
+        raise ValueError('source and target datasets do not share one label map')
+    return True
 
 
 class UdaImageListDataset(Dataset):
@@ -103,6 +137,43 @@ class UdaImageListDataset(Dataset):
         return image, label
 
 
+class PairedUdaImageListDataset(Dataset):
+    """Target-label-space dataset returning aligned VIS+IR model inputs."""
+
+    def __init__(self, list_path, transform=None, label_map=None):
+        self.list_path = list_path
+        self.transform = transform
+        self.label_map = label_map
+        self.samples = []
+        self.skipped = 0
+        self.dropped_unpaired = 0
+        for path, label in read_image_list(list_path):
+            if label_map is not None and label not in label_map:
+                self.skipped += 1
+                continue
+            vis_path = remap_data_path(path)
+            ir_path = exact_ir_partner(vis_path)
+            if ir_path is None:
+                self.dropped_unpaired += 1
+                continue
+            new_label = label_map[label] if label_map is not None else label
+            self.samples.append(((vis_path, ir_path), new_label))
+        if not self.samples:
+            raise ValueError(
+                f'{list_path} has no paired sample inside the target label space'
+            )
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        (vis_path, ir_path), label = self.samples[index]
+        vis = Image.open(vis_path).convert('RGB')
+        ir = Image.open(ir_path).convert('L')
+        inputs = self.transform(vis, ir) if self.transform else (vis, ir)
+        return inputs, label
+
+
 def format_class_space(class_ids, num_classes):
     """日志用：目标域类别集描述。"""
     return (f'UDA label space (target-driven): {num_classes} classes, '
@@ -111,14 +182,17 @@ def format_class_space(class_ids, num_classes):
 
 def format_dropped(name, dataset):
     """日志用：某个列表被裁剪掉的图像数。"""
+    unpaired = getattr(dataset, 'dropped_unpaired', 0)
     return (f'  {name}: kept {len(dataset)}, dropped {dataset.skipped} '
-            f'(label outside target label space)')
+            f'(label outside target label space), dropped_unpaired {unpaired}')
 
 
 __all__ = [
     'read_image_list',
     'uda_label_space',
+    'assert_training_label_space',
     'UdaImageListDataset',
+    'PairedUdaImageListDataset',
     'format_class_space',
     'format_dropped',
 ]

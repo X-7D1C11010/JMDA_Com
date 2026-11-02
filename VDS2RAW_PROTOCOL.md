@@ -35,8 +35,8 @@ CCSA、d-SNE 与 MCFT 使用相同的全监督预算：全部 116 条 `source_tr
 
 | 方法 | 输入 | 训练协议 |
 |---|---|---|
-| CCSA | RGB | ImageNet VGG-16 卷积层 + 1024/128 嵌入、CSA、双向分类更新 |
-| d-SNE | RGB | ImageNet ResNetV2-101 + 4096/512 嵌入、官方跨域配对与 d-SNE 损失 |
+| CCSA | RGB + NIR + AIS | ImageNet RGB VGG-16 + 轻量 NIR/AIS 残差适配，保留 1024/128 嵌入、CSA、双向分类更新 |
+| d-SNE | RGB + NIR + AIS | ImageNet RGB ResNetV2-101 + 轻量 NIR/AIS 残差适配，保留 4096/512 嵌入与 d-SNE 损失 |
 | MCFT-RGB-NIR-AIS | RGB + NIR + AIS | 官方双影像 MCFT 主干，增加正则化 AIS 后融合分支；mask 仅控制缺失值 |
 
 MCFT 原论文只有 HSI/LiDAR 两路栅格模态，不包含 AIS 或 AIS mask。因此三模态
@@ -52,7 +52,9 @@ MCFT 原论文只有 HSI/LiDAR 两路栅格模态，不包含 AIS 或 AIS mask�
 VDS2Raw 三模态适配，不反向修改 JMDA 的官方配方 VIS+IR 基线。
 
 CCSA 先冻结 ImageNet VGG-16 卷积层，使用全部 `source_train` 初始化新加入的
-全连接层 50 epoch，再解冻全部参数进行 80 epoch CCSA。适配阶段完全使用发布代码
+全连接层以及 NIR/AIS 适配层 50 epoch，再解冻全部参数进行 80 epoch CCSA。RGB 仍走
+官方自然图像 VGG-16 主干；NIR 经轻量卷积编码为 128 维残差，AIS 仅取连续字段并经
+有效性 mask 门控后形成另一条 128 维残差。适配阶段完全使用发布代码
 的固定穷举配对：保留所有同类正对，随机打乱不同类负对后至多截取正对数的 3 倍，
 整个训练期间不重新生成 pair 表；有效 batch size 为 256，尾部不足一个 batch 的
 pair 与发布代码的整数除法一样不参与更新。每个完整 batch 先执行 source→target，
@@ -60,9 +62,12 @@ pair 与发布代码的整数除法一样不参与更新。每个完整 batch �
 有效 batch 或优化器更新次数。训练预处理为固定 resize/center-crop，不使用自定义
 随机增强。
 
-d-SNE 先从 ImageNet ResNetV2-101 开始，在全部 `source_train` 上监督微调 50
-epoch，再以 batch size 32、`--fn`、SGD 0.001、momentum 0.9、weight decay
-1e-4 对全部有标签 `target_train` 进行适配。10 epoch 是官方 Office-31 预算；程序继续到 20 epoch，并分别
+d-SNE 先从 ImageNet ResNetV2-101 开始，在全部 `source_train` 上监督微调 80
+epoch：前 10 epoch 冻结 RGB backbone，训练 4096/512 分类头及 NIR/AIS 适配层，随后
+联合微调；再以 batch size 32、`--fn`、SGD 0.001、momentum 0.9、weight decay
+1e-4 对全部有标签 `target_train` 进行适配。NIR 经轻量卷积编码为 512 维残差，连续
+AIS 经门控后形成另一条 512 维残差；官方 RGB ResNetV2-101、4096/512 头、损失和
+默认目标方向更新不变。10 epoch 是官方 Office-31 预算；程序继续到 20 epoch，并分别
 以 `target_test` 在 1--10 和 1--20 范围选峰值，输出 `d-SNE@10` 与 `d-SNE@20`。
 两者均在元数据中标记测试集选模偏差。
 原仓库依赖 MXNet/CUDA 9；本项目是在当前 PyTorch/CUDA 环境中的等价训练端口，
@@ -101,10 +106,29 @@ $env:VDS2RAW_SEEDS = '42'
 `VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS`、`VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS`
 均默认 0，即全部；正式启动会拒绝任一非零值。兼容变量
 `VDS2RAW_TARGET_SAMPLES_PER_CLASS` 仅供显式消融。适配训练轮数默认分别为
-80/20/500，MCFT 默认每轮评价并关闭早停。
+80/20/500。三种方法均启用 `target_test` 峰值协议下的早停：CCSA 默认最少 5 轮、
+patience 8；d-SNE 默认最少 10 轮、patience 6；MCFT 默认最少 50 轮、patience 30。
+这些值分别可由对应的 `VDS2RAW_*_EARLY_STOPPING_PATIENCE` 和
+`VDS2RAW_*_EARLY_STOPPING_MIN_EPOCHS` 环境变量覆盖，设 patience 为 0 可关闭。
+
+d-SNE 的正式适配 batch 仍为官方 32；源域阶段单独使用 batch 16、80 epoch，先冻结
+ImageNet backbone 对官方 4096/512/分类器头预热 10 epoch，再用 backbone/head 学习率
+0.001/0.01 联合微调。源域采样和适配 batch 默认类别均衡，适配 batch 保证三类均有
+正配对支持；增强使用遥感轻增强。相关变量为
+`VDS2RAW_DSNE_SOURCE_BATCH_SIZE`、`VDS2RAW_DSNE_SOURCE_HEAD_WARMUP_EPOCHS`、
+`VDS2RAW_DSNE_SOURCE_HEAD_LR` 和 `VDS2RAW_DSNE_SOURCE_BACKBONE_LR`。
+适配阶段仍不传 `--train-src`，保持官方 Office-31 d-SNE 默认方向。
+
+CCSA/d-SNE 的多模态适配层是为与本项目方法保持相同传感器输入而增加的数据集适配，
+不是 CCSA 或 d-SNE 官方仓库的原生结构。mask 只门控 AIS 缺失字段，不作为第四模态。
+由于新增了 NIR/AIS 参数，旧的 RGB-only 完整 source checkpoint 与当前模型结构不兼容；
+严格加载会直接报错。ImageNet backbone 文件仍可严格加载，因为 RGB 主干结构未改变。
+
+`VDS2RAW_METHOD_ORDER` 可以指定一个到三个不重复的方法。例如只做 MCFT 多随机种子
+复现实验时设置为 `mcft3`；复杂度统计会自动限制为本次实际运行的方法。
 
 首次正式运行会下载/读取 ImageNet 权重，并分别产生 CCSA 和 d-SNE 的源域
-检查点。后续运行可复用这些检查点，跳过各自 50 epoch 的源域阶段：
+检查点。后续运行可复用这些检查点，跳过 CCSA 50 epoch 或 d-SNE 80 epoch 的源域阶段：
 
 ```powershell
 $env:VDS2RAW_CCSA_SOURCE_CHECKPOINT = 'D:\path\to\vds2raw_ccsa_seed42_source_init.pth'

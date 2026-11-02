@@ -36,6 +36,7 @@ from efficiency_common import (
 # target-driven label space (tools/uda_data.py), so +/- one linear layer vs the
 # dataset-wide 14 classes; set from --num_classes to match the target domain.
 NUM_CLASSES = 14
+IMAGE_BACKBONE = 'method_default'
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -72,39 +73,62 @@ def _load_module_from_file(module_name, path):
 
 # ── DANN ────────────────────────────────────────────────────────────────────
 def adapter_dann():
-    from DANN.train_dann import DANN
+    if IMAGE_BACKBONE == 'resnet50':
+        from DANN.train_dann import ResNetDANN
+        constructor = lambda: ResNetDANN(num_classes=NUM_CLASSES)
+        input_size = 224
+    else:
+        model_dir = os.path.join(PROJ, 'DANN', 'models')
+        if model_dir not in sys.path:
+            sys.path.insert(0, model_dir)
+        from model import CNNModel
+        constructor = lambda: CNNModel(num_classes=NUM_CLASSES)
+        input_size = 28
     def build():
-        return DANN(num_classes=NUM_CLASSES)
+        return constructor()
     def make_input(bs, device):
-        return _make_vis_input(bs, device)
+        return torch.randn(bs, 3, input_size, input_size, device=device)
     def forward_loss(model, inp):
         x = inp
         cls_out, dom_out = model(x, alpha=0.5)
         labels = torch.randint(0, NUM_CLASSES, (x.size(0),), device=x.device)
         dom_labels = torch.randint(0, 2, (x.size(0),), device=x.device)
         return nn.CrossEntropyLoss()(cls_out, labels) + nn.CrossEntropyLoss()(dom_out, dom_labels)
+    def forward_infer(model, inp):
+        return model(inp, alpha=0.0)[0]
     return {'name':'DANN','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
+            'forward_infer':forward_infer,
+            'vis_shape':f'(1,3,{input_size},{input_size})'}
 
 # ── DeepCORAL ───────────────────────────────────────────────────────────────
 def adapter_deepcoral():
-    from DeepCORAL.train_deepcoral import DeepCORAL
+    if IMAGE_BACKBONE == 'resnet50':
+        from DeepCORAL.train_deepcoral import ResNetDeepCORAL
+        constructor = lambda: ResNetDeepCORAL(num_classes=NUM_CLASSES)
+        input_size = 224
+    else:
+        from DeepCORAL.models import DeepCORAL
+        constructor = lambda: DeepCORAL(num_classes=NUM_CLASSES)
+        input_size = 227
     from DeepCORAL.models import CORAL
     def build():
-        return DeepCORAL(num_classes=NUM_CLASSES)
+        return constructor()
     def make_input(bs, device):
-        return _make_vis_input(bs, device)
+        return torch.randn(bs, 3, input_size, input_size, device=device)
     def forward_loss(model, inp):
         src = inp
-        tgt = _make_vis_input(src.size(0), src.device)
-        s_out, t_out, s_feat, t_feat = model(src, tgt)
+        tgt = torch.randn_like(src)
+        s_out, t_out = model(src, tgt)
         labels = torch.randint(0, NUM_CLASSES, (src.size(0),), device=src.device)
-        loss = nn.CrossEntropyLoss()(s_out, labels) + CORAL(s_feat, t_feat)
+        loss = nn.CrossEntropyLoss()(s_out, labels) + CORAL(s_out, t_out)
         return loss
+    def forward_infer(model, inp):
+        return model.fc(model.sharedNet(inp))
     return {'name':'DeepCORAL','group':'visual_vlm','modalities':'VIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
+            'forward_infer':forward_infer,
+            'vis_shape':f'(1,3,{input_size},{input_size})'}
 
 # ── CDAN ────────────────────────────────────────────────────────────────────
 def adapter_cdan():
@@ -115,7 +139,8 @@ def adapter_cdan():
     class CDANWrapper(nn.Module):
         def __init__(self):
             super().__init__()
-            self.backbone = ResNetFc('ResNet18', True, 256, True, NUM_CLASSES)
+            backbone_name = 'ResNet50' if IMAGE_BACKBONE == 'resnet50' else 'ResNet18'
+            self.backbone = ResNetFc(backbone_name, True, 256, True, NUM_CLASSES)
             self.random_layer = RandomLayer([256, NUM_CLASSES], 1024)
             self.ad_net = AdversarialNetwork(1024, 1024)
         def forward(self, x):
@@ -145,9 +170,10 @@ def adapter_cdan():
 def adapter_mdd():
     sys.path.insert(0, os.path.join(PROJ, 'Transfer-Learning-Library'))
     from tllib.alignment.mdd import ImageClassifier
-    from tllib.vision.models import resnet18
+    from tllib.vision.models import resnet18, resnet50
     def build():
-        return ImageClassifier(resnet18(), NUM_CLASSES, 256, 256)
+        backbone = resnet50() if IMAGE_BACKBONE == 'resnet50' else resnet18()
+        return ImageClassifier(backbone, NUM_CLASSES, 256, 256)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
@@ -163,8 +189,9 @@ def adapter_mcc():
     sys.path.insert(0, os.path.join(PROJ, 'Transfer-Learning-Library'))
     from tllib.self_training.mcc import ImageClassifier, MinimumClassConfusionLoss
     def build():
-        from tllib.vision.models import resnet18
-        return ImageClassifier(resnet18(), NUM_CLASSES, 256)
+        from tllib.vision.models import resnet18, resnet50
+        backbone = resnet50() if IMAGE_BACKBONE == 'resnet50' else resnet18()
+        return ImageClassifier(backbone, NUM_CLASSES, 256)
     def make_input(bs, device):
         return _make_vis_input(bs, device)
     def forward_loss(model, inp):
@@ -184,21 +211,28 @@ def adapter_ccsa():
     def build():
         return CCSA(num_classes=NUM_CLASSES)
     def make_input(bs, device):
-        return _make_vis_input(bs, device)
+        return {
+            'rgb': _make_vis_input(bs, device),
+            'nir': torch.randn(bs, 1, 224, 224, device=device),
+        }
     def forward_loss(model, inp):
-        tgt = _make_vis_input(inp.size(0), inp.device)
+        count, device = inp['rgb'].size(0), inp['rgb'].device
+        tgt = make_input(count, device)
         logits_s, logits_t, f_s, f_t = model(inp, tgt)
-        labels_s = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
-        labels_t = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
+        labels_s = torch.randint(0, NUM_CLASSES, (count,), device=device)
+        labels_t = torch.randint(0, NUM_CLASSES, (count,), device=device)
         yc = labels_s.eq(labels_t).float()
         distance = euclidean_distance(f_s, f_t)
         # One released source-side update; the training entry point performs
         # the corresponding target-side update immediately afterwards.
         ce = nn.CrossEntropyLoss()(logits_s, labels_s)
         return 0.75 * ce + 0.25 * contrastive_loss(yc, distance)
-    return {'name':'CCSA','group':'visual_vlm','modalities':'VIS',
+    def forward_infer(model, inp):
+        return model(inp)
+    return {'name':'CCSA','group':'multimodal','modalities':'VIS+IR',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
+            'forward_infer':forward_infer,
+            'vis_shape':'(1,3,224,224)','ir_shape':'(1,1,224,224)'}
 
 # ── d-SNE (SDA) ──────────────────────────────────────────────────────────────
 def adapter_dsne():
@@ -207,11 +241,15 @@ def adapter_dsne():
     def build():
         return mod.DSNE(num_classes=NUM_CLASSES)
     def make_input(bs, device):
-        return _make_vis_input(bs, device)
+        return {
+            'rgb': _make_vis_input(bs, device),
+            'nir': torch.randn(bs, 1, 224, 224, device=device),
+        }
     def forward_loss(model, inp):
-        tgt = _make_vis_input(inp.size(0), inp.device)
-        labels_s = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
-        labels_t = torch.randint(0, NUM_CLASSES, (inp.size(0),), device=inp.device)
+        count, device = inp['rgb'].size(0), inp['rgb'].device
+        tgt = make_input(count, device)
+        labels_s = torch.randint(0, NUM_CLASSES, (count,), device=device)
+        labels_t = torch.randint(0, NUM_CLASSES, (count,), device=device)
         logits_s, f_s = model(inp, return_embedding=True)
         logits_t, f_t = model(tgt, return_embedding=True)
         # Released default: target CE plus target->source d-SNE.  The optional
@@ -219,9 +257,12 @@ def adapter_dsne():
         xent = nn.CrossEntropyLoss()(logits_t, labels_t)
         aux = mod.dsne_loss(f_t, labels_t, f_s, labels_s, fn=True)
         return 0.9 * xent + 0.1 * aux
-    return {'name':'d-SNE','group':'visual_vlm','modalities':'VIS',
+    def forward_infer(model, inp):
+        return model(inp)
+    return {'name':'d-SNE','group':'multimodal','modalities':'VIS+IR',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
+            'forward_infer':forward_infer,
+            'vis_shape':'(1,3,224,224)','ir_shape':'(1,1,224,224)'}
 
 # ── MCFT (VIS+IR supervised) ─────────────────────────────────────────────────
 def adapter_mcft():
@@ -253,41 +294,63 @@ def adapter_mcft():
 def adapter_vds_ccsa():
     from vds2raw.models import CCSAOfficeModel, ccsa_contrastive_loss, euclidean_distance
     def build():
-        return CCSAOfficeModel(num_classes=3, pretrained=False)
+        return CCSAOfficeModel(
+            num_classes=3, pretrained=False, multimodal=True, use_ais=True
+        )
     def make_input(bs, device):
-        return torch.randn(bs, 3, 224, 224, device=device)
+        return {
+            'rgb': torch.randn(bs, 3, 224, 224, device=device),
+            'nir': torch.randn(bs, 1, 224, 224, device=device),
+            'ais': torch.randn(bs, 13, device=device),
+            'ais_mask': torch.ones(bs, 13, device=device),
+        }
     def forward_loss(model, inp):
-        other = torch.randn_like(inp)
+        other = make_input(inp['rgb'].size(0), inp['rgb'].device)
         logits, _, first, second = model(inp, other)
-        labels = torch.randint(0, 3, (inp.size(0),), device=inp.device)
-        pair = torch.randint(0, 2, (inp.size(0),), device=inp.device).float()
+        labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
+        pair = torch.randint(0, 2, (inp['rgb'].size(0),), device=inp['rgb'].device).float()
         return 0.75 * nn.CrossEntropyLoss()(logits, labels) + 0.25 * ccsa_contrastive_loss(
             pair, euclidean_distance(first, second)
         )
-    return {'name':'VDS2Raw-CCSA','group':'visual_vlm','modalities':'RGB',
+    def forward_infer(model, inp):
+        return model(inp)
+    return {'name':'VDS2Raw-CCSA','group':'multimodal','modalities':'RGB+NIR+AIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
+            'forward_infer':forward_infer,
+            'vis_shape':'(1,3,224,224)','ir_shape':'(1,1,224,224)',
+            'ais_shape':'(1,13)'}
 
 
 def adapter_vds_dsne():
     from vds2raw.models import DSNEOfficeModel, dsne_loss
     def build():
-        return DSNEOfficeModel(num_classes=3, pretrained=False)
+        return DSNEOfficeModel(
+            num_classes=3, pretrained=False, multimodal=True, use_ais=True
+        )
     def make_input(bs, device):
-        return torch.randn(bs, 3, 224, 224, device=device)
+        return {
+            'rgb': torch.randn(bs, 3, 224, 224, device=device),
+            'nir': torch.randn(bs, 1, 224, 224, device=device),
+            'ais': torch.randn(bs, 13, device=device),
+            'ais_mask': torch.ones(bs, 13, device=device),
+        }
     def forward_loss(model, inp):
-        other = torch.randn_like(inp)
-        labels = torch.randint(0, 3, (inp.size(0),), device=inp.device)
-        other_labels = torch.randint(0, 3, (inp.size(0),), device=inp.device)
+        other = make_input(inp['rgb'].size(0), inp['rgb'].device)
+        labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
+        other_labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
         logits, features = model(inp, return_embedding=True)
         _, other_features = model(other, return_embedding=True)
         return 0.9 * nn.CrossEntropyLoss()(logits, labels) + 0.1 * dsne_loss(
             features, labels, other_features, other_labels,
             feature_normalization=True,
         )
-    return {'name':'VDS2Raw-d-SNE','group':'visual_vlm','modalities':'RGB',
+    def forward_infer(model, inp):
+        return model(inp)
+    return {'name':'VDS2Raw-d-SNE','group':'multimodal','modalities':'RGB+NIR+AIS',
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
-            'vis_shape':'(1,3,224,224)'}
+            'forward_infer':forward_infer,
+            'vis_shape':'(1,3,224,224)','ir_shape':'(1,1,224,224)',
+            'ais_shape':'(1,13)'}
 
 
 def adapter_vds_mcft3():
@@ -454,8 +517,8 @@ def adapter_jmda(mode='full'):
 # Backbone / pretraining metadata recorded in every efficiency row.
 BACKBONE_INFO = {
     'source_only':    ('ResNet-18', 'ImageNet'),
-    'dann':           ('ResNet-18', 'ImageNet'),
-    'deepcoral':      ('ResNet-18', 'ImageNet'),
+    'dann':           ('Official CNN (28x28)', 'None'),
+    'deepcoral':      ('AlexNet', 'ImageNet'),
     'cdan':           ('ResNet-18', 'ImageNet'),
     'mdd':            ('ResNet-18', 'ImageNet'),
     'mcc':            ('ResNet-18', 'ImageNet'),
@@ -814,10 +877,17 @@ def main():
                         help='Classifier width for the UDA adapters. UDA training '
                              'uses a target-driven label space (tools/uda_data.py), '
                              'so pass the class count of the target domain.')
+    parser.add_argument('--image-backbone', choices=['method_default', 'resnet50'],
+                        default='method_default',
+                        help='backbone override for DANN/DeepCORAL/CDAN/MDD/MCC')
     args = parser.parse_args()
 
-    global NUM_CLASSES
+    global NUM_CLASSES, IMAGE_BACKBONE
     NUM_CLASSES = args.num_classes
+    IMAGE_BACKBONE = args.image_backbone
+    if IMAGE_BACKBONE == 'resnet50':
+        for key in ('dann', 'deepcoral', 'cdan', 'mdd', 'mcc'):
+            BACKBONE_INFO[key] = ('ResNet-50', 'ImageNet')
 
     if args.smoke:
         args.benchmark_warmup = 5
@@ -877,11 +947,11 @@ def main():
         ('CDAN', 'CDAN/train_cdan.py', 'ResNetFc+AdversarialNet', 'ImageListDataset (VIS)'),
         ('MDD', 'MDD/train_mdd.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
         ('MCC', 'MCC/train_mcc.py', 'tllib ImageClassifier', 'ImageListDataset (VIS)'),
-        ('CCSA', 'CCSA/train_ccsa.py', 'VGG16 conv + FC1024/128', 'ImageListDataset (VIS, SDA subset)'),
-        ('d-SNE', 'd-SNE/train_dsne.py', 'DSNE(ResNetV2-101 + 512 embed)', 'Paired source/target table (VIS, SDA)'),
+        ('CCSA', 'CCSA/train_ccsa.py', 'VGG16 + IR adapter + FC1024/128', 'Paired source/target table (VIS+IR, SDA)'),
+        ('d-SNE', 'd-SNE/train_dsne.py', 'ResNetV2-101 + IR adapter + 512 embed', 'Paired source/target table (VIS+IR, SDA)'),
         ('MCFT', 'MCFT/train_mcft.py', 'MViT (VIS+IR)', 'PairedVisIrDataset (VIS+IR, 15x15)'),
-        ('VDS2Raw-CCSA', 'vds2raw/train_ccsa.py', 'VGG16 conv + FC1024/128', 'VDS2Raw RGB'),
-        ('VDS2Raw-d-SNE', 'vds2raw/train_dsne.py', 'ResNetV2-101 + 4096/512', 'VDS2Raw RGB'),
+        ('VDS2Raw-CCSA', 'vds2raw/train_ccsa.py', 'VGG16 + NIR/AIS adapters + FC1024/128', 'VDS2Raw RGB+NIR+AIS'),
+        ('VDS2Raw-d-SNE', 'vds2raw/train_dsne.py', 'ResNetV2-101 + NIR/AIS adapters + 4096/512', 'VDS2Raw RGB+NIR+AIS'),
         ('VDS2Raw-MCFT3', 'vds2raw/train_mcft.py', 'MViT + AIS/mask late fusion', 'VDS2Raw RGB+NIR+AIS'),
         ('PDA', 'PDA/train_pda.py', 'CustomCLIP(ViT-B/16)', 'ImageListDataset (VIS)'),
         ('JMDA-Net', os.path.join(JMDA_NET_DIR, 'Ablation', 'module_ablation.py'),

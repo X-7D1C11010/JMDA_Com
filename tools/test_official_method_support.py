@@ -14,10 +14,15 @@ try:
     from tools.domain_pairing import (
         ControlledCrossDomainPairDataset,
         CrossDomainPairDataset,
+        DSNEClassCoverageBatchSampler,
     )
     from tools.metrics_io import save_metric_history
 except ImportError:  # Direct execution from the tools directory.
-    from domain_pairing import ControlledCrossDomainPairDataset, CrossDomainPairDataset
+    from domain_pairing import (
+        ControlledCrossDomainPairDataset,
+        CrossDomainPairDataset,
+        DSNEClassCoverageBatchSampler,
+    )
     from metrics_io import save_metric_history
 
 
@@ -66,6 +71,29 @@ class OfficialMethodSupportTests(unittest.TestCase):
         # slice keeps all eight; it does not repeat negatives to force 3:1.
         self.assertEqual(pairs.negative_pairs, 8)
         self.assertEqual(pairs.pairs, expected)
+
+    def test_dsne_sampler_balances_targets_and_covers_every_class(self):
+        source = _ToyDataset([0, 0, 1, 1, 2, 2])
+        target = _ToyDataset([0, 0, 0, 1, 1, 2])
+        pairs = CrossDomainPairDataset(source, target, negative_ratio=1, seed=5)
+        sampler = DSNEClassCoverageBatchSampler(pairs, batch_size=6, seed=11)
+
+        first_epoch = list(iter(sampler))
+        self.assertEqual(len(first_epoch), len(sampler))
+        for batch in first_epoch:
+            target_counts = {0: 0, 1: 0, 2: 0}
+            positive_classes = set()
+            for pair_index in batch:
+                _, target_index, pair_label = pairs.pairs[pair_index]
+                target_label = target.samples[target_index][1]
+                target_counts[target_label] += 1
+                if pair_label:
+                    positive_classes.add(target_label)
+            self.assertEqual(target_counts, {0: 2, 1: 2, 2: 2})
+            self.assertEqual(positive_classes, {0, 1, 2})
+
+        sampler.set_epoch(1)
+        self.assertNotEqual(first_epoch, list(iter(sampler)))
 
     def test_ccsa_loss_matches_released_formula(self):
         from vds2raw.models import ccsa_contrastive_loss
@@ -248,6 +276,23 @@ class OfficialMethodSupportTests(unittest.TestCase):
     def test_jmda_dsne_defaults_to_complete_target_training_list(self):
         script = Path(__file__).resolve().parents[1] / 'd-SNE' / 'train_dsne.py'
         spec = importlib.util.spec_from_file_location('tested_dsne_target_mode', script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.DEFAULT_TARGET_LABELS_PER_CLASS, 0)
+        self.assertEqual(
+            module.target_training_list_path('lists', 'dark', 0, 42),
+            str(Path('lists') / 'dark_train.txt'),
+        )
+        self.assertEqual(
+            module.target_training_list_path('lists', 'dark', 10, 42),
+            str(Path('lists') / 'dark_sda_10shot_seed42.txt'),
+        )
+        with self.assertRaisesRegex(ValueError, 'cannot be negative'):
+            module.target_training_list_path('lists', 'dark', -1, 42)
+
+    def test_jmda_ccsa_defaults_to_complete_target_training_list(self):
+        script = Path(__file__).resolve().parents[1] / 'CCSA' / 'train_ccsa.py'
+        spec = importlib.util.spec_from_file_location('tested_ccsa_target_mode', script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.assertEqual(module.DEFAULT_TARGET_LABELS_PER_CLASS, 0)

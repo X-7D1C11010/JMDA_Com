@@ -15,6 +15,7 @@ from tools.classification_metrics import (
     classification_metrics,
 )
 from tools.metrics_io import save_metric_history
+from tools.multimodal_batches import batch_to_device
 
 NUM_CLASSES = 3
 
@@ -30,14 +31,15 @@ def _prediction_record(sample_index, sample_id, truth, prediction, logits):
     }
 
 
-def evaluate_rgb(model, loader, device, return_predictions=False):
+def evaluate_inputs(model, loader, device, return_predictions=False):
+    """Evaluate a tensor-input or dictionary-input classifier."""
     model.eval()
     labels, predictions, records = [], [], []
     sample_paths = getattr(loader.dataset, "paths", None)
     sample_offset = 0
     with torch.no_grad():
-        for images, truth in loader:
-            logits = model(images.to(device))
+        for inputs, truth in loader:
+            logits = model(batch_to_device(inputs, device))
             batch_truth = truth.tolist()
             batch_predictions = logits.argmax(1).cpu().tolist()
             batch_logits = logits.detach().cpu().tolist()
@@ -63,6 +65,11 @@ def evaluate_rgb(model, loader, device, return_predictions=False):
     if return_predictions:
         return metrics, records
     return metrics
+
+
+def evaluate_rgb(model, loader, device, return_predictions=False):
+    """Backward-compatible alias for the generic classifier evaluator."""
+    return evaluate_inputs(model, loader, device, return_predictions)
 
 
 def evaluate_multimodal(model, loader, device, return_predictions=False):
@@ -455,6 +462,7 @@ __all__ = [
     "better_metrics",
     "build_run_provenance",
     "evaluate_multimodal",
+    "evaluate_inputs",
     "evaluate_rgb",
     "load_selected_checkpoint",
     "metric_line",

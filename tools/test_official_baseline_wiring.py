@@ -55,7 +55,9 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("default=128", dann)
         self.assertIn("default=200", coral)
         self.assertIn("default=56", coral)
-        self.assertIn("resnet_name='ResNet18'", cdan)
+        self.assertIn("choices=['ResNet18', 'ResNet50']", cdan)
+        self.assertIn("default='ResNet18'", cdan)
+        self.assertIn("resnet_name=args.backbone", cdan)
 
     def test_evaluation_loaders_do_not_add_worker_pools_by_default(self):
         tools_dir = os.path.join(ROOT, "tools")

@@ -1,9 +1,9 @@
 ﻿# =============================================================================
 # UDA experiments: source = 晴天 (sunny), targets = 逆光/雨天/雾天/黑天
 #
-# Methods (each keeps its ORIGINAL single-modal / multi-modal setting):
-#   DANN, DeepCORAL, CDAN, MDD, MCC, PDA -> all single-modal (VIS), per their own
-#   original definitions. No target labels are used during training (UDA).
+# Without -Multimodal the historical VIS protocol is retained. With
+# -Multimodal, all six methods consume exact-paired VIS+IR observations and
+# use the project multimodal extensions documented in MULTIMODAL_UDA_PROTOCOL.md.
 #
 # Per target weather the experiment is INDEPENDENT. Each method x target is run
 # for every seed in -Seeds (default 42..46), i.e. 5 independent runs.
@@ -28,7 +28,7 @@ param(
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
     [string]$DataDir = '',
-    [int]$CdanIterations = 100004,
+    [int]$CdanIterations = 2000,
     [int]$DANNEpochs = 100,
     [int]$DeepCoralEpochs = 20,
     [int]$MDDEpochs = 20,
@@ -43,6 +43,12 @@ param(
     [int]$WorkerTimeoutSeconds = 300,
     [int]$WindowsWorkerCap = 2,
     [int]$BenchRepeats = 5,
+    [string]$ImageBackbone = '',
+    [int]$ImageBatchSize = 16,
+    [switch]$EnhancedAugmentation,
+    [switch]$Multimodal,
+    [int]$EarlyStoppingPatience = 0,
+    [double]$EarlyStoppingMinDelta = 0.0,
     [switch]$SkipBenchmark
 )
 
@@ -107,6 +113,26 @@ if ($NumWorkers -lt 0 -or $EvalNumWorkers -lt 0 -or
     Write-Host 'Invalid DataLoader settings.' -ForegroundColor Red
     exit 1
 }
+if ($ImageBackbone -and $ImageBackbone -ine 'ResNet50') {
+    Write-Host 'ImageBackbone currently supports only ResNet50 or an empty value.' -ForegroundColor Red
+    exit 1
+}
+if ($ImageBatchSize -lt 2) {
+    Write-Host 'ImageBatchSize must be >= 2.' -ForegroundColor Red
+    exit 1
+}
+if ($EarlyStoppingPatience -lt 0 -or $EarlyStoppingMinDelta -lt 0) {
+    Write-Host 'Early stopping patience/min-delta must be non-negative.' -ForegroundColor Red
+    exit 1
+}
+if ($EarlyStoppingPatience -gt 0) {
+    Write-Host 'Target-validation early stopping/model selection is disabled by this protocol.' -ForegroundColor Red
+    exit 1
+}
+if ($Multimodal -and -not $SkipBenchmark) {
+    Write-Host 'Multimodal micro-benchmark is not yet protocol-matched; skipping it to avoid recording single-modal complexity under VIS+IR runs.' -ForegroundColor Yellow
+    $SkipBenchmark = $true
+}
 
 # Windows uses multiprocessing spawn. Every worker imports PyTorch and CUDA
 # DLLs, so two domain loaders with four workers each can consume over 10 GiB of
@@ -150,6 +176,14 @@ Write-Host ((" Loader  : train_workers={0}, eval_workers={1}, prefetch={2}, " +
              $EvalNumWorkers, $PrefetchFactor, $UsePersistentWorkers,
              $WorkerTimeoutSeconds)
 Write-Host " TORCH_HOME: $env:TORCH_HOME"
+Write-Host " Image backbone override: $(if ($ImageBackbone) { $ImageBackbone } else { 'method default' })"
+Write-Host " Image backbone batch size: $ImageBatchSize"
+Write-Host " Enhanced augmentation: $EnhancedAugmentation"
+Write-Host " Modalities: $(if ($Multimodal) { 'VIS+IR exact pairs' } else { 'VIS' })"
+Write-Host " Early stopping: patience=$EarlyStoppingPatience, min_delta=$EarlyStoppingMinDelta"
+if ($EarlyStoppingPatience -gt 0) {
+    Write-Host ' WARNING: early stopping uses labelled target validation accuracy; protocol becomes target-validation-selected UDA.' -ForegroundColor Yellow
+}
 Write-Host "=============================================================="
 
 # ── 1) efficiency micro-benchmark (params / FLOPs / latency / memory) ────────
@@ -157,11 +191,14 @@ if (-not $SkipBenchmark) {
     Write-Host "`n[1/2] Efficiency micro-benchmark ..."
     $benchLog = Join-Path $LogDir 'benchmark.log'
     $benchScript = Join-Path $Repo 'tools\benchmark_efficiency.py'
-    & $Python -B -u $benchScript `
-        --methods 'dann,deepcoral,cdan,mdd,mcc,pda' `
-        --protocol UDA `
-        --benchmark_repeats $BenchRepeats `
-        --efficiency_output_dir $OutDir *> $benchLog
+    $benchCli = @('-B', '-u', $benchScript,
+        '--methods', 'dann,deepcoral,cdan,mdd,mcc,pda',
+        '--protocol', 'UDA',
+        '--benchmark_repeats', $BenchRepeats,
+        '--efficiency_output_dir', $OutDir)
+    if ($ImageBackbone) { $benchCli += @('--image-backbone', 'resnet50') }
+    & $Python @benchCli `
+        *> $benchLog
     Write-Host ("      benchmark exit={0}   log={1}" -f $LASTEXITCODE, $benchLog)
 }
 
@@ -182,7 +219,7 @@ foreach ($method in $Methods.Keys) {
             $log = Join-Path $LogDir "$tag.log"
             Write-Host ("[{0}/{1}] {2}  target={3}  seed={4}" -f $idx, $total, $method, $target, $seed)
 
-            # CDAN 按官方配置为迭代制（num_iterations=100004），不用 --epochs。
+            # CDAN is iteration-based; the project multimodal budget is 2000.
             $cli = @('-B', '-u', $scriptPath,
                      '--target', $target,
                      '--seed', $seed,
@@ -210,6 +247,32 @@ foreach ($method in $Methods.Keys) {
             }
             if ($method -eq 'DeepCORAL' -and $DeepCoralWeights) {
                 $cli += @('--alexnet-weights', $DeepCoralWeights)
+            }
+            if ($EnhancedAugmentation) {
+                $cli += '--enhanced-augmentation'
+            }
+            if ($Multimodal) {
+                $cli += '--multimodal'
+            }
+            if ($EarlyStoppingPatience -gt 0) {
+                $cli += @('--early-stop-patience', $EarlyStoppingPatience,
+                          '--early-stop-min-delta', $EarlyStoppingMinDelta)
+            }
+            if ($ImageBackbone) {
+                if ($method -eq 'DANN' -or $method -eq 'DeepCORAL') {
+                    $cli += @('--backbone', 'resnet50')
+                } elseif ($method -eq 'CDAN') {
+                    $cli += @('--backbone', 'ResNet50')
+                } elseif ($method -eq 'MDD' -or $method -eq 'MCC') {
+                    $cli += @('--backbone', 'resnet50')
+                }
+                if ($method -eq 'DeepCORAL') {
+                    $cli += @('--source-batch-size', $ImageBatchSize,
+                              '--target-batch-size', $ImageBatchSize,
+                              '--test-batch-size', $ImageBatchSize)
+                } elseif ($method -ne 'PDA') {
+                    $cli += @('--batch-size', $ImageBatchSize)
+                }
             }
             & $Python @cli *> $log
 

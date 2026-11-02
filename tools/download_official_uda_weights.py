@@ -16,6 +16,14 @@ import urllib.request
 
 WEIGHTS = (
     {
+        "method": "Enhanced DANN/DeepCORAL/CDAN/MDD/MCC (ResNet-50)",
+        "url": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
+        "relative_path": os.path.join(
+            "torch", "hub", "checkpoints", "resnet50-0676ba61.pth"
+        ),
+        "sha256_prefix": "0676ba61",
+    },
+    {
         "method": "CDAN/MDD/MCC",
         "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
         "relative_path": os.path.join(

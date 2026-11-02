@@ -199,13 +199,22 @@ class CustomCLIP(Base_CustomCLIP):
         self.epoch = cfg.EPOCH
         self.warm_up = cfg.WARM_UP
 
+    def _encode_image(self, image, vctx, deep_vctx):
+        """Encode VIS and IR independently, then mean-fuse CLIP features."""
+        if image.shape[1] == 6:
+            vis, ir = image[:, :3], image[:, 3:]
+            vis_features = self.image_encoder(vis.type(self.dtype), vctx, deep_vctx)
+            ir_features = self.image_encoder(ir.type(self.dtype), vctx, deep_vctx)
+            return 0.5 * (vis_features + ir_features)
+        return self.image_encoder(image.type(self.dtype), vctx, deep_vctx)
+
     def forward(self, image, label=None, epoch=None, train=False, construct=False, source=True):
         prompts, deep_ctx, vctx, deep_vctx = self.prompt_learner()
                 
         text_features = self.text_encoder(prompts, self.tokenized_prompts, deep_ctx)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         
-        image_features = self.image_encoder(image.type(self.dtype), vctx, deep_vctx)
+        image_features = self._encode_image(image, vctx, deep_vctx)
         image_features = image_features / image_features.norm(dim=-1, keepdim=True) 
         
         logit_scale = self.logit_scale.exp()
@@ -214,7 +223,7 @@ class CustomCLIP(Base_CustomCLIP):
         text_features_u = self.text_encoder_u(self.tokenized_prompts_u.to(self.logit_scale.device))
         text_features_u = text_features_u / text_features_u.norm(dim=-1, keepdim=True)
         
-        F_u = self.image_encoder(image.type(self.dtype), None, None)   
+        F_u = self._encode_image(image, None, None)
         F_u = F_u / F_u.norm(dim=-1, keepdim=True)
 
         if construct:
@@ -428,5 +437,5 @@ class PDA(BaseDA):
         results_all = results["accuracy"]
 
         return results_all
-             
-            
+
+

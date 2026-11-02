@@ -63,6 +63,12 @@ def main():
             "0 (default) disables early stopping so the full epoch budget is searched"
         ),
     )
+    parser.add_argument(
+        "--early-stopping-min-epochs",
+        type=int,
+        default=50,
+        help="Do not stop before this epoch; 0 allows stopping immediately.",
+    )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--augment", dest="augment", action="store_true")
@@ -78,8 +84,8 @@ def main():
         raise ValueError("label-smoothing must be in [0, 1)")
     if not 0.0 <= args.ais_dropout_probability < 1.0:
         raise ValueError("ais-dropout-probability must be in [0, 1)")
-    if args.early_stopping_patience < 0:
-        raise ValueError("early-stopping-patience cannot be negative")
+    if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
+        raise ValueError("early stopping settings cannot be negative")
     args.seed = seed_everything(args.seed)
     data_root = Path(args.data_root).expanduser().resolve()
     save_dir = Path(args.save_dir).expanduser().resolve()
@@ -181,6 +187,7 @@ def main():
         "label_smoothing": args.label_smoothing,
         "weight_decay": args.weight_decay,
         "early_stopping_patience_evaluations": args.early_stopping_patience,
+        "early_stopping_min_epochs": args.early_stopping_min_epochs,
         "normalization": statistics.to_dict(),
         "batch_size": args.batch_size,
         "optimizer": {
@@ -291,6 +298,7 @@ def main():
                 evaluations_without_improvement += 1
                 if (
                     args.early_stopping_patience
+                    and epoch >= args.early_stopping_min_epochs
                     and evaluations_without_improvement
                     >= args.early_stopping_patience
                 ):
