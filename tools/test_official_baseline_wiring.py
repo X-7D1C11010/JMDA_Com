@@ -88,6 +88,26 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("@('-B', '-u', $scriptPath", launcher)
         self.assertIn("[string[]]$IncludeMethods", launcher)
 
+    def test_uda_launchers_pause_mdd_and_mcc_by_default(self):
+        with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
+                  encoding="utf-8-sig") as f:
+            local_launcher = f.read()
+        self.assertIn("$PausedMethods = @('MDD', 'MCC')", local_launcher)
+        self.assertIn("$Methods.Remove($paused)", local_launcher)
+
+        with open(os.path.join(ROOT, "scripts", "run_server.sh"),
+                  encoding="utf-8") as f:
+            server_launcher = f.read()
+        uda_block = server_launcher.split(
+            'elif [ "$PROTOCOL" = "uda" ]; then', 1
+        )[1].split("\nelse\n", 1)[0]
+        self.assertIn('run "dann_$t"', uda_block)
+        self.assertIn('run "deepcoral_$t"', uda_block)
+        self.assertIn('run "cdan_$t"', uda_block)
+        self.assertIn('run "pda_$t"', uda_block)
+        self.assertNotIn('run "mdd_$t"', uda_block)
+        self.assertNotIn('run "mcc_$t"', uda_block)
+
     def test_pda_dassl_adapter_erases_target_train_labels(self):
         pda_dir = os.path.join(ROOT, "PDA")
         module = load_module(

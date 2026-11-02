@@ -33,9 +33,8 @@
 #   JMDA_GPU_STABLE_CHECKS / JMDA_GPU_POLL_SECONDS  连续空闲检查次数/间隔（默认3/30）
 #   JMDA_GPU_CANDIDATES  可选物理GPU编号或UUID，逗号分隔（默认全部）
 #   GPU_MIN_FREE_<METHOD>_MIB  覆盖各方法最低空闲显存门槛
-#   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_MDD_EPOCHS /
-#   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  各方法训练轮数；默认分别为
-#     100 / 20 / 20 / 20 / 20，与当前采用的各自发布配方一致
+#   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_PDA_EPOCHS
+#     当前参与对比方法的训练轮数；MDD/MCC 暂停，不进入 UDA 队列
 #   CDAN_NUM_ITERATIONS  CDAN 总迭代数（多模态协议默认 2000）
 #   UDA_IMAGE_BATCH_SIZE  双分支 ResNet-50/CLIP 每域批次（默认16）
 #   UDA_NUM_WORKERS / UDA_PREFETCH_FACTOR  对比方法加载进程/每进程预取（默认8/4）
@@ -70,7 +69,7 @@ case "$PROTOCOL" in
 esac
 if [[ "$PROTOCOL" = "uda" && "$#" -ge 2 ]]; then
   echo "uda 协议不接受统一 epochs 参数；各方法默认使用官方预算。"
-  echo "如需覆盖，请设置 UDA_DANN_EPOCHS、UDA_DEEPCORAL_EPOCHS、UDA_MDD_EPOCHS、UDA_MCC_EPOCHS、UDA_PDA_EPOCHS。"
+  echo "如需覆盖，请设置 UDA_DANN_EPOCHS、UDA_DEEPCORAL_EPOCHS、UDA_PDA_EPOCHS。"
   exit 1
 fi
 
@@ -90,8 +89,6 @@ JMDA_PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
 JMDA_RUN_INVARIANT_TESTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 UDA_DANN_EPOCHS="${UDA_DANN_EPOCHS:-100}"
 UDA_DEEPCORAL_EPOCHS="${UDA_DEEPCORAL_EPOCHS:-20}"
-UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
-UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
 UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
 CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-2000}"
 UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
@@ -149,8 +146,6 @@ require_nonnegative_integer() {
 if [[ "$PROTOCOL" = "uda" ]]; then
   require_positive_integer "UDA_DANN_EPOCHS" "$UDA_DANN_EPOCHS"
   require_positive_integer "UDA_DEEPCORAL_EPOCHS" "$UDA_DEEPCORAL_EPOCHS"
-  require_positive_integer "UDA_MDD_EPOCHS" "$UDA_MDD_EPOCHS"
-  require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
   require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
   require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
   require_positive_integer "UDA_IMAGE_BATCH_SIZE" "$UDA_IMAGE_BATCH_SIZE"
@@ -627,8 +622,7 @@ elif [ "$PROTOCOL" = "uda" ]; then
     run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$UDA_DANN_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" --backbone resnet50 --source-batch-size "$UDA_IMAGE_BATCH_SIZE" --target-batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone ResNet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
-    run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd.py"               --target "$t" --epochs "$UDA_MDD_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
-    run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc.py"               --target "$t" --epochs "$UDA_MCC_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    # MDD and MCC are temporarily paused and excluded from comparisons.
     # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
     run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$UDA_PDA_EPOCHS" --batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
   done

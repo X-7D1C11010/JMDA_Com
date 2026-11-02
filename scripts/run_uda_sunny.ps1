@@ -2,7 +2,7 @@
 # UDA experiments: source = 晴天 (sunny), targets = 逆光/雨天/雾天/黑天
 #
 # Without -Multimodal the historical VIS protocol is retained. With
-# -Multimodal, all six methods consume exact-paired VIS+IR observations and
+# -Multimodal, all enabled methods consume exact-paired VIS+IR observations and
 # use the project multimodal extensions documented in MULTIMODAL_UDA_PROTOCOL.md.
 #
 # Per target weather the experiment is INDEPENDENT. Each method x target is run
@@ -47,6 +47,7 @@ param(
     [int]$ImageBatchSize = 16,
     [switch]$EnhancedAugmentation,
     [switch]$Multimodal,
+    [switch]$IncludePausedMethods,
     [int]$EarlyStoppingPatience = 0,
     [double]$EarlyStoppingMinDelta = 0.0,
     [switch]$SkipBenchmark
@@ -76,13 +77,20 @@ $Methods = [ordered]@{
     'MCC'       = 'MCC\train_mcc.py'
     'PDA'       = 'PDA\train_pda.py'
 }
+$PausedMethods = @('MDD', 'MCC')
+if (-not $IncludePausedMethods) {
+    foreach ($paused in $PausedMethods) { $Methods.Remove($paused) }
+}
 if ($IncludeMethods.Count -gt 0) {
     $selected = [ordered]@{}
     foreach ($requested in $IncludeMethods) {
         $canonical = @($Methods.Keys | Where-Object { $_ -ieq $requested })
         if ($canonical.Count -ne 1) {
-            Write-Host ("Unknown method '{0}'. Valid methods: {1}" -f `
-                       $requested, ($Methods.Keys -join ', ')) -ForegroundColor Red
+            $pauseHint = if ($PausedMethods -contains $requested) {
+                ' (temporarily paused; add -IncludePausedMethods to override)'
+            } else { '' }
+            Write-Host ("Unknown or disabled method '{0}'{1}. Available methods: {2}" -f `
+                       $requested, $pauseHint, ($Methods.Keys -join ', ')) -ForegroundColor Red
             exit 1
         }
         $name = $canonical[0]
@@ -165,11 +173,14 @@ Write-Host "=============================================================="
 Write-Host " UDA experiments  (source = sunny, target = other weathers)"
 Write-Host "--------------------------------------------------------------"
 Write-Host " Python  : $Python"
-Write-Host " Epochs  : DANN=$($MethodEpochs.DANN), DeepCORAL=$($MethodEpochs.DeepCORAL), MDD=$($MethodEpochs.MDD), MCC=$($MethodEpochs.MCC), PDA=$($MethodEpochs.PDA)"
+$epochSummary = @($Methods.Keys | Where-Object { $_ -ne 'CDAN' } |
+    ForEach-Object { "$_=$($MethodEpochs[$_])" }) -join ', '
+Write-Host " Epochs  : $epochSummary"
 Write-Host " CDAN iters: $CdanIterations"
 Write-Host " Seeds   : $($Seeds -join ', ')"
 Write-Host " Targets : $($Targets -join ', ')"
 Write-Host " Methods : $($Methods.Keys -join ', ')"
+Write-Host " Paused  : MDD, MCC$(if ($IncludePausedMethods) { ' (override enabled)' } else { '' })"
 Write-Host " OutDir  : $OutDir"
 Write-Host ((" Loader  : train_workers={0}, eval_workers={1}, prefetch={2}, " +
              "persistent={3}, timeout={4}s") -f $EffectiveNumWorkers,
@@ -191,8 +202,9 @@ if (-not $SkipBenchmark) {
     Write-Host "`n[1/2] Efficiency micro-benchmark ..."
     $benchLog = Join-Path $LogDir 'benchmark.log'
     $benchScript = Join-Path $Repo 'tools\benchmark_efficiency.py'
+    $benchmarkMethods = (($Methods.Keys | ForEach-Object { $_.ToLowerInvariant() }) -join ',')
     $benchCli = @('-B', '-u', $benchScript,
-        '--methods', 'dann,deepcoral,cdan,mdd,mcc,pda',
+        '--methods', $benchmarkMethods,
         '--protocol', 'UDA',
         '--benchmark_repeats', $BenchRepeats,
         '--efficiency_output_dir', $OutDir)
