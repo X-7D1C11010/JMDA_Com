@@ -1,0 +1,171 @@
+{
+  "metadata": {
+    "method": "CCSA",
+    "implementation": "official fixed-pair CCSA objective/optimizer with shared-backbone RGB+NIR fusion and continuous-AIS residual adaptation",
+    "seed": 44,
+    "epochs": 80,
+    "source_initialization_epochs": 50,
+    "source_initialization_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/ccsa_vgg16_imagenet1k_v1_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet VGG-16 followed by source_train initialization",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 0,
+    "target_label_mode": "all_available",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "source FC initialization, source CE, and pair semantics",
+    "target_label_usage": "target CE and pair semantics for every target_train sample",
+    "experiment_profile": "VDS2Raw fully supervised CCSA adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "multimodal_adapter": "official ImageNet RGB VGG-16 plus a lightweight NIR residual encoder; continuous AIS residual into the official 128-D embedding",
+    "ais_feature_profile": "continuous heading/length/width",
+    "ais_dropout_probability": 0.5,
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
+    "embedding": [
+      1024,
+      128
+    ],
+    "pair_protocol": "fixed exhaustive cross-domain table; all positives plus up to 3x unique negatives; two successive direction updates per batch",
+    "positive_pairs": 2974,
+    "negative_pairs": 7930,
+    "pairs_per_epoch": 10904,
+    "effective_batch_size": 256,
+    "micro_batch_size": 16,
+    "augmentation": "none; fixed resize256/center-crop224 preprocessing",
+    "normalization": "ImageNet",
+    "optimizer": {
+      "name": "Adadelta",
+      "lr": 1.0,
+      "rho": 0.95,
+      "eps": 1e-07
+    },
+    "loss": {
+      "alpha": 0.25,
+      "margin": 1.0
+    },
+    "early_stopping": {
+      "monitor": "target_test ACC, macro-F1 tie-break",
+      "patience": 8,
+      "min_epochs": 5
+    },
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_ccsa_seed44_run_config.json",
+    "completed_epochs": 9,
+    "stopped_early": true
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "source_ce": 0.9310480894609576,
+      "target_ce": 0.8924594912678003,
+      "source_csa": 1.3102741800608957,
+      "target_csa": 0.81549683024752,
+      "source_total": 1.0258546121109422,
+      "target_total": 0.8732188260127303,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 2,
+      "source_ce": 0.8788624468836046,
+      "target_ce": 0.8104464876509848,
+      "source_csa": 0.409840216949219,
+      "target_csa": 0.395167491838081,
+      "source_total": 0.7616068894000082,
+      "target_total": 0.7066267386977589,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 3,
+      "source_ce": 0.7861071290182216,
+      "target_ce": 0.6974000346713832,
+      "source_csa": 0.3525850987297461,
+      "target_csa": 0.3146630813578321,
+      "source_total": 0.6777266214461027,
+      "target_total": 0.6017157963429954,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 4,
+      "source_ce": 0.7090063635259867,
+      "target_ce": 0.6210259400485527,
+      "source_csa": 0.3306719103968048,
+      "target_csa": 0.306329040145058,
+      "source_total": 0.6144227502436912,
+      "target_total": 0.5423517150726791,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 5,
+      "source_ce": 0.43757709986086757,
+      "target_ce": 0.38213487344217445,
+      "source_csa": 0.2972246787872531,
+      "target_csa": 0.3062023702010005,
+      "source_total": 0.4024889945924639,
+      "target_total": 0.36315174763188096,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 6,
+      "source_ce": 0.46168557992703946,
+      "target_ce": 0.49918098024292185,
+      "source_csa": 0.2617974485146555,
+      "target_csa": 0.3690049581417129,
+      "source_total": 0.4117135470739435,
+      "target_total": 0.4666369747176196,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 7,
+      "source_ce": 0.09662065303841484,
+      "target_ce": 0.08628204726448443,
+      "source_csa": 0.1397368734847294,
+      "target_csa": 0.1341310163792503,
+      "source_total": 0.10739970814999349,
+      "target_total": 0.0982442895431759,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 8,
+      "source_ce": 0.018511284906145148,
+      "target_ce": 0.013064867235481784,
+      "source_csa": 0.05013073977014366,
+      "target_csa": 0.049781047929043,
+      "source_total": 0.026416148622144774,
+      "target_total": 0.022243912408872087,
+      "lr": 1.0,
+      "batches": 42
+    },
+    {
+      "epoch": 9,
+      "source_ce": 0.0005565821372675557,
+      "target_ce": 0.0008436353778268399,
+      "source_csa": 0.01674981105411245,
+      "target_csa": 0.014935841719653538,
+      "source_total": 0.00460488936647878,
+      "target_total": 0.004366686963283514,
+      "lr": 1.0,
+      "batches": 42
+    }
+  ]
+}
