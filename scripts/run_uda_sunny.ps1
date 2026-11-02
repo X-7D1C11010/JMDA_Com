@@ -256,6 +256,10 @@ foreach ($method in $Methods.Keys) {
             if ($method -eq 'PDA') {
                 $cli += @('--class-names-file', $ClassNamesFile,
                           '--clip-cache-dir', $ClipCacheDir)
+                if ($ImageBackbone) {
+                    $cli += @('--batch-size', $ImageBatchSize,
+                              '--test-batch-size', $ImageBatchSize)
+                }
             }
             if ($method -eq 'DeepCORAL' -and $DeepCoralWeights) {
                 $cli += @('--alexnet-weights', $DeepCoralWeights)

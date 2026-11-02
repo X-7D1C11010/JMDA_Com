@@ -6,6 +6,7 @@ param(
     [string]$OutDir = '',
     [string]$DataDir = '',
     [int]$CdanIterations = 2000,
+    [int]$ImageBatchSize = 16,
     [int]$Epochs = 0,
     [int]$NumWorkers = 2,
     [int]$EvalNumWorkers = 0,
@@ -60,7 +61,7 @@ $arguments = @{
     PrefetchFactor = $PrefetchFactor
     WorkerTimeoutSeconds = $WorkerTimeoutSeconds
     ImageBackbone = 'ResNet50'
-    ImageBatchSize = 16
+    ImageBatchSize = $ImageBatchSize
     EnhancedAugmentation = $true
     Multimodal = $true
     EarlyStoppingPatience = 0
@@ -69,6 +70,7 @@ $arguments = @{
 if ($IncludeMethods.Count -gt 0) { $arguments.IncludeMethods = $IncludeMethods }
 
 Write-Host 'Protocol: exact-paired VIS+IR; final model in memory only; no target-val selection; no checkpoint saving.'
+Write-Host "Per-domain batch size: $ImageBatchSize"
 Write-Host "CDAN iterations: $CdanIterations"
 & (Join-Path $PSScriptRoot 'run_uda_sunny.ps1') @arguments
 exit $LASTEXITCODE

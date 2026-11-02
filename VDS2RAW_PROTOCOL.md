@@ -168,14 +168,20 @@ bash scripts/run_vds2raw_background.sh formal
 需要在指定物理 GPU 上优先运行高显存方法时，可覆盖方法顺序和门控参数：
 
 ```bash
-export VDS2RAW_GPU_CANDIDATES=1
+export VDS2RAW_GPU_CANDIDATES="0,1"
 export VDS2RAW_METHOD_ORDER="dsne ccsa mcft3"
-export VDS2RAW_GPU_STABLE_CHECKS=1
-export VDS2RAW_GPU_POLL_SECONDS=2
+export VDS2RAW_GPU_STABLE_CHECKS=3
+export VDS2RAW_GPU_POLL_SECONDS=30
+export VDS2RAW_CCSA_MIN_FREE_MIB=7168
+export VDS2RAW_DSNE_MIN_FREE_MIB=12288
+export VDS2RAW_MCFT_MIN_FREE_MIB=4608
 bash scripts/run_vds2raw_background.sh formal
 ```
 
-这会缩短方法切换空窗，但不能对不遵守本项目锁的其他用户提供 GPU 独占保证。训练代码
+调度器会在候选卡中选择满足当前方法门槛且空闲显存最多的卡。门槛来自当前多模态模型
+正式 batch 单步峰值 reserved 加约 3 GiB：CCSA 3.8652 GiB→7168 MiB、d-SNE
+8.8906 GiB→12288 MiB、MCFT 1.1348 GiB→4608 MiB。它不能对不遵守本项目锁的其他用户
+提供 GPU 独占保证。训练代码
 不会调用 `torch.cuda.empty_cache()`；单个方法内部从训练切换到验证时，模型、优化器及
 PyTorch 缓存分配器仍保持 CUDA 上下文。真正的独占必须由集群调度器或管理员授权的
 GPU exclusive-process 模式提供，不应使用无效张量把显存人为占满。

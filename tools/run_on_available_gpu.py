@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -140,10 +141,14 @@ def parse_args():
     return args
 
 
+def parse_gpu_candidates(raw):
+    candidates = {item for item in re.split(r"[,\s]+", raw.strip()) if item}
+    return candidates or None
+
+
 def main():
     args = parse_args()
-    candidates = {item.strip() for item in args.gpus.split(",") if item.strip()}
-    candidates = candidates or None
+    candidates = parse_gpu_candidates(args.gpus)
     stable_counts: dict[str, int] = {}
     started = time.monotonic()
     lock_path = Path(args.lock_file).expanduser()

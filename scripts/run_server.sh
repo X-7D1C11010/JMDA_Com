@@ -33,8 +33,10 @@
 #   JMDA_GPU_STABLE_CHECKS / JMDA_GPU_POLL_SECONDS  连续空闲检查次数/间隔（默认3/30）
 #   JMDA_GPU_CANDIDATES  可选物理GPU编号或UUID，逗号分隔（默认全部）
 #   GPU_MIN_FREE_<METHOD>_MIB  覆盖各方法最低空闲显存门槛
-#   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_PDA_EPOCHS
-#     当前参与对比方法的训练轮数；MDD/MCC 暂停，不进入 UDA 队列
+#   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_MDD_EPOCHS /
+#   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  所选方法的训练轮数
+#   UDA_METHODS  本次 UDA 方法列表，逗号或空格分隔；默认
+#     DANN,DeepCORAL,CDAN,PDA。服务器重方法可设为 MDD,MCC
 #   CDAN_NUM_ITERATIONS  CDAN 总迭代数（多模态协议默认 2000）
 #   UDA_IMAGE_BATCH_SIZE  双分支 ResNet-50/CLIP 每域批次（默认16）
 #   UDA_NUM_WORKERS / UDA_PREFETCH_FACTOR  对比方法加载进程/每进程预取（默认8/4）
@@ -69,7 +71,7 @@ case "$PROTOCOL" in
 esac
 if [[ "$PROTOCOL" = "uda" && "$#" -ge 2 ]]; then
   echo "uda 协议不接受统一 epochs 参数；各方法默认使用官方预算。"
-  echo "如需覆盖，请设置 UDA_DANN_EPOCHS、UDA_DEEPCORAL_EPOCHS、UDA_PDA_EPOCHS。"
+  echo "如需覆盖，请设置对应的 UDA_<METHOD>_EPOCHS 或 CDAN_NUM_ITERATIONS。"
   exit 1
 fi
 
@@ -89,9 +91,12 @@ JMDA_PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
 JMDA_RUN_INVARIANT_TESTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 UDA_DANN_EPOCHS="${UDA_DANN_EPOCHS:-100}"
 UDA_DEEPCORAL_EPOCHS="${UDA_DEEPCORAL_EPOCHS:-20}"
+UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
+UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
 UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
 CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-2000}"
 UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
+UDA_METHODS="${UDA_METHODS:-DANN,DeepCORAL,CDAN,PDA}"
 UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"
 UDA_PREFETCH_FACTOR="${UDA_PREFETCH_FACTOR:-4}"
 UDA_PIN_MEMORY="${UDA_PIN_MEMORY:-1}"
@@ -122,10 +127,10 @@ GPU_MIN_FREE_CDAN_MIB="${GPU_MIN_FREE_CDAN_MIB:-18000}"
 GPU_MIN_FREE_MDD_MIB="${GPU_MIN_FREE_MDD_MIB:-20000}"
 GPU_MIN_FREE_MCC_MIB="${GPU_MIN_FREE_MCC_MIB:-18000}"
 GPU_MIN_FREE_PDA_MIB="${GPU_MIN_FREE_PDA_MIB:-16000}"
-GPU_MIN_FREE_CCSA_MIB="${GPU_MIN_FREE_CCSA_MIB:-18000}"
-GPU_MIN_FREE_DSNE_MIB="${GPU_MIN_FREE_DSNE_MIB:-30000}"
+GPU_MIN_FREE_CCSA_MIB="${GPU_MIN_FREE_CCSA_MIB:-7168}"
+GPU_MIN_FREE_DSNE_MIB="${GPU_MIN_FREE_DSNE_MIB:-12288}"
 GPU_MIN_FREE_JMDA_MIB="${GPU_MIN_FREE_JMDA_MIB:-20000}"
-GPU_MIN_FREE_MCFT_MIB="${GPU_MIN_FREE_MCFT_MIB:-10000}"
+GPU_MIN_FREE_MCFT_MIB="${GPU_MIN_FREE_MCFT_MIB:-4608}"
 
 require_positive_integer() {
   local name="$1" value="$2"
@@ -143,11 +148,50 @@ require_nonnegative_integer() {
   fi
 }
 
+declare -A UDA_METHOD_ENABLED=()
+UDA_METHOD_TEXT="${UDA_METHODS//,/ }"
+read -r -a UDA_METHOD_ARRAY <<< "$UDA_METHOD_TEXT"
+for method_name in "${UDA_METHOD_ARRAY[@]}"; do
+  method_key="${method_name,,}"
+  case "$method_key" in
+    dann|deepcoral|cdan|mdd|mcc|pda)
+      UDA_METHOD_ENABLED["$method_key"]=1
+      ;;
+    *)
+      echo "UDA_METHODS 包含未知方法: $method_name"
+      echo "允许: DANN, DeepCORAL, CDAN, MDD, MCC, PDA"
+      exit 1
+      ;;
+  esac
+done
+if [ "${#UDA_METHOD_ENABLED[@]}" -eq 0 ]; then
+  echo "UDA_METHODS 至少需要包含一个方法。"
+  exit 1
+fi
+uda_method_enabled() {
+  local requested_key="${1,,}"
+  [ "${UDA_METHOD_ENABLED[$requested_key]:-0}" = "1" ]
+}
+
 if [[ "$PROTOCOL" = "uda" ]]; then
-  require_positive_integer "UDA_DANN_EPOCHS" "$UDA_DANN_EPOCHS"
-  require_positive_integer "UDA_DEEPCORAL_EPOCHS" "$UDA_DEEPCORAL_EPOCHS"
-  require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
-  require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
+  if uda_method_enabled dann; then
+    require_positive_integer "UDA_DANN_EPOCHS" "$UDA_DANN_EPOCHS"
+  fi
+  if uda_method_enabled deepcoral; then
+    require_positive_integer "UDA_DEEPCORAL_EPOCHS" "$UDA_DEEPCORAL_EPOCHS"
+  fi
+  if uda_method_enabled mdd; then
+    require_positive_integer "UDA_MDD_EPOCHS" "$UDA_MDD_EPOCHS"
+  fi
+  if uda_method_enabled mcc; then
+    require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
+  fi
+  if uda_method_enabled pda; then
+    require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
+  fi
+  if uda_method_enabled cdan; then
+    require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
+  fi
   require_positive_integer "UDA_IMAGE_BATCH_SIZE" "$UDA_IMAGE_BATCH_SIZE"
   require_nonnegative_integer "UDA_NUM_WORKERS" "$UDA_NUM_WORKERS"
   require_positive_integer "UDA_PREFETCH_FACTOR" "$UDA_PREFETCH_FACTOR"
@@ -454,7 +498,7 @@ run() {  # run "<log-tag>" <cmd...>
       ;;
   esac
   case "$tag" in
-    jmda_net_*|mcft_*) input_modalities="VIS+IR" ;;
+    dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*|pda_*|jmda_net_*|mcft_*) input_modalities="VIS+IR" ;;
     *) input_modalities="VIS" ;;
   esac
   case "$record_protocol" in
@@ -463,7 +507,6 @@ run() {  # run "<log-tag>" <cmd...>
   esac
   case "$tag" in
     mcft_*) model_selection="official_target_best" ;;
-    mdd_*|mcc_*|pda_*) model_selection="official_target_best" ;;
   esac
   if ! "$PYTHON" "$HERE/tools/collect_run_result.py" \
     --log "$log_path" \
@@ -616,15 +659,29 @@ elif [ "$PROTOCOL" = "uda" ]; then
   else
     UDA_COMMON+=(--no-persistent-workers)
   fi
+  echo "UDA selected methods: $UDA_METHODS"
   echo "UDA multimodal protocol: VIS+IR exact pairs, ResNet-50 dual branches, batch=$UDA_IMAGE_BATCH_SIZE, CDAN iterations=$CDAN_NUM_ITERATIONS, final epoch only, no checkpoint"
   echo "UDA DataLoader: workers=$UDA_NUM_WORKERS prefetch=$UDA_PREFETCH_FACTOR pin_memory=$UDA_PIN_MEMORY persistent_workers=$UDA_PERSISTENT_WORKERS"
   for t in "${TARGETS[@]}"; do
-    run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann.py"             --target "$t" --epochs "$UDA_DANN_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
-    run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py"   --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" --backbone resnet50 --source-batch-size "$UDA_IMAGE_BATCH_SIZE" --target-batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
-    run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan.py"             --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone ResNet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
-    # MDD and MCC are temporarily paused and excluded from comparisons.
+    if uda_method_enabled dann; then
+      run "dann_$t" --record-epochs "$UDA_DANN_EPOCHS" "$PYTHON" "$HERE/DANN/train_dann.py" --target "$t" --epochs "$UDA_DANN_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    fi
+    if uda_method_enabled deepcoral; then
+      run "deepcoral_$t" --record-epochs "$UDA_DEEPCORAL_EPOCHS" "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py" --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" --backbone resnet50 --source-batch-size "$UDA_IMAGE_BATCH_SIZE" --target-batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    fi
+    if uda_method_enabled cdan; then
+      run "cdan_$t"       "$PYTHON" "$HERE/CDAN/train_cdan.py"           --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone ResNet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    fi
+    if uda_method_enabled mdd; then
+      run "mdd_$t" --record-epochs "$UDA_MDD_EPOCHS" "$PYTHON" "$HERE/MDD/train_mdd.py" --target "$t" --epochs "$UDA_MDD_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    fi
+    if uda_method_enabled mcc; then
+      run "mcc_$t" --record-epochs "$UDA_MCC_EPOCHS" "$PYTHON" "$HERE/MCC/train_mcc.py" --target "$t" --epochs "$UDA_MCC_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+    fi
     # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
-    run "pda_$t"          "$PYTHON" "$HERE/PDA/train_pda.py"               --target "$t" --epochs "$UDA_PDA_EPOCHS" --batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
+    if uda_method_enabled pda; then
+      run "pda_$t" --record-epochs "$UDA_PDA_EPOCHS" "$PYTHON" "$HERE/PDA/train_pda.py" --target "$t" --epochs "$UDA_PDA_EPOCHS" --batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
+    fi
   done
 
 else

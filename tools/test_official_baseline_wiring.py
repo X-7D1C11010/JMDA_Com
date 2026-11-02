@@ -88,7 +88,7 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("@('-B', '-u', $scriptPath", launcher)
         self.assertIn("[string[]]$IncludeMethods", launcher)
 
-    def test_uda_launchers_pause_mdd_and_mcc_by_default(self):
+    def test_uda_launchers_split_methods_by_default_and_opt_in(self):
         with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
                   encoding="utf-8-sig") as f:
             local_launcher = f.read()
@@ -101,12 +101,40 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         uda_block = server_launcher.split(
             'elif [ "$PROTOCOL" = "uda" ]; then', 1
         )[1].split("\nelse\n", 1)[0]
+        self.assertIn(
+            'UDA_METHODS="${UDA_METHODS:-DANN,DeepCORAL,CDAN,PDA}"',
+            server_launcher,
+        )
         self.assertIn('run "dann_$t"', uda_block)
         self.assertIn('run "deepcoral_$t"', uda_block)
         self.assertIn('run "cdan_$t"', uda_block)
         self.assertIn('run "pda_$t"', uda_block)
-        self.assertNotIn('run "mdd_$t"', uda_block)
-        self.assertNotIn('run "mcc_$t"', uda_block)
+        self.assertIn('if uda_method_enabled mdd', uda_block)
+        self.assertIn('if uda_method_enabled mcc', uda_block)
+        self.assertIn('run "mdd_$t"', uda_block)
+        self.assertIn('run "mcc_$t"', uda_block)
+
+        with open(os.path.join(ROOT, "scripts", "run_server_mdd_mcc_background.sh"),
+                  encoding="utf-8") as f:
+            heavy_launcher = f.read()
+        self.assertIn('export UDA_METHODS="MDD,MCC"', heavy_launcher)
+        self.assertIn('TARGET="${1:-backlight}"', heavy_launcher)
+        self.assertIn('SEED="${2:-42}"', heavy_launcher)
+        self.assertIn('JMDA_GPU_CANDIDATES:-0,1', heavy_launcher)
+
+    def test_local_split_launcher_uses_small_batch_and_forwards_it_to_pda(self):
+        with open(os.path.join(ROOT, "scripts", "run_local_uda_four.ps1"),
+                  encoding="utf-8-sig") as f:
+            split_launcher = f.read()
+        self.assertIn("[int]$BatchSize = 4", split_launcher)
+        self.assertIn("@('DANN', 'DeepCORAL', 'CDAN', 'PDA')", split_launcher)
+        self.assertIn("2000.0 * 16.0 / $BatchSize", split_launcher)
+
+        with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
+                  encoding="utf-8-sig") as f:
+            local_launcher = f.read()
+        self.assertIn("if ($method -eq 'PDA')", local_launcher)
+        self.assertIn("'--test-batch-size', $ImageBatchSize", local_launcher)
 
     def test_pda_dassl_adapter_erases_target_train_labels(self):
         pda_dir = os.path.join(ROOT, "PDA")
@@ -178,7 +206,8 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn('UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"', launcher)
         self.assertIn('--num-workers "$UDA_NUM_WORKERS"', launcher)
         self.assertIn('--prefetch-factor "$UDA_PREFETCH_FACTOR"', launcher)
-        self.assertIn('mdd_*|mcc_*|pda_*) model_selection="official_target_best"', launcher)
+        self.assertNotIn('mdd_*|mcc_*|pda_*) model_selection="official_target_best"', launcher)
+        self.assertIn('mdd_*|mcc_*|pda_*|jmda_net_*|mcft_*) input_modalities="VIS+IR"', launcher)
 
 
 if __name__ == "__main__":

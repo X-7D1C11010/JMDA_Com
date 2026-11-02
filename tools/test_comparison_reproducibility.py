@@ -38,7 +38,26 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn("JMDA_CCSA_MIN_FREE_MIB", launcher)
         self.assertIn("JMDA_DSNE_MIN_FREE_MIB", launcher)
         self.assertIn("JMDA_MCFT_MIN_FREE_MIB", launcher)
+        self.assertIn('JMDA_CCSA_MIN_FREE_MIB:-7168', launcher)
+        self.assertIn('JMDA_DSNE_MIN_FREE_MIB:-12288', launcher)
+        self.assertIn('JMDA_MCFT_MIN_FREE_MIB:-4608', launcher)
         self.assertIn('gpu_args+=(--gpus "$GPU_CANDIDATES")', launcher)
+
+    def test_vds2raw_suite_uses_measured_memory_gate_defaults(self):
+        launcher = (ROOT / "scripts/run_vds2raw_methods.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('VDS2RAW_CCSA_MIN_FREE_MIB:-7168', launcher)
+        self.assertIn('VDS2RAW_DSNE_MIN_FREE_MIB:-12288', launcher)
+        self.assertIn('VDS2RAW_MCFT_MIN_FREE_MIB:-4608', launcher)
+
+    def test_efficiency_benchmark_records_actual_training_probe_batch(self):
+        benchmark = (ROOT / "tools/benchmark_efficiency.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("'batch_size': train_bs", benchmark)
+        self.assertIn("--benchmark_train_warmup", benchmark)
+        self.assertIn("--benchmark_train_iters", benchmark)
 
     def test_every_launched_comparison_entrypoint_applies_seed(self):
         for relative_path in COMPARISON_ENTRYPOINTS:

@@ -1,9 +1,19 @@
 import unittest
 
-from tools.run_on_available_gpu import GpuState, eligible_gpus, parse_nvidia_smi
+from tools.run_on_available_gpu import (
+    GpuState,
+    eligible_gpus,
+    parse_gpu_candidates,
+    parse_nvidia_smi,
+)
 
 
 class GpuSchedulerTests(unittest.TestCase):
+    def test_candidate_parser_accepts_commas_and_spaces(self):
+        self.assertEqual(parse_gpu_candidates("0,1"), {"0", "1"})
+        self.assertEqual(parse_gpu_candidates("0 1"), {"0", "1"})
+        self.assertIsNone(parse_gpu_candidates("  "))
+
     def test_parse_and_choose_highest_free_eligible_gpu(self):
         states = parse_nvidia_smi(
             "0, GPU-a, 12528, 90\n"

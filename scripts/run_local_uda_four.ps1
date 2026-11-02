@@ -1,0 +1,46 @@
+param(
+    [string]$Target = 'backlight',
+    [int]$Seed = 42,
+    [int]$BatchSize = 4,
+    [int]$CdanIterations = 0,
+    [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
+    [string]$OutDir = '',
+    [string]$DataDir = ''
+)
+
+$ErrorActionPreference = 'Stop'
+$Repo = Split-Path -Parent $PSScriptRoot
+$validTargets = @('backlight', 'rainy', 'foggy', 'dark')
+if ($Target -notin $validTargets) {
+    throw "Unknown target '$Target'. Valid targets: $($validTargets -join ', ')"
+}
+if ($BatchSize -lt 2) {
+    throw 'BatchSize must be at least 2.'
+}
+if ($CdanIterations -le 0) {
+    # The reference local/server protocol is 2000 updates at batch 16. Keep
+    # approximately the same number of source/target observations when using
+    # a smaller local batch.
+    $CdanIterations = [int][math]::Ceiling(2000.0 * 16.0 / $BatchSize)
+}
+if (-not $OutDir) {
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $OutDir = Join-Path $Repo "efficiency_results\uda_local_four_${Target}_seed${Seed}_$stamp"
+}
+
+$arguments = @{
+    Seeds = @($Seed)
+    Targets = @($Target)
+    IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'PDA')
+    Python = $Python
+    OutDir = $OutDir
+    CdanIterations = $CdanIterations
+    ImageBatchSize = $BatchSize
+    SkipBenchmark = $true
+}
+if ($DataDir) { $arguments.DataDir = $DataDir }
+
+Write-Host 'Local split: DANN, DeepCORAL, CDAN, PDA only.'
+Write-Host "Target=$Target Seed=$Seed BatchSize=$BatchSize CDAN iterations=$CdanIterations"
+& (Join-Path $PSScriptRoot 'run_uda_multimodal.ps1') @arguments
+exit $LASTEXITCODE

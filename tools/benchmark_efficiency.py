@@ -624,7 +624,8 @@ def run_benchmark(adapter, args, device, output_dir):
     try:
         step_info = measure_train_step(model, inp_train, optimizer,
                                         adapter['forward_loss'], device,
-                                        warmup=5, iters=20)
+                                        warmup=args.benchmark_train_warmup,
+                                        iters=args.benchmark_train_iters)
         print(f"  train step: mean={step_info['train_step_mean_ms']}ms  "
               f"fwd={step_info['train_fwd_ms']}ms  bwd={step_info['train_bwd_ms']}ms  "
               f"opt={step_info['train_opt_ms']}ms")
@@ -660,7 +661,7 @@ def run_benchmark(adapter, args, device, output_dir):
         'pytorch': env['pytorch'],
         'cuda': env['cuda'],
         'precision': args.benchmark_precision,
-        'batch_size': 1,
+        'batch_size': train_bs,
         'vis_shape': vis_shape,
         'ir_shape': ir_shape,
         'ais_shape': ais_shape,
@@ -860,6 +861,8 @@ def main():
     parser.add_argument('--benchmark_batch_sizes', type=str, default='1,8')
     parser.add_argument('--benchmark_precision', type=str, default='fp32')
     parser.add_argument('--benchmark_train_batch_size', type=int, default=8)
+    parser.add_argument('--benchmark_train_warmup', type=int, default=5)
+    parser.add_argument('--benchmark_train_iters', type=int, default=20)
     parser.add_argument('--efficiency_output_dir', type=str,
                         default=os.path.join(PROJ, 'efficiency_results'))
     parser.add_argument('--device', type=str, default='cuda:0')
@@ -893,6 +896,8 @@ def main():
         args.benchmark_warmup = 5
         args.benchmark_iters = 20
         args.benchmark_repeats = 1
+        args.benchmark_train_warmup = min(args.benchmark_train_warmup, 1)
+        args.benchmark_train_iters = min(args.benchmark_train_iters, 3)
 
     os.makedirs(args.efficiency_output_dir, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
