@@ -134,7 +134,13 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
         y_s, y_t = y.chunk(2, dim=0)
         cls_loss = F.cross_entropy(y_s, labels_s)
         transfer_loss = mcc(y_t)
-        loss = cls_loss + transfer_loss * args.trade_off
+        if args.trade_off_warmup_epochs > 0:
+            completed_updates = (epoch - 1) * args.iters_per_epoch + i + 1
+            warmup_updates = args.trade_off_warmup_epochs * args.iters_per_epoch
+            transfer_weight = args.trade_off * min(1.0, completed_updates / warmup_updates)
+        else:
+            transfer_weight = args.trade_off
+        loss = cls_loss + transfer_loss * transfer_weight
         loss.backward()
         optimizer.step()
         lr_scheduler.step()
@@ -145,7 +151,8 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
             acc = accuracy(y_s, labels_s)[0]
             print(f'  Epoch [{epoch}/{args.epochs}] iter [{i + 1}/{args.iters_per_epoch}] '
                   f'loss={loss.item():.4f} cls={cls_loss.item():.4f} '
-                  f'mcc={transfer_loss.item():.4f} src_acc={acc.item():.2f}',
+                  f'mcc={transfer_loss.item():.4f} transfer_weight={transfer_weight:.4f} '
+                  f'src_acc={acc.item():.2f}',
                   flush=True)
 
 
@@ -163,6 +170,8 @@ def main():
     parser.add_argument('--wd', default=1e-3, type=float)
     parser.add_argument('--temperature', default=2.5, type=float)
     parser.add_argument('--trade-off', default=1., type=float)
+    parser.add_argument('--trade-off-warmup-epochs', default=0, type=int,
+                        help='linearly ramp MCC weight during the first N epochs')
     parser.add_argument('--bottleneck-dim', default=256, type=int)
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
@@ -186,6 +195,8 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
+    if args.iters_per_epoch < 1 or args.trade_off < 0 or args.trade_off_warmup_epochs < 0:
+        raise ValueError('invalid MCC iterations/trade-off/warmup setting')
     if args.early_stop_patience < 0:
         raise ValueError('--early-stop-patience must be >= 0')
     if args.early_stop_patience:

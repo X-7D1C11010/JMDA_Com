@@ -63,8 +63,10 @@ from uda_multimodal import paired_dataset, split_modalities, describe_pairing
 class DualResNetFc(nn.Module):
     """CDAN feature extractor with independent VIS/IR ResNet branches."""
 
-    def __init__(self, resnet_name, class_num, bottleneck_dim=256):
+    def __init__(self, resnet_name, class_num, bottleneck_dim=256,
+                 head_lr_mult=10.0):
         super().__init__()
+        self.head_lr_mult = float(head_lr_mult)
         self.vis = ResNetFc(resnet_name=resnet_name, use_bottleneck=True,
                             bottleneck_dim=bottleneck_dim, new_cls=True,
                             class_num=class_num)
@@ -84,11 +86,11 @@ class DualResNetFc(nn.Module):
     def get_parameters(self):
         return [
             {'params': self.vis.feature_layers.parameters(), 'lr_mult': 1, 'decay_mult': 2},
-            {'params': self.vis.bottleneck.parameters(), 'lr_mult': 10, 'decay_mult': 2},
+            {'params': self.vis.bottleneck.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
             {'params': self.ir.feature_layers.parameters(), 'lr_mult': 1, 'decay_mult': 2},
-            {'params': self.ir.bottleneck.parameters(), 'lr_mult': 10, 'decay_mult': 2},
-            {'params': self.fusion.parameters(), 'lr_mult': 10, 'decay_mult': 2},
-            {'params': self.fc.parameters(), 'lr_mult': 10, 'decay_mult': 2},
+            {'params': self.ir.bottleneck.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
+            {'params': self.fusion.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
+            {'params': self.fc.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
         ]
 
 
@@ -163,6 +165,10 @@ def main():
                         help='inv 调度参数 γ（原参考实现 0.001）')
     parser.add_argument('--lr-decay', type=float, default=0.75,
                         help='inv 调度参数 power（原参考实现 0.75）')
+    parser.add_argument('--head-lr-mult', type=float, default=10.0,
+                        help='multiplier for multimodal bottleneck/fusion/classifier groups')
+    parser.add_argument('--coeff-max-iter', type=int, default=0,
+                        help='GRL ramp length; 0 uses --num-iterations')
     parser.add_argument('--method', type=str, default='CDAN+E',
                         choices=['CDAN', 'CDAN+E'],
                         help='原参考实现 train_image.py:198 默认 CDAN+E（熵条件化，论文最优变体）')
@@ -193,6 +199,10 @@ def main():
         raise ValueError('--early-stop-patience must be >= 0')
     if args.early_stop_patience:
         raise ValueError('target-validation early stopping is disabled by this protocol')
+    if (args.num_iterations < 1 or args.test_interval < 1 or
+            args.head_lr_mult <= 0 or args.coeff_max_iter < 0):
+        raise ValueError('invalid CDAN iteration/evaluation/lr-mult/ramp setting')
+    coeff_max_iter = args.coeff_max_iter or args.num_iterations
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
 
@@ -247,7 +257,8 @@ def main():
                             drop_last=True, **loader_kwargs)
 
     if args.multimodal:
-        model = DualResNetFc(args.backbone, num_classes).to(device)
+        model = DualResNetFc(args.backbone, num_classes,
+                             head_lr_mult=args.head_lr_mult).to(device)
         print(f'CDAN-MM backbone: dual {args.backbone} VIS+IR branches')
     else:
         model = ResNetFc(resnet_name=args.backbone, use_bottleneck=True,
@@ -265,7 +276,7 @@ def main():
         random_layer = None
         ad_net = AdversarialNetwork(in_feature=256 * num_classes,
                                     hidden_size=1024).to(device)
-    ad_net.max_iter = float(args.num_iterations)
+    ad_net.max_iter = float(coeff_max_iter)
     print(f'Random projection (--random): {args.random}; '
           f'ad_net input dim={256 * num_classes if not args.random else 1024}')
 
@@ -345,7 +356,7 @@ def main():
         if args.method == 'CDAN+E':
             entropy = Entropy(softmax_out)
             loss_transfer = CDAN([features, softmax_out], ad_net, entropy,
-                                 calc_coeff(iter_num), random_layer)
+                                 calc_coeff(iter_num, max_iter=coeff_max_iter), random_layer)
         else:
             loss_transfer = CDAN([features, softmax_out], ad_net,
                                  None, None, random_layer)
@@ -361,12 +372,14 @@ def main():
                 iter_num == args.num_iterations - 1):
             print(f'  iter [{iter_num + 1}/{args.num_iterations}] '
                   f'loss_cls={loss_cls.item():.4f} loss_transfer={loss_transfer.item():.4f} '
-                  f'coeff={calc_coeff(iter_num):.4f} '
+                  f'coeff={calc_coeff(iter_num, max_iter=coeff_max_iter):.4f} '
                   f'lr={optimizer.param_groups[0]["lr"]:.2e}')
 
-        # Target labels never control optimization or stopping. Evaluate only
-        # the final in-memory model; --test-interval remains a logging block size.
-        if iter_num == args.num_iterations - 1:
+        # Diagnostic target evaluation is periodic, but never controls
+        # gradients, stopping, checkpoint choice, or the final in-memory model.
+        should_evaluate = ((iter_num + 1) % args.test_interval == 0 or
+                           iter_num == args.num_iterations - 1)
+        if should_evaluate:
             val_metrics = evaluate_10crop(model, tgt_val_list, label_map,
                                           device, num_classes,
                                           num_workers=args.eval_num_workers,
@@ -375,7 +388,8 @@ def main():
                                           worker_timeout_seconds=args.worker_timeout_seconds,
                                           multimodal=args.multimodal)
             acc = val_metrics['accuracy']
-            final_acc = acc
+            if iter_num == args.num_iterations - 1:
+                final_acc = acc
             print(f'iter [{iter_num + 1}/{args.num_iterations}] '
                   f'target val accuracy (10-crop): {acc:.4f}')
             print(format_classification_metrics(val_metrics))
@@ -386,7 +400,7 @@ def main():
                 evaluations_without_improvement = 0
             else:
                 evaluations_without_improvement += 1
-            if eff:
+            if eff and iter_num == args.num_iterations - 1:
                 eff.epoch_end(block)
             if (args.early_stop_patience and
                     evaluations_without_improvement >= args.early_stop_patience):

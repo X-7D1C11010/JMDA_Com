@@ -34,6 +34,28 @@ param(
     [int]$MDDEpochs = 20,
     [int]$MCCEpochs = 20,
     [int]$PDAEpochs = 20,
+    [double]$DANNLearningRate = 0.001,
+    [double]$DeepCoralLearningRate = 0.001,
+    [double]$CDANLearningRate = 0.001,
+    [double]$MDDLearningRate = 0.004,
+    [double]$MCCLearningRate = 0.005,
+    [double]$PDALearningRate = 0.003,
+    [double]$DANNDomainLossWeight = 1.0,
+    [int]$DANNTargetEvalInterval = 0,
+    [double]$DeepCoralMaxWeight = 1.0,
+    [double]$DeepCoralWeightDecay = 0.0,
+    [int]$DeepCoralTargetEvalInterval = 0,
+    [double]$CDANHeadLearningRateMultiplier = 10.0,
+    [int]$CDANCoeffMaxIterations = 0,
+    [int]$CDANTestInterval = 500,
+    [int]$MDDIterationsPerEpoch = 1000,
+    [double]$MDDTradeOff = 1.0,
+    [int]$MCCIterationsPerEpoch = 1000,
+    [double]$MCCTradeOff = 1.0,
+    [int]$MCCTradeOffWarmupEpochs = 0,
+    [int]$PDAWarmupEpochs = 1,
+    [double]$PDAConfidenceThreshold = 0.9,
+    [int]$PDATargetEvalInterval = 0,
     [string]$ClassNamesFile = $env:JMDA_CLASS_NAMES_FILE,
     [string]$ClipCacheDir = '',
     [string]$DeepCoralWeights = '',
@@ -108,6 +130,14 @@ $MethodEpochs = [ordered]@{
     'MCC'       = $MCCEpochs
     'PDA'       = $PDAEpochs
 }
+$MethodLearningRates = [ordered]@{
+    'DANN'      = $DANNLearningRate
+    'DeepCORAL' = $DeepCoralLearningRate
+    'CDAN'      = $CDANLearningRate
+    'MDD'       = $MDDLearningRate
+    'MCC'       = $MCCLearningRate
+    'PDA'       = $PDALearningRate
+}
 if ($Epochs -gt 0) {
     foreach ($name in @($MethodEpochs.Keys)) { $MethodEpochs[$name] = $Epochs }
 }
@@ -129,8 +159,26 @@ if ($ImageBatchSize -lt 2) {
     Write-Host 'ImageBatchSize must be >= 2.' -ForegroundColor Red
     exit 1
 }
+foreach ($methodName in $Methods.Keys) {
+    if ($MethodLearningRates[$methodName] -le 0) {
+        Write-Host "Learning rate for $methodName must be positive." -ForegroundColor Red
+        exit 1
+    }
+}
 if ($EarlyStoppingPatience -lt 0 -or $EarlyStoppingMinDelta -lt 0) {
     Write-Host 'Early stopping patience/min-delta must be non-negative.' -ForegroundColor Red
+    exit 1
+}
+if ($DANNDomainLossWeight -lt 0 -or $DANNTargetEvalInterval -lt 0 -or
+    $DeepCoralMaxWeight -lt 0 -or $DeepCoralWeightDecay -lt 0 -or
+    $DeepCoralTargetEvalInterval -lt 0 -or
+    $CDANHeadLearningRateMultiplier -le 0 -or $CDANCoeffMaxIterations -lt 0 -or
+    $CDANTestInterval -lt 1 -or $MDDIterationsPerEpoch -lt 1 -or
+    $MDDTradeOff -lt 0 -or $MCCIterationsPerEpoch -lt 1 -or
+    $MCCTradeOff -lt 0 -or $MCCTradeOffWarmupEpochs -lt 0 -or
+    $PDAWarmupEpochs -lt 0 -or $PDAConfidenceThreshold -le 0 -or
+    $PDAConfidenceThreshold -ge 1 -or $PDATargetEvalInterval -lt 0) {
+    Write-Host 'Invalid method-specific tuning settings.' -ForegroundColor Red
     exit 1
 }
 if ($EarlyStoppingPatience -gt 0) {
@@ -180,6 +228,9 @@ Write-Host " CDAN iters: $CdanIterations"
 Write-Host " Seeds   : $($Seeds -join ', ')"
 Write-Host " Targets : $($Targets -join ', ')"
 Write-Host " Methods : $($Methods.Keys -join ', ')"
+Write-Host (" LR      : " + (@($Methods.Keys | ForEach-Object {
+    "$_=$($MethodLearningRates[$_])"
+}) -join ', '))
 Write-Host " Paused  : MDD, MCC$(if ($IncludePausedMethods) { ' (override enabled)' } else { '' })"
 Write-Host " OutDir  : $OutDir"
 Write-Host ((" Loader  : train_workers={0}, eval_workers={1}, prefetch={2}, " +
@@ -235,6 +286,9 @@ foreach ($method in $Methods.Keys) {
             $cli = @('-B', '-u', $scriptPath,
                      '--target', $target,
                      '--seed', $seed,
+                     '--lr', ([Convert]::ToString(
+                         $MethodLearningRates[$method],
+                         [Globalization.CultureInfo]::InvariantCulture)),
                      '--data-dir', $DataDir,
                      '--efficiency_output_dir', $OutDir,
                      '--save-dir', $checkpointDir,
@@ -249,13 +303,51 @@ foreach ($method in $Methods.Keys) {
             $cli += @('--eval-num-workers', $EvalNumWorkers,
                       '--worker-timeout-seconds', $WorkerTimeoutSeconds)
             if ($method -eq 'CDAN') {
-                $cli += @('--num-iterations', $CdanIterations)
+                $cli += @('--num-iterations', $CdanIterations,
+                          '--test-interval', $CDANTestInterval,
+                          '--head-lr-mult', ([Convert]::ToString(
+                              $CDANHeadLearningRateMultiplier,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--coeff-max-iter', $CDANCoeffMaxIterations)
             } else {
                 $cli += @('--epochs', $MethodEpochs[$method])
             }
+            if ($method -eq 'DANN') {
+                $cli += @('--domain-loss-weight', ([Convert]::ToString(
+                              $DANNDomainLossWeight,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--target-eval-interval', $DANNTargetEvalInterval)
+            }
+            if ($method -eq 'DeepCORAL') {
+                $cli += @('--coral-max-weight', ([Convert]::ToString(
+                              $DeepCoralMaxWeight,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--weight-decay', ([Convert]::ToString(
+                              $DeepCoralWeightDecay,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--target-eval-interval', $DeepCoralTargetEvalInterval)
+            }
+            if ($method -eq 'MDD') {
+                $cli += @('--iters-per-epoch', $MDDIterationsPerEpoch,
+                          '--trade-off', ([Convert]::ToString(
+                              $MDDTradeOff,
+                              [Globalization.CultureInfo]::InvariantCulture)))
+            }
+            if ($method -eq 'MCC') {
+                $cli += @('--iters-per-epoch', $MCCIterationsPerEpoch,
+                          '--trade-off', ([Convert]::ToString(
+                              $MCCTradeOff,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--trade-off-warmup-epochs', $MCCTradeOffWarmupEpochs)
+            }
             if ($method -eq 'PDA') {
                 $cli += @('--class-names-file', $ClassNamesFile,
-                          '--clip-cache-dir', $ClipCacheDir)
+                          '--clip-cache-dir', $ClipCacheDir,
+                          '--warmup-epochs', $PDAWarmupEpochs,
+                          '--confidence-threshold', ([Convert]::ToString(
+                              $PDAConfidenceThreshold,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--target-eval-interval', $PDATargetEvalInterval)
                 if ($ImageBackbone) {
                     $cli += @('--batch-size', $ImageBatchSize,
                               '--test-batch-size', $ImageBatchSize)

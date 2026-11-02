@@ -182,8 +182,32 @@ class BaseDA(TrainerXU):
     def after_epoch(self):
         last_epoch = (self.epoch + 1) == self.max_epoch
         do_test = not self.cfg.TEST.NO_TEST
+        diagnostic_interval = getattr(
+            self.cfg.TRAIN, "DIAGNOSTIC_TARGET_EVAL_INTERVAL", 0
+        )
+        diagnostic_eval = (
+            do_test and diagnostic_interval > 0 and
+            ((self.epoch + 1) % diagnostic_interval == 0 or last_epoch)
+        )
         meet_checkpoint_freq = ((self.epoch + 1) % self.cfg.TRAIN.CHECKPOINT_FREQ == 0 
                                 if self.cfg.TRAIN.CHECKPOINT_FREQ > 0 else False)
+
+        if diagnostic_eval and self.cfg.TEST.FINAL_MODEL != "best_val":
+            curr_result = self.test()
+            if not hasattr(self, "diagnostic_best_result"):
+                self.diagnostic_best_result = -float("inf")
+                self.diagnostic_best_epoch = 0
+            if curr_result > self.diagnostic_best_result:
+                self.diagnostic_best_result = curr_result
+                self.diagnostic_best_epoch = self.epoch + 1
+            print(
+                "Diagnostic target accuracy at epoch {}: {:.4f}; peak {:.4f} "
+                "at epoch {} (not used for model selection)".format(
+                    self.epoch + 1, curr_result,
+                    self.diagnostic_best_result, self.diagnostic_best_epoch,
+                )
+            )
+            self.set_model_mode("train")
 
         if do_test and self.cfg.TEST.FINAL_MODEL == "best_val":
             curr_result = self.test()

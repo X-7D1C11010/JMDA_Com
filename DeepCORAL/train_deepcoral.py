@@ -141,8 +141,11 @@ class ResNetDeepCORAL(nn.Module):
         vis, ir = split_modalities(images)
         return torch.cat((self.sharedNet(vis), self.irNet(ir)), dim=1)
 
+    def predict_components(self, images):
+        return {'fused': self.fc(self.features(images))}
+
     def forward(self, source, target):
-        return (self.fc(self.features(source)), self.fc(self.features(target)))
+        return self.predict_components(source), self.predict_components(target)
 
 
 def get_transforms(backbone='alexnet', enhanced_augmentation=False):
@@ -174,16 +177,23 @@ def get_transforms(backbone='alexnet', enhanced_augmentation=False):
 
 def evaluate(model, loader, device, num_classes):
     model.eval()
-    all_labels, all_predictions = [], []
+    all_labels = []
+    predictions = {'fused': [], 'vis': [], 'ir': []}
     with torch.no_grad():
         for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
-            features = model.features(imgs) if hasattr(model, 'features') else model.sharedNet(imgs)
-            out = model.fc(features)
-            pred = out.argmax(1)
+            if hasattr(model, 'predict_components'):
+                outputs = model.predict_components(imgs)
+            else:
+                outputs = {'fused': model.fc(model.sharedNet(imgs))}
             all_labels.extend(labels.cpu().tolist())
-            all_predictions.extend(pred.cpu().tolist())
-    return classification_metrics(all_labels, all_predictions, num_classes=num_classes)
+            for name, output in outputs.items():
+                predictions[name].extend(output.argmax(1).cpu().tolist())
+    metrics = {
+        name: classification_metrics(all_labels, values, num_classes=num_classes)
+        for name, values in predictions.items() if values
+    }
+    return metrics
 
 
 def main():
@@ -200,6 +210,10 @@ def main():
                         help='官方 main.py BATCH_SIZE[1]')
     parser.add_argument('--test-batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--coral-max-weight', type=float, default=1.0,
+                        help='maximum CORAL loss weight after linear ramp-up')
+    parser.add_argument('--target-eval-interval', type=int, default=0,
+                        help='diagnostic target-val interval in epochs; 0 means final only')
     parser.add_argument('--weight-decay', type=float, default=0.0,
                         help='官方 main.py 定义 5e-4 但实际未传给 SGD，故默认 0')
     parser.add_argument('--alexnet-weights', type=str, default='',
@@ -236,6 +250,8 @@ def main():
         raise ValueError('target-validation early stopping is disabled by this protocol')
     if args.epochs < 1 or args.max_iterations < 0:
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
+    if args.coral_max_weight < 0 or args.target_eval_interval < 0:
+        raise ValueError('--coral-max-weight and --target-eval-interval must be >= 0')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
 
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
@@ -249,6 +265,7 @@ def main():
         lambda path, transform, mapping: UdaImageListDataset(
             path, transform=transform, label_map=mapping))
     src_ds = dataset_factory(src_list, train_tf, label_map)
+    src_eval_ds = dataset_factory(src_list, val_tf, label_map)
     tgt_ds = dataset_factory(tgt_train_list, train_tf, label_map)
     tgt_val_ds = dataset_factory(tgt_val_list, val_tf, label_map)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
@@ -268,6 +285,8 @@ def main():
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
     src_loader = DataLoader(src_ds, batch_size=args.source_batch_size, shuffle=True,
                             drop_last=True, **loader_kwargs)
+    src_eval_loader = DataLoader(src_eval_ds, batch_size=args.test_batch_size,
+                                 shuffle=False, **eval_loader_kwargs)
     tgt_loader = DataLoader(tgt_ds, batch_size=args.target_batch_size, shuffle=True,
                             drop_last=True, **loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
@@ -277,7 +296,8 @@ def main():
         model = ResNetDeepCORAL(num_classes=num_classes,
                                 multimodal=args.multimodal).to(device)
         print('DeepCORAL architecture: ImageNet ResNet-50 '
-              + ('dual VIS+IR branches' if args.multimodal else 'VIS branch'))
+              + ('dual VIS+IR feature concatenation'
+                 if args.multimodal else 'VIS branch'))
     else:
         if args.multimodal:
             raise ValueError('--multimodal requires --backbone resnet50')
@@ -285,11 +305,12 @@ def main():
         load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
         print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
     # 官方 main.py：新分类层为 10x lr，主干为 base lr，momentum=0.9。
-    optimizer = optim.SGD([
-        {'params': model.sharedNet.parameters()},
-        *([{'params': model.irNet.parameters()}] if getattr(model, 'irNet', None) is not None else []),
-        {'params': model.fc.parameters(), 'lr': 10 * args.lr},
-    ], lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    optimizer_groups = [{'params': model.sharedNet.parameters()}]
+    if getattr(model, 'irNet', None) is not None:
+        optimizer_groups.append({'params': model.irNet.parameters()})
+    optimizer_groups.append({'params': model.fc.parameters(), 'lr': 10 * args.lr})
+    optimizer = optim.SGD(optimizer_groups, lr=args.lr, momentum=0.9,
+                          weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
           f'{[group["lr"] for group in optimizer.param_groups]}')
     criterion = nn.CrossEntropyLoss()
@@ -327,8 +348,10 @@ def main():
             eff.epoch_start(epoch)
         model.train()
         # 原参考实现 main.py:148：CORAL 权重 λ=(e+1)/EPOCHS 随 epoch 线性递增
-        _lambda = ((global_step + 1) / planned_updates if args.max_iterations
-                   else (epoch + 1) / args.epochs)
+        _lambda = args.coral_max_weight * (
+            (global_step + 1) / planned_updates if args.max_iterations
+            else (epoch + 1) / args.epochs
+        )
         # 原参考实现 main.py:29：train_steps = min(len(source), len(target))，
         # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
@@ -337,7 +360,7 @@ def main():
 
         for i in range(batches_this_epoch):
             if args.max_iterations:
-                _lambda = (global_step + 1) / planned_updates
+                _lambda = args.coral_max_weight * (global_step + 1) / planned_updates
             if eff:
                 eff.step_start()
             src_imgs, src_labels = next(src_iter)
@@ -349,11 +372,16 @@ def main():
             if eff:
                 eff.dataloader_done()
 
-            src_out, tgt_out = model(src_imgs, tgt_imgs)
+            src_outputs, tgt_outputs = model(src_imgs, tgt_imgs)
+            # The bundled official AlexNet returns raw tensors, while the
+            # ResNet wrapper returns a named fused output.
+            if not isinstance(src_outputs, dict):
+                src_outputs = {'fused': src_outputs}
+                tgt_outputs = {'fused': tgt_outputs}
 
-            loss_cls = criterion(src_out, src_labels)
+            loss_cls = criterion(src_outputs['fused'], src_labels)
             # 原参考实现 main.py:46：CORAL 作用于 fc 输出（softmax 前 logits）。
-            loss_coral = CORAL(src_out, tgt_out)
+            loss_coral = CORAL(src_outputs['fused'], tgt_outputs['fused'])
             loss = loss_cls + _lambda * loss_coral
 
             optimizer.zero_grad()
@@ -367,26 +395,39 @@ def main():
                 print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
                       f'update [{global_step}/{planned_updates}] '
                       f'lambda={_lambda:.4f} '
-                      f'loss_cls={loss_cls.item():.4f} loss_coral={loss_coral.item():.4f}')
+                      f'loss_cls={loss_cls.item():.4f} '
+                      f'loss_coral={loss_coral.item():.4f}')
 
-        if global_step < planned_updates:
-            if eff:
-                eff.epoch_end(epoch)
-            continue
-        val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
-        acc = val_metrics['accuracy']
-        final_acc = acc
-        print(f'After update [{global_step}/{planned_updates}] target val accuracy: {acc:.4f}')
-        print(format_classification_metrics(val_metrics))
-        improved = acc > best_acc + args.early_stop_min_delta
-        if improved:
-            best_acc = acc
-            best_epoch = epoch + 1
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
+        source_metrics = evaluate(model, src_eval_loader, device, num_classes)
+        source_fused_acc = source_metrics['fused']['accuracy']
+        print(f'  Source deterministic accuracy after epoch {epoch + 1}: '
+              f'{source_fused_acc:.4f}')
+
+        is_final = global_step >= planned_updates
+        should_evaluate = is_final or (
+            args.target_eval_interval > 0 and
+            (epoch + 1) % args.target_eval_interval == 0
+        )
+        if should_evaluate:
+            val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
+            fused_metrics = val_metrics['fused']
+            acc = fused_metrics['accuracy']
+            if is_final:
+                final_acc = acc
+            print(f'Epoch [{epoch + 1}/{outer_epochs}] update '
+                  f'[{global_step}/{planned_updates}] target val accuracy '
+                  f'(diagnostic): {acc:.4f}')
+            print(format_classification_metrics(fused_metrics))
+            if acc > best_acc + args.early_stop_min_delta:
+                best_acc = acc
+                best_epoch = epoch + 1
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
         if eff:
             eff.epoch_end(epoch)
+        if not is_final:
+            continue
         if (args.early_stop_patience and
                 epochs_without_improvement >= args.early_stop_patience):
             print(f'Early stopping at epoch {epoch + 1}; best epoch={best_epoch}, '
@@ -397,11 +438,15 @@ def main():
         torch.save(model.state_dict(), os.path.join(
             args.save_dir, f'deepcoral_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'final_acc': final_acc,
-                                    'diagnostic_peak_acc': best_acc,
-                                    'target': args.target})
+        extra_metrics = {'final_acc': final_acc,
+                         'diagnostic_peak_acc': best_acc,
+                         'target': args.target,
+                         'source_fused_acc': source_metrics['fused']['accuracy']}
+        eff.finalize(extra_metrics=extra_metrics)
     print(f'Final target val accuracy ({args.target}, final update '
           f'{global_step}/{planned_updates}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy: {best_acc:.4f} at epoch {best_epoch} '
+          '(not used for model selection)')
 
 
 if __name__ == '__main__':

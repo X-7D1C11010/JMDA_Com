@@ -165,6 +165,11 @@ def main():
     parser.add_argument('--batch-size', type=int, default=128,
                         help='官方 DANN/train/main.py 设置为 128')
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--domain-loss-weight', type=float, default=1.0,
+                        help='maximum weight of the source+target domain loss')
+    parser.add_argument('--target-eval-interval', type=int, default=0,
+                        help='diagnostic target-val interval in epochs; 0 evaluates only the final model')
+    parser.add_argument('--print-freq', type=int, default=10)
     parser.add_argument('--backbone', choices=['cnn28', 'resnet50'], default='cnn28',
                         help='cnn28 reproduces the released digit DANN; resnet50 is the high-resolution image variant')
     parser.add_argument('--enhanced-augmentation', action='store_true',
@@ -199,6 +204,8 @@ def main():
         raise ValueError('target-validation early stopping is disabled by this protocol')
     if args.epochs < 1 or args.max_iterations < 0:
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
+    if args.domain_loss_weight < 0 or args.target_eval_interval < 0 or args.print_freq < 1:
+        raise ValueError('domain loss weight/evaluation interval/print frequency is invalid')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
 
     # Load source (sunny) and target domain data.
@@ -325,7 +332,7 @@ def main():
             loss_domain = criterion(src_domain_out, src_domain_label) + \
                           criterion(tgt_domain_out, tgt_domain_label)
 
-            loss = loss_cls + loss_domain
+            loss = loss_cls + args.domain_loss_weight * loss_domain
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -333,32 +340,36 @@ def main():
             if eff:
                 eff.step_end()
 
-            if (i + 1) % 10 == 0:
+            if (i + 1) % args.print_freq == 0 or i + 1 == batches_this_epoch:
                 print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
                       f'update [{global_step}/{planned_updates}] '
                       f'loss_cls={loss_cls.item():.4f} loss_domain={loss_domain.item():.4f} '
-                      f'alpha={alpha:.4f}')
+                      f'domain_weight={args.domain_loss_weight:.3f} alpha={alpha:.4f}')
 
-        if global_step < planned_updates:
-            if eff:
-                eff.epoch_end(epoch)
-            continue
-        # The labelled target split is touched once, after all updates. It is
-        # never used for stopping, hyperparameter choice, or checkpoint choice.
-        val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
-        acc = val_metrics['accuracy']
-        final_acc = acc
-        print(f'After update [{global_step}/{planned_updates}] target val accuracy: {acc:.4f}')
-        print(format_classification_metrics(val_metrics))
-        improved = acc > best_acc + args.early_stop_min_delta
-        if improved:
-            best_acc = acc
-            best_epoch = epoch + 1
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
+        is_final = global_step >= planned_updates
+        should_evaluate = is_final or (
+            args.target_eval_interval > 0 and
+            (epoch + 1) % args.target_eval_interval == 0
+        )
+        if should_evaluate:
+            val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
+            acc = val_metrics['accuracy']
+            if is_final:
+                final_acc = acc
+            print(f'Epoch [{epoch + 1}/{outer_epochs}] update '
+                  f'[{global_step}/{planned_updates}] target val accuracy '
+                  f'(diagnostic): {acc:.4f}')
+            print(format_classification_metrics(val_metrics))
+            if acc > best_acc + args.early_stop_min_delta:
+                best_acc = acc
+                best_epoch = epoch + 1
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
         if eff:
             eff.epoch_end(epoch)
+        if not is_final:
+            continue
         if (args.early_stop_patience and
                 epochs_without_improvement >= args.early_stop_patience):
             print(f'Early stopping at epoch {epoch + 1}; best epoch={best_epoch}, '
@@ -374,6 +385,8 @@ def main():
                                     'target': args.target})
     print(f'Final target val accuracy ({args.target}, final update '
           f'{global_step}/{planned_updates}): {final_acc:.4f}')
+    print(f'Diagnostic peak target val accuracy: {best_acc:.4f} at epoch {best_epoch} '
+          '(not used for model selection)')
 
 
 if __name__ == '__main__':

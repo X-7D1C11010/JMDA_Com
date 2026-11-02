@@ -93,6 +93,13 @@ UDA_DANN_EPOCHS="${UDA_DANN_EPOCHS:-100}"
 UDA_DEEPCORAL_EPOCHS="${UDA_DEEPCORAL_EPOCHS:-20}"
 UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-20}"
 UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-20}"
+UDA_MDD_LR="${UDA_MDD_LR:-0.004}"
+UDA_MDD_ITERS_PER_EPOCH="${UDA_MDD_ITERS_PER_EPOCH:-1000}"
+UDA_MDD_TRADE_OFF="${UDA_MDD_TRADE_OFF:-1.0}"
+UDA_MCC_LR="${UDA_MCC_LR:-0.005}"
+UDA_MCC_ITERS_PER_EPOCH="${UDA_MCC_ITERS_PER_EPOCH:-1000}"
+UDA_MCC_TRADE_OFF="${UDA_MCC_TRADE_OFF:-1.0}"
+UDA_MCC_TRADE_OFF_WARMUP_EPOCHS="${UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-0}"
 UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
 CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-2000}"
 UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
@@ -182,9 +189,12 @@ if [[ "$PROTOCOL" = "uda" ]]; then
   fi
   if uda_method_enabled mdd; then
     require_positive_integer "UDA_MDD_EPOCHS" "$UDA_MDD_EPOCHS"
+    require_positive_integer "UDA_MDD_ITERS_PER_EPOCH" "$UDA_MDD_ITERS_PER_EPOCH"
   fi
   if uda_method_enabled mcc; then
     require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
+    require_positive_integer "UDA_MCC_ITERS_PER_EPOCH" "$UDA_MCC_ITERS_PER_EPOCH"
+    require_nonnegative_integer "UDA_MCC_TRADE_OFF_WARMUP_EPOCHS" "$UDA_MCC_TRADE_OFF_WARMUP_EPOCHS"
   fi
   if uda_method_enabled pda; then
     require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
@@ -674,10 +684,10 @@ elif [ "$PROTOCOL" = "uda" ]; then
       run "cdan_$t"       "$PYTHON" "$HERE/CDAN/train_cdan.py"           --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone ResNet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     if uda_method_enabled mdd; then
-      run "mdd_$t" --record-epochs "$UDA_MDD_EPOCHS" "$PYTHON" "$HERE/MDD/train_mdd.py" --target "$t" --epochs "$UDA_MDD_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+      run "mdd_$t" --record-epochs "$UDA_MDD_EPOCHS" "$PYTHON" "$HERE/MDD/train_mdd.py" --target "$t" --epochs "$UDA_MDD_EPOCHS" --lr "$UDA_MDD_LR" --iters-per-epoch "$UDA_MDD_ITERS_PER_EPOCH" --trade-off "$UDA_MDD_TRADE_OFF" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     if uda_method_enabled mcc; then
-      run "mcc_$t" --record-epochs "$UDA_MCC_EPOCHS" "$PYTHON" "$HERE/MCC/train_mcc.py" --target "$t" --epochs "$UDA_MCC_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+      run "mcc_$t" --record-epochs "$UDA_MCC_EPOCHS" "$PYTHON" "$HERE/MCC/train_mcc.py" --target "$t" --epochs "$UDA_MCC_EPOCHS" --lr "$UDA_MCC_LR" --iters-per-epoch "$UDA_MCC_ITERS_PER_EPOCH" --trade-off "$UDA_MCC_TRADE_OFF" --trade-off-warmup-epochs "$UDA_MCC_TRADE_OFF_WARMUP_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
     if uda_method_enabled pda; then

@@ -167,10 +167,10 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.MODEL.NUM_LAYER = 12
 
     cfg.OPTIM.NAME = "sgd"
-    cfg.OPTIM.LR = 0.003
+    cfg.OPTIM.LR = args.lr
     cfg.OPTIM.MAX_EPOCH = args.epochs
     cfg.OPTIM.LR_SCHEDULER = "cosine"
-    cfg.OPTIM.WARMUP_EPOCH = 1
+    cfg.OPTIM.WARMUP_EPOCH = args.warmup_epochs
     cfg.OPTIM.WARMUP_TYPE = "constant"
     cfg.OPTIM.WARMUP_CONS_LR = 1e-5
 
@@ -178,6 +178,7 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.TRAIN.PRINT_FREQ = 10
     cfg.TRAIN.EARLY_STOP_PATIENCE = 0
     cfg.TRAIN.EARLY_STOP_MIN_DELTA = 0.0
+    cfg.TRAIN.DIAGNOSTIC_TARGET_EVAL_INTERVAL = args.target_eval_interval
     cfg.TRAINER.NAME = "PDA"
     cfg.TRAINER.PDA = CN()
     cfg.TRAINER.PDA.PREC = "fp16" if torch.cuda.is_available() else "fp32"
@@ -196,8 +197,8 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.TRAINER.PDA.SHARE_LAYER = [0, 5]
     cfg.TRAINER.PDA.LOCATION = "middle"
 
-    cfg.CONFI = 0.9
-    cfg.WARM_UP = 1
+    cfg.CONFI = args.confidence_threshold
+    cfg.WARM_UP = args.warmup_epochs
     cfg.EPOCH = 0
     cfg.DOMAINS = f"sunny-{args.target}"
     cfg.SAVE_MODEL = bool(getattr(args, "save_model", False))
@@ -228,6 +229,12 @@ def parse_args():
     parser.add_argument("--target", default="backlight",
                         choices=["backlight", "rainy", "foggy", "dark"])
     parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--lr", type=float, default=0.003,
+                        help="prompt-learner initial learning rate")
+    parser.add_argument("--warmup-epochs", type=int, default=1)
+    parser.add_argument("--confidence-threshold", type=float, default=0.9)
+    parser.add_argument("--target-eval-interval", type=int, default=0,
+                        help="diagnostic target-val interval; 0 evaluates final only")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--test-batch-size", type=int, default=128)
     parser.add_argument("--data-dir", default=os.path.join(PROJECT_ROOT, "data_lists_vis"))
@@ -260,6 +267,10 @@ def main():
     args = parse_args()
     if args.epochs < 1:
         raise ValueError("--epochs must be >= 1")
+    if (args.warmup_epochs < 0 or args.warmup_epochs >= args.epochs or
+            not 0.0 < args.confidence_threshold < 1.0 or
+            args.target_eval_interval < 0):
+        raise ValueError("invalid PDA warmup/confidence/evaluation setting")
     if args.early_stop_patience < 0:
         raise ValueError("--early-stop-patience must be >= 0")
     if args.early_stop_patience:
@@ -312,6 +323,14 @@ def main():
     trainer = build_trainer(cfg)
     trainer.train()
     metrics = evaluate_selected_checkpoint(trainer, num_classes=len(class_ids))
+    if hasattr(trainer, "diagnostic_best_result"):
+        print(
+            "Diagnostic peak target accuracy: {:.4f} at epoch {} "
+            "(not used for model selection)".format(
+                trainer.diagnostic_best_result,
+                trainer.diagnostic_best_epoch,
+            )
+        )
 
     if eff:
         eff.epoch_end(0)

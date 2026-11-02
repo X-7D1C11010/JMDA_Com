@@ -8,10 +8,38 @@ param(
     [int]$CdanIterations = 2000,
     [int]$ImageBatchSize = 16,
     [int]$Epochs = 0,
+    [double]$DANNLearningRate = 0.001,
+    [double]$DeepCoralLearningRate = 0.001,
+    [double]$CDANLearningRate = 0.001,
+    [double]$MDDLearningRate = 0.004,
+    [double]$MCCLearningRate = 0.005,
+    [double]$PDALearningRate = 0.003,
+    [int]$DANNEpochs = 100,
+    [int]$DeepCoralEpochs = 20,
+    [int]$MDDEpochs = 20,
+    [int]$MCCEpochs = 20,
+    [int]$PDAEpochs = 20,
+    [double]$DANNDomainLossWeight = 1.0,
+    [int]$DANNTargetEvalInterval = 0,
+    [double]$DeepCoralMaxWeight = 1.0,
+    [double]$DeepCoralWeightDecay = 0.0,
+    [int]$DeepCoralTargetEvalInterval = 0,
+    [double]$CDANHeadLearningRateMultiplier = 10.0,
+    [int]$CDANCoeffMaxIterations = 0,
+    [int]$CDANTestInterval = 500,
+    [int]$MDDIterationsPerEpoch = 1000,
+    [double]$MDDTradeOff = 1.0,
+    [int]$MCCIterationsPerEpoch = 1000,
+    [double]$MCCTradeOff = 1.0,
+    [int]$MCCTradeOffWarmupEpochs = 0,
+    [int]$PDAWarmupEpochs = 1,
+    [double]$PDAConfidenceThreshold = 0.9,
+    [int]$PDATargetEvalInterval = 0,
     [int]$NumWorkers = 2,
     [int]$EvalNumWorkers = 0,
     [int]$PrefetchFactor = 4,
     [int]$WorkerTimeoutSeconds = 300,
+    [switch]$IncludePausedMethods,
     [switch]$SkipBenchmark
 )
 
@@ -56,6 +84,33 @@ $arguments = @{
     DataDir = $DataDir
     CdanIterations = $CdanIterations
     Epochs = $Epochs
+    DANNLearningRate = $DANNLearningRate
+    DeepCoralLearningRate = $DeepCoralLearningRate
+    CDANLearningRate = $CDANLearningRate
+    MDDLearningRate = $MDDLearningRate
+    MCCLearningRate = $MCCLearningRate
+    PDALearningRate = $PDALearningRate
+    DANNEpochs = $DANNEpochs
+    DeepCoralEpochs = $DeepCoralEpochs
+    MDDEpochs = $MDDEpochs
+    MCCEpochs = $MCCEpochs
+    PDAEpochs = $PDAEpochs
+    DANNDomainLossWeight = $DANNDomainLossWeight
+    DANNTargetEvalInterval = $DANNTargetEvalInterval
+    DeepCoralMaxWeight = $DeepCoralMaxWeight
+    DeepCoralWeightDecay = $DeepCoralWeightDecay
+    DeepCoralTargetEvalInterval = $DeepCoralTargetEvalInterval
+    CDANHeadLearningRateMultiplier = $CDANHeadLearningRateMultiplier
+    CDANCoeffMaxIterations = $CDANCoeffMaxIterations
+    CDANTestInterval = $CDANTestInterval
+    MDDIterationsPerEpoch = $MDDIterationsPerEpoch
+    MDDTradeOff = $MDDTradeOff
+    MCCIterationsPerEpoch = $MCCIterationsPerEpoch
+    MCCTradeOff = $MCCTradeOff
+    MCCTradeOffWarmupEpochs = $MCCTradeOffWarmupEpochs
+    PDAWarmupEpochs = $PDAWarmupEpochs
+    PDAConfidenceThreshold = $PDAConfidenceThreshold
+    PDATargetEvalInterval = $PDATargetEvalInterval
     NumWorkers = $NumWorkers
     EvalNumWorkers = $EvalNumWorkers
     PrefetchFactor = $PrefetchFactor
@@ -68,6 +123,7 @@ $arguments = @{
     SkipBenchmark = [bool]$SkipBenchmark
 }
 if ($IncludeMethods.Count -gt 0) { $arguments.IncludeMethods = $IncludeMethods }
+if ($IncludePausedMethods) { $arguments.IncludePausedMethods = $true }
 
 Write-Host 'Protocol: exact-paired VIS+IR; final model in memory only; no target-val selection; no checkpoint saving.'
 Write-Host "Per-domain batch size: $ImageBatchSize"
