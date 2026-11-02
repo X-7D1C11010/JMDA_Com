@@ -1,8 +1,8 @@
 param(
     [string]$Target = 'backlight',
     [int]$Seed = 42,
-    [int]$BatchSize = 4,
-    [int]$CdanIterations = 0,
+    [int]$BatchSize = 16,
+    [int]$CdanIterations = 2000,
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
     [string]$DataDir = ''
@@ -18,10 +18,7 @@ if ($BatchSize -lt 2) {
     throw 'BatchSize must be at least 2.'
 }
 if ($CdanIterations -le 0) {
-    # The reference local/server protocol is 2000 updates at batch 16. Keep
-    # approximately the same number of source/target observations when using
-    # a smaller local batch.
-    $CdanIterations = [int][math]::Ceiling(2000.0 * 16.0 / $BatchSize)
+    throw 'CdanIterations must be positive. The fixed multimodal protocol uses 2000 updates.'
 }
 if (-not $OutDir) {
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'

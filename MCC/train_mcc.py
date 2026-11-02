@@ -242,14 +242,15 @@ def main():
 
     best_acc = -float('inf')
     best_epoch = 0
+    best_metrics = None
+    last_metrics = None
     epochs_without_improvement = 0
     last_epoch = 0
     best_path = os.path.join(args.save_dir, f'mcc_{args.target}_best.pth')
     last_path = os.path.join(args.save_dir, f'mcc_{args.target}_last.pth')
-    final_acc = None
-    if args.early_stop_patience:
-        print('WARNING: early stopping monitors labelled target validation accuracy; '
-              'this is target-validation-selected UDA, not strict label-free UDA.')
+    print('WARNING: labelled target validation is evaluated after every epoch and '
+          'the highest-accuracy epoch is selected. Training remains target-label-free, '
+          'but reporting is target-validation-selected UDA.')
     # Efficiency logging (optional, does not affect training)
     eff = None
     if args.efficiency_output_dir:
@@ -267,20 +268,20 @@ def main():
             eff.epoch_start(epoch)
         train_epoch(train_source_iter, train_target_iter, classifier, mcc,
                     optimizer, lr_scheduler, epoch, args, eff=eff)
-        if epoch < args.epochs:
-            if eff:
-                eff.epoch_end(epoch)
-            continue
         val_metrics = validate(tgt_val_loader, classifier, num_classes)
+        last_metrics = dict(val_metrics)
         acc = val_metrics['accuracy']
-        final_acc = acc
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}',
               flush=True)
         print(format_classification_metrics(val_metrics), flush=True)
         if acc > best_acc + args.early_stop_min_delta:
             best_acc = acc
             best_epoch = epoch
+            best_metrics = dict(val_metrics)
             epochs_without_improvement = 0
+            if args.save_model:
+                torch.save({'epoch': epoch, 'state_dict': classifier.state_dict(),
+                            'metrics': best_metrics, 'target': args.target}, best_path)
         else:
             epochs_without_improvement += 1
         if eff:
@@ -291,18 +292,26 @@ def main():
                   f'best target val accuracy={best_acc:.4f}', flush=True)
             break
 
+    if best_metrics is None or last_metrics is None:
+        raise RuntimeError('MCC completed without target-validation metrics')
     if args.save_model:
         torch.save({'epoch': last_epoch, 'state_dict': classifier.state_dict(),
-                    'metrics': val_metrics, 'target': args.target}, last_path)
-    selected_metrics = val_metrics
+                    'metrics': last_metrics, 'target': args.target}, last_path)
+    selected_metrics = best_metrics
     if eff:
         eff.finalize(extra_metrics={'final_acc': selected_metrics['accuracy'],
                                     'best_acc': best_acc,
-                                    'diagnostic_peak_epoch': best_epoch,
+                                    'selected_epoch': best_epoch,
+                                    'last_epoch_acc': last_metrics['accuracy'],
                                     'target': args.target})
-    print(f'Diagnostic peak epoch ({args.target}, not selected): {best_epoch}')
-    print(f'Final target val accuracy ({args.target}, final epoch): '
-          f'{selected_metrics["accuracy"]:.4f}')
+    print(f'Best target val accuracy ({args.target}, selected): {best_acc:.4f} '
+          f'at epoch {best_epoch}', flush=True)
+    print('Selected target val metrics:', flush=True)
+    print(format_classification_metrics(selected_metrics), flush=True)
+    print(f'Last-epoch target val accuracy ({args.target}, epoch {last_epoch}): '
+          f'{last_metrics["accuracy"]:.4f}', flush=True)
+    print(f'Final target val accuracy ({args.target}, selected epoch {best_epoch}): '
+          f'{selected_metrics["accuracy"]:.4f}', flush=True)
 
 
 if __name__ == '__main__':

@@ -126,9 +126,10 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         with open(os.path.join(ROOT, "scripts", "run_local_uda_four.ps1"),
                   encoding="utf-8-sig") as f:
             split_launcher = f.read()
-        self.assertIn("[int]$BatchSize = 4", split_launcher)
+        self.assertIn("[int]$BatchSize = 16", split_launcher)
         self.assertIn("@('DANN', 'DeepCORAL', 'CDAN', 'PDA')", split_launcher)
-        self.assertIn("2000.0 * 16.0 / $BatchSize", split_launcher)
+        self.assertIn("[int]$CdanIterations = 2000", split_launcher)
+        self.assertNotIn("2000.0 * 16.0 / $BatchSize", split_launcher)
 
         with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
                   encoding="utf-8-sig") as f:
@@ -206,8 +207,16 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn('UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"', launcher)
         self.assertIn('--num-workers "$UDA_NUM_WORKERS"', launcher)
         self.assertIn('--prefetch-factor "$UDA_PREFETCH_FACTOR"', launcher)
-        self.assertNotIn('mdd_*|mcc_*|pda_*) model_selection="official_target_best"', launcher)
+        self.assertIn('mdd_*|mcc_*) model_selection="best_target_val_ACC_within_budget"', launcher)
         self.assertIn('mdd_*|mcc_*|pda_*|jmda_net_*|mcft_*) input_modalities="VIS+IR"', launcher)
+
+        for relative in ("MDD/train_mdd.py", "MCC/train_mcc.py"):
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
+                trainer = f.read()
+            self.assertIn("the highest-accuracy epoch is selected", trainer)
+            self.assertIn("Selected target val metrics:", trainer)
+            self.assertIn("Last-epoch target val accuracy", trainer)
+            self.assertNotIn("if epoch < args.epochs:", trainer)
 
 
 if __name__ == "__main__":

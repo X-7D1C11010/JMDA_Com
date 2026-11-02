@@ -356,6 +356,20 @@ class JmdaLogAuditTests(unittest.TestCase):
         governed = apply_protocol_metric_policy(parsed, "oracle_shared_uda")
         self.assertIsNone(governed["best_acc"])
 
+    def test_declared_target_validation_selection_preserves_best_accuracy(self):
+        parsed = parse_metrics(
+            "Epoch [1/2] target val accuracy: 0.7000\n"
+            "Epoch [2/2] target val accuracy: 0.6000\n"
+            "Best target val accuracy (selected): 0.7000 at epoch 1\n"
+            "Final target val accuracy (selected epoch 1): 0.7000\n"
+        )
+        governed = apply_protocol_metric_policy(
+            parsed, "uda", "best_target_val_ACC_within_budget"
+        )
+        self.assertEqual(governed["final_acc"], 0.7)
+        self.assertEqual(governed["best_acc"], 0.7)
+        self.assertEqual(governed["accuracy_values_count"], 2)
+
     def test_reported_accuracy_must_equal_final_epoch(self):
         corrupted = _log(iterations=1).replace(
             "reported_acc=0.3000", "reported_acc=0.9000"

@@ -72,7 +72,7 @@ def _infer_input_modalities(method):
 
 def parse_metrics(text):
     epoch_acc_patterns = [
-        r'(?m)^(?![^\n]*(?:best|peak|diagnostic|final))[^\n]*target\s+val\s+accuracy[^:\n]*:\s*([0-9]*\.?[0-9]+)',
+        r'(?m)^(?![^\n]*(?:best|peak|diagnostic|final|last))[^\n]*target\s+val\s+accuracy[^:\n]*:\s*([0-9]*\.?[0-9]+)',
         r'(?m)^(?![^\n]*(?:best|最佳))[^\n]*Val\s+Acc\s*:\s*([0-9]*\.?[0-9]+)',
         r'reported_acc\s*=\s*([0-9]*\.?[0-9]+)',
     ]
@@ -162,9 +162,10 @@ def parse_metrics(text):
     return metrics
 
 
-def apply_protocol_metric_policy(metrics, protocol):
-    """Remove target-label-selected fields from UDA-family result records."""
-    if protocol.lower() in ('uda', 'oracle_shared_uda'):
+def apply_protocol_metric_policy(metrics, protocol, model_selection=''):
+    """Remove target-best fields unless this run explicitly declares target-val selection."""
+    target_selected = model_selection.lower().startswith('best_target_val')
+    if protocol.lower() in ('uda', 'oracle_shared_uda') and not target_selected:
         metrics['best_acc'] = None
     return metrics
 
@@ -226,7 +227,9 @@ def main():
         text = handle.read()
 
     method, target = _infer_method_target(args.run_tag)
-    metrics = apply_protocol_metric_policy(parse_metrics(text), args.protocol)
+    metrics = apply_protocol_metric_policy(
+        parse_metrics(text), args.protocol, args.model_selection
+    )
     error_type, error_summary = _failure_summary(text, args.status)
     timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     record = {

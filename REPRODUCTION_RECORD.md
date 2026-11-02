@@ -1051,6 +1051,24 @@ DataManager 与目标标签擦除测试通过；`tools` 下69项单元测试全�
 9项官方接线/加载器防护测试通过；官方AlexNet权重实际加载通过；CDAN 1次训练更新
 加完整十裁剪验证在5.7秒内正常退出。
 
+---
+
+## 20. 2026-11-02 MDD/MCC逐轮目标验证与最高ACC选模
+
+- 按当前实验要求，`MDD/train_mdd.py`与`MCC/train_mcc.py`在每个epoch结束后
+  评价一次带标签的目标验证集，记录ACC、macro Precision、macro Recall和macro F1。
+- 本次运行的最终报告取目标验证ACC最高的epoch；ACC并列时保留更早的epoch。
+  训练损失仍只使用源域标签和无标签目标图像，但报告协议明确标记为
+  `best_target_val_ACC_within_budget`，属于目标验证集选模UDA，不再与严格
+  final-checkpoint UDA混称。
+- `--no-save-model`时只在内存中保留最佳epoch的指标，不落盘模型；启用
+  `--save-model`时分别保存best与last状态。
+- 服务器结果收集器仅在运行显式声明上述选模策略时保留`best_acc`；其他UDA运行
+  继续清除目标标签诊断峰值，防止协议串用。
+
+验证：两个入口均通过2 epoch × 1 update的VIS+IR真实前向、反向与逐轮验证；
+MCC烟测覆盖了ACC并列时选取更早epoch。Python编译通过，相关39项单元测试通过。
+
 
 
 

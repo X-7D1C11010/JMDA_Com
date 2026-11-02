@@ -506,6 +506,7 @@ run() {  # run "<log-tag>" <cmd...>
     *) model_selection="method_declared" ;;
   esac
   case "$tag" in
+    mdd_*|mcc_*) model_selection="best_target_val_ACC_within_budget" ;;
     mcft_*) model_selection="official_target_best" ;;
   esac
   if ! "$PYTHON" "$HERE/tools/collect_run_result.py" \
