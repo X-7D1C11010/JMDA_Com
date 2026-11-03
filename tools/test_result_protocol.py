@@ -6,9 +6,26 @@ from class_names import load_class_names
 from classification_metrics import classification_metrics
 from collect_run_result import parse_metrics
 from summarize_run_results import summarize_rows
+from peak_timing import diagnose_peak_timing
 
 
 class ResultProtocolTests(unittest.TestCase):
+    def test_peak_timing_flags_unrecovered_early_peak(self):
+        diagnostic = diagnose_peak_timing(
+            [(1, 0.6), (2, 0.7), (3, 0.65), (10, 0.6)],
+            total_budget=10,
+        )
+        self.assertEqual(diagnostic['status'], 'early_peak_not_recovered')
+        self.assertEqual(diagnostic['peak_steps'], [2])
+
+    def test_peak_timing_accepts_late_recovery_of_early_peak(self):
+        diagnostic = diagnose_peak_timing(
+            [(1, 0.7), (5, 0.6), (7, 0.7), (10, 0.65)],
+            total_budget=10,
+        )
+        self.assertEqual(diagnostic['status'], 'late_peak_or_recovered')
+        self.assertEqual(diagnostic['peak_steps'], [1, 7])
+
     def test_macro_metrics_use_present_target_classes(self):
         metrics = classification_metrics(
             labels=[0, 0, 1, 1], predictions=[0, 1, 1, 1], num_classes=4

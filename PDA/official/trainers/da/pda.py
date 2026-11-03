@@ -430,6 +430,17 @@ class PDA(BaseDA):
             self.evaluator.process(output, label)
 
         results = self.evaluator.evaluate()
+        # BaseDA.after_epoch uses these snapshots to apply the experiment-wide
+        # selection rule: highest target ACC, with macro-F1 breaking ACC ties.
+        # PDA overrides BaseDA.test(), so it must preserve the same evaluation
+        # state explicitly instead of leaving the snapshots empty/stale.
+        self.last_evaluation_results = dict(results)
+        self.last_evaluation_labels = list(
+            getattr(self.evaluator, "_y_true", [])
+        )
+        self.last_evaluation_predictions = list(
+            getattr(self.evaluator, "_y_pred", [])
+        )
         for k, v in results.items():
             tag = "{}/{}".format(split, k)
             self.write_scalar(tag, v, self.epoch)

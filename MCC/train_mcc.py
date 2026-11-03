@@ -46,6 +46,7 @@ from tllib.vision.models import resnet18, resnet50
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 from classification_metrics import classification_metrics, format_classification_metrics
 from reproducibility import seed_everything
+from peak_timing import diagnose_peak_timing, format_peak_timing
 
 # UDA 共用数据加载：以目标域类别集为准裁剪源域/目标域并重映射标签
 from uda_data import (
@@ -149,10 +150,12 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
 
         if (i + 1) % args.print_freq == 0:
             acc = accuracy(y_s, labels_s)[0]
+            learning_rates = lr_scheduler.get_last_lr()
             print(f'  Epoch [{epoch}/{args.epochs}] iter [{i + 1}/{args.iters_per_epoch}] '
                   f'loss={loss.item():.4f} cls={cls_loss.item():.4f} '
                   f'mcc={transfer_loss.item():.4f} transfer_weight={transfer_weight:.4f} '
-                  f'src_acc={acc.item():.2f}',
+                  f'src_acc={acc.item():.2f} '
+                  f'lr=[{min(learning_rates):.3e},{max(learning_rates):.3e}]',
                   flush=True)
 
 
@@ -257,6 +260,7 @@ def main():
     last_metrics = None
     epochs_without_improvement = 0
     last_epoch = 0
+    accuracy_history = []
     best_path = os.path.join(args.save_dir, f'mcc_{args.target}_best.pth')
     last_path = os.path.join(args.save_dir, f'mcc_{args.target}_last.pth')
     print('WARNING: labelled target validation is evaluated after every epoch and '
@@ -282,6 +286,7 @@ def main():
         val_metrics = validate(tgt_val_loader, classifier, num_classes)
         last_metrics = dict(val_metrics)
         acc = val_metrics['accuracy']
+        accuracy_history.append((epoch, acc))
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}',
               flush=True)
         print(format_classification_metrics(val_metrics), flush=True)
@@ -329,6 +334,9 @@ def main():
           f'{last_metrics["accuracy"]:.4f}', flush=True)
     print(f'Final target val accuracy ({args.target}, selected epoch {best_epoch}): '
           f'{selected_metrics["accuracy"]:.4f}', flush=True)
+    print(format_peak_timing(
+        diagnose_peak_timing(accuracy_history, args.epochs), unit='epoch'
+    ), flush=True)
 
 
 if __name__ == '__main__':
