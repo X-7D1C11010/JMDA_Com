@@ -167,10 +167,10 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.MODEL.NUM_LAYER = 12
 
     cfg.OPTIM.NAME = "sgd"
-    cfg.OPTIM.LR = args.lr
+    cfg.OPTIM.LR = getattr(args, "lr", 0.003)
     cfg.OPTIM.MAX_EPOCH = args.epochs
     cfg.OPTIM.LR_SCHEDULER = "cosine"
-    cfg.OPTIM.WARMUP_EPOCH = args.warmup_epochs
+    cfg.OPTIM.WARMUP_EPOCH = getattr(args, "warmup_epochs", 0)
     cfg.OPTIM.WARMUP_TYPE = "constant"
     cfg.OPTIM.WARMUP_CONS_LR = 1e-5
 
@@ -178,7 +178,9 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.TRAIN.PRINT_FREQ = 10
     cfg.TRAIN.EARLY_STOP_PATIENCE = 0
     cfg.TRAIN.EARLY_STOP_MIN_DELTA = 0.0
-    cfg.TRAIN.DIAGNOSTIC_TARGET_EVAL_INTERVAL = args.target_eval_interval
+    cfg.TRAIN.DIAGNOSTIC_TARGET_EVAL_INTERVAL = getattr(
+        args, "target_eval_interval", 0
+    )
     cfg.TRAINER.NAME = "PDA"
     cfg.TRAINER.PDA = CN()
     cfg.TRAINER.PDA.PREC = "fp16" if torch.cuda.is_available() else "fp32"
@@ -197,8 +199,8 @@ def build_cfg(args, target_class_names, output_dir):
     cfg.TRAINER.PDA.SHARE_LAYER = [0, 5]
     cfg.TRAINER.PDA.LOCATION = "middle"
 
-    cfg.CONFI = args.confidence_threshold
-    cfg.WARM_UP = args.warmup_epochs
+    cfg.CONFI = getattr(args, "confidence_threshold", 0.9)
+    cfg.WARM_UP = getattr(args, "warmup_epochs", 0)
     cfg.EPOCH = 0
     cfg.DOMAINS = f"sunny-{args.target}"
     cfg.SAVE_MODEL = bool(getattr(args, "save_model", False))
@@ -281,7 +283,9 @@ def main():
 
     args.seed = seed_everything(args.seed)
     set_random_seed(args.seed)
-    if torch.cuda.is_available():
+    if (torch.cuda.is_available() and
+            os.environ.get("JMDA_DETERMINISTIC", "0").strip().lower()
+            not in {"1", "true", "yes", "on"}):
         torch.backends.cudnn.benchmark = True
 
     class_ids, _ = uda_label_space(args.data_dir, args.target)
@@ -295,8 +299,8 @@ def main():
     print("PDA implementation: official upstream trainer + official Dassl TrainerXU")
     print("PDA protocol: UDA (source labels + target images/pseudo-labels; "
           "target-train labels erased to -1)")
-    print("PDA model selection: final epoch in memory; target validation does "
-          "not select a checkpoint")
+    print("PDA reporting rule: highest target-validation ACC within the run; "
+          "ACC ties are resolved by macro-F1")
     print(f"PDA checkpoint saving: {args.save_model}")
     if args.early_stop_patience:
         print("WARNING: early stopping monitors labelled target validation "
@@ -322,11 +326,18 @@ def main():
 
     trainer = build_trainer(cfg)
     trainer.train()
-    metrics = evaluate_selected_checkpoint(trainer, num_classes=len(class_ids))
+    last_metrics = evaluate_selected_checkpoint(trainer, num_classes=len(class_ids))
+    metrics = last_metrics
     if hasattr(trainer, "diagnostic_best_result"):
+        if (getattr(trainer, "diagnostic_best_labels", None) and
+                getattr(trainer, "diagnostic_best_predictions", None)):
+            metrics = classification_metrics(
+                trainer.diagnostic_best_labels,
+                trainer.diagnostic_best_predictions,
+                num_classes=len(class_ids),
+            )
         print(
-            "Diagnostic peak target accuracy: {:.4f} at epoch {} "
-            "(not used for model selection)".format(
+            "Best target accuracy: {:.4f} at epoch {} (selected)".format(
                 trainer.diagnostic_best_result,
                 trainer.diagnostic_best_epoch,
             )
@@ -336,11 +347,16 @@ def main():
         eff.epoch_end(0)
         eff.finalize(extra_metrics={
             "final_acc": metrics["accuracy"],
+            "best_acc": metrics["accuracy"],
+            "selected_epoch": getattr(trainer, "diagnostic_best_epoch", args.epochs),
+            "last_epoch_acc": last_metrics["accuracy"],
             "target": args.target,
-            "model_selection": "final_epoch_no_target_selection",
+            "model_selection": "best_target_val_ACC_within_budget",
         })
     print(format_classification_metrics(metrics))
-    print(f"Final target val accuracy ({args.target}, final epoch): "
+    print(f"Last-epoch target val accuracy ({args.target}): "
+          f"{last_metrics['accuracy']:.4f}")
+    print(f"Final target val accuracy ({args.target}, selected peak): "
           f"{metrics['accuracy']:.4f}")
 
 

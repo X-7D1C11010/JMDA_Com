@@ -1,6 +1,7 @@
 """d-SNE core recipe under the user-specified fully supervised VDS2Raw protocol."""
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -94,8 +95,19 @@ def train_source_model(model, loader, device, args):
             momentum=args.momentum,
             weight_decay=args.weight_decay,
         )
+    scheduler = None
+    if not args.source_head_warmup_epochs:
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: cosine_lr_factor(
+                step, args.source_epochs, args.source_lr_min_ratio
+            ),
+        )
     criterion = nn.CrossEntropyLoss()
     history = []
+    best_score = None
+    best_epoch = None
+    best_state = None
     for epoch in range(1, args.source_epochs + 1):
         if epoch == args.source_head_warmup_epochs + 1 and args.source_head_warmup_epochs:
             for parameter in model.features.parameters():
@@ -110,6 +122,14 @@ def train_source_model(model, loader, device, args):
                 ],
                 momentum=args.momentum,
                 weight_decay=args.weight_decay,
+            )
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lr_lambda=lambda step: cosine_lr_factor(
+                    step,
+                    args.source_epochs - args.source_head_warmup_epochs,
+                    args.source_lr_min_ratio,
+                ),
             )
         model.train()
         if epoch <= args.source_head_warmup_epochs:
@@ -138,28 +158,57 @@ def train_source_model(model, loader, device, args):
             if epoch <= args.source_head_warmup_epochs
             else "end_to_end_fine_tune"
         )
+        epoch_accuracy = correct / max(sample_count, 1)
+        current_lrs = [group["lr"] for group in optimizer.param_groups]
+        score = (epoch_accuracy, -epoch_ce)
+        improved = best_score is None or score > best_score
+        if improved:
+            best_score = score
+            best_epoch = epoch
+            best_state = {
+                key: value.detach().cpu().clone()
+                for key, value in model.state_dict().items()
+            }
         history.append(
             {
                 "epoch": epoch,
                 "ce": epoch_ce,
-                "accuracy": correct / max(sample_count, 1),
+                "accuracy": epoch_accuracy,
                 "stage": stage,
                 "backbone_lr": (
-                    0.0 if stage == "head_warmup" else args.source_backbone_lr
+                    0.0 if stage == "head_warmup" else current_lrs[0]
                 ),
-                "head_lr": args.source_head_lr,
+                "head_lr": current_lrs[-1],
                 "samples": sample_count,
+                "is_best_source_epoch": improved,
             }
         )
+        if scheduler is not None and stage == "end_to_end_fine_tune":
+            scheduler.step()
         if epoch == 1 or epoch % 10 == 0 or epoch == args.source_epochs:
             print(
                 f"d-SNE source fine-tune [{epoch}/{args.source_epochs}] "
                 f"stage={stage} CE={epoch_ce:.4f} "
                 f"ACC={correct / max(sample_count, 1):.4f}"
             )
+    if best_state is None:
+        raise RuntimeError("d-SNE source fine-tuning produced no checkpoint")
+    model.load_state_dict(best_state)
     for parameter in model.features.parameters():
         parameter.requires_grad = True
-    return history
+    print(
+        f"Restored best d-SNE source model: epoch={best_epoch} "
+        f"ACC={best_score[0]:.4f} CE={-best_score[1]:.4f}"
+    )
+    return history, best_epoch
+
+
+def cosine_lr_factor(step, total_steps, min_ratio):
+    """Cosine multiplier that preserves relative learning rates across groups."""
+    progress = min(max(step, 0), max(total_steps, 1)) / max(total_steps, 1)
+    return min_ratio + (1.0 - min_ratio) * 0.5 * (
+        1.0 + math.cos(math.pi * progress)
+    )
 
 
 def balanced_source_sampler(dataset, seed):
@@ -175,6 +224,21 @@ def balanced_source_sampler(dataset, seed):
         replacement=True,
         generator=generator,
     )
+
+
+def adaptation_parameter_groups(model, lr, backbone_multiplier):
+    """Protect source features while allowing the new multimodal head to adapt."""
+    backbone = list(model.features.parameters())
+    backbone_ids = {id(parameter) for parameter in backbone}
+    task = [
+        parameter
+        for parameter in model.parameters()
+        if id(parameter) not in backbone_ids
+    ]
+    return [
+        {"params": backbone, "lr": lr * backbone_multiplier},
+        {"params": task, "lr": lr},
+    ]
 
 
 def load_model_state(model, path):
@@ -261,13 +325,19 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--source-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument(
+        "--adaptation-backbone-lr-multiplier", type=float, default=0.1
+    )
+    parser.add_argument("--lr-min-ratio", type=float, default=0.05)
     parser.add_argument("--source-backbone-lr", type=float, default=1e-3)
     parser.add_argument("--source-head-lr", type=float, default=1e-2)
+    parser.add_argument("--source-lr-min-ratio", type=float, default=0.1)
     parser.add_argument("--source-head-warmup-epochs", type=int, default=10)
     parser.add_argument("--momentum", type=float, default=0.9)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--alpha", type=float, default=0.1)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--alpha", type=float, default=0.2)
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument("--margin", type=float, default=1.0)
     parser.add_argument("--ratio", type=int, default=1)
     parser.add_argument("--embed-size", type=int, default=512)
@@ -281,7 +351,8 @@ def main():
     parser.add_argument("--source-checkpoint", default="")
     parser.add_argument("--pretrained-backbone", default="")
     parser.add_argument("--backbone-checkpoint", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--dropout", action="store_true")
+    parser.add_argument("--dropout", dest="dropout", action="store_true")
+    parser.add_argument("--no-dropout", dest="dropout", action="store_false")
     parser.add_argument("--l2n", action="store_true")
     parser.add_argument("--fn", dest="fn", action="store_true", default=True)
     parser.add_argument("--no-fn", dest="fn", action="store_false")
@@ -313,14 +384,15 @@ def main():
         dest="class_balanced_batches",
         action="store_false",
     )
-    parser.add_argument("--early-stopping-patience", type=int, default=6)
-    parser.add_argument("--early-stopping-min-epochs", type=int, default=10)
+    parser.add_argument("--early-stopping-patience", type=int, default=8)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=15)
     parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
+    parser.set_defaults(dropout=True)
     args = parser.parse_args()
 
     if any(
@@ -337,6 +409,22 @@ def main():
         raise ValueError("source-head-warmup-epochs must be in [0, source-epochs]")
     if args.source_backbone_lr <= 0 or args.source_head_lr <= 0:
         raise ValueError("source learning rates must be positive")
+    if args.lr <= 0:
+        raise ValueError("adaptation learning rate must be positive")
+    if not 0.0 < args.adaptation_backbone_lr_multiplier <= 1.0:
+        raise ValueError(
+            "adaptation-backbone-lr-multiplier must be in (0, 1]"
+        )
+    if not 0.0 <= args.lr_min_ratio <= 1.0:
+        raise ValueError("lr-min-ratio must be in [0, 1]")
+    if not 0.0 <= args.source_lr_min_ratio <= 1.0:
+        raise ValueError("source-lr-min-ratio must be in [0, 1]")
+    if not 0.0 <= args.label_smoothing < 1.0:
+        raise ValueError("label-smoothing must be in [0, 1)")
+    if not 0.0 <= args.alpha <= 1.0:
+        raise ValueError("alpha must be in [0, 1]")
+    if args.margin < 0:
+        raise ValueError("margin cannot be negative")
     if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
         raise ValueError("early stopping settings cannot be negative")
     if not 0.0 <= args.ais_dropout_probability < 1.0:
@@ -470,21 +558,31 @@ def main():
     ).to(device)
     source_checkpoint = save_dir / f"vds2raw_dsne_seed{args.seed}_source_tuned.pth"
     source_history = []
+    source_best_epoch = None
     if args.source_checkpoint:
         load_model_state(model, args.source_checkpoint)
         print(f"Loaded d-SNE source-tuned model: {args.source_checkpoint}")
     else:
-        source_history = train_source_model(model, source_loader, device, args)
+        source_history, source_best_epoch = train_source_model(
+            model, source_loader, device, args
+        )
         torch.save({"model_state": model.state_dict()}, source_checkpoint)
         print(f"Saved d-SNE source-tuned model: {source_checkpoint}")
 
     optimizer = torch.optim.SGD(
-        model.parameters(),
-        lr=args.lr,
+        adaptation_parameter_groups(
+            model, args.lr, args.adaptation_backbone_lr_multiplier
+        ),
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
-    criterion = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda step: cosine_lr_factor(
+            step, args.epochs, args.lr_min_ratio
+        ),
+    )
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     report_budgets = sorted({min(10, args.epochs), args.epochs})
     checkpoints = {
         budget: save_dir / f"vds2raw_dsne_e{budget}_seed{args.seed}_best.pth"
@@ -501,6 +599,7 @@ def main():
         "seed": args.seed,
         "epochs": args.epochs,
         "source_fine_tune_epochs": args.source_epochs,
+        "source_fine_tune_selected_epoch": source_best_epoch,
         "source_head_warmup_epochs": args.source_head_warmup_epochs,
         "source_batch_size": args.source_batch_size,
         "source_class_balanced_sampling": args.class_balanced_source,
@@ -567,14 +666,24 @@ def main():
         "optimizer": {
             "name": "SGD",
             "lr": args.lr,
+            "backbone_lr": (
+                args.lr * args.adaptation_backbone_lr_multiplier
+            ),
+            "backbone_lr_multiplier": args.adaptation_backbone_lr_multiplier,
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
+        },
+        "scheduler": {
+            "name": "cosine multiplier",
+            "min_lr_ratio": args.lr_min_ratio,
+            "t_max": args.epochs,
         },
         "source_optimizer": {
             "name": "SGD",
             "backbone_lr": args.source_backbone_lr,
             "head_lr": args.source_head_lr,
             "head_warmup_epochs": args.source_head_warmup_epochs,
+            "min_lr_ratio": args.source_lr_min_ratio,
         },
         "early_stopping": {
             "monitor": "target_test ACC, macro-F1 tie-break",
@@ -585,6 +694,7 @@ def main():
             "alpha": args.alpha,
             "margin": args.margin,
             "negative_ratio": args.ratio,
+            "label_smoothing": args.label_smoothing,
         },
     }
     run_config = save_run_config(
@@ -673,10 +783,13 @@ def main():
                 "source_dsne": (
                     source_dsne_sum / denominator if args.train_src else None
                 ),
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": optimizer.param_groups[1]["lr"],
+                "backbone_lr": optimizer.param_groups[0]["lr"],
+                "task_lr": optimizer.param_groups[1]["lr"],
                 "batches": completed_batches,
             }
         )
+        scheduler.step()
         val_metrics = evaluate_inputs(model, val_loader, device)
         test_metrics = evaluate_inputs(model, test_loader, device)
         completed_epoch = epoch

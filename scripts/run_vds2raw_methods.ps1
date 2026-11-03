@@ -79,23 +79,43 @@ function Get-EnvPositiveDouble([string]$Name, [double]$Default) {
 
 $CcsaEpochs = Get-EnvInt 'VDS2RAW_CCSA_EPOCHS' 80
 $DsneEpochs = Get-EnvInt 'VDS2RAW_DSNE_EPOCHS' 20
-$McftEpochs = Get-EnvInt 'VDS2RAW_MCFT_EPOCHS' 500
+$McftEpochs = Get-EnvInt 'VDS2RAW_MCFT_EPOCHS' 200
 $CcsaSourceEpochs = Get-EnvInt 'VDS2RAW_CCSA_SOURCE_EPOCHS' 50
 $DsneSourceEpochs = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_EPOCHS' 80
 $CcsaBatch = Get-EnvInt 'VDS2RAW_CCSA_BATCH_SIZE' 256
+$CcsaSourceBatch = Get-EnvInt 'VDS2RAW_CCSA_SOURCE_BATCH_SIZE' 32
 $DsneBatch = Get-EnvInt 'VDS2RAW_DSNE_BATCH_SIZE' 32
 $DsneSourceBatch = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_BATCH_SIZE' 16
 $McftBatch = Get-EnvInt 'VDS2RAW_MCFT_BATCH_SIZE' 32
+$CcsaLr = Get-EnvPositiveDouble 'VDS2RAW_CCSA_LR' 0.1
+$CcsaBackboneLrMultiplier = Get-EnvPositiveDouble 'VDS2RAW_CCSA_BACKBONE_LR_MULTIPLIER' 0.1
+$CcsaSourceLr = Get-EnvPositiveDouble 'VDS2RAW_CCSA_SOURCE_LR' 0.5
+$CcsaLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_CCSA_LR_MIN_RATIO' 0.01
+$CcsaSourceLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_CCSA_SOURCE_LR_MIN_RATIO' 0.1
 $DsneLayers = Get-EnvInt 'VDS2RAW_DSNE_LAYERS' 101
 $DsneSourceWarmup = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_SOURCE_HEAD_WARMUP_EPOCHS' 10
+$DsneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LR' 0.0002
+$DsneAdaptBackboneLrMultiplier = Get-EnvPositiveDouble 'VDS2RAW_DSNE_ADAPTATION_BACKBONE_LR_MULTIPLIER' 0.1
+$DsneLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LR_MIN_RATIO' 0.05
 $DsneSourceHeadLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_HEAD_LR' 0.01
 $DsneSourceBackboneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_BACKBONE_LR' 0.001
-$CcsaEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_PATIENCE' 8
-$CcsaEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_MIN_EPOCHS' 5
-$DsneEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_PATIENCE' 6
-$DsneEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_MIN_EPOCHS' 10
-$McftEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE' 30
-$McftEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS' 50
+$DsneSourceLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_LR_MIN_RATIO' 0.1
+$DsneWeightDecay = Get-EnvPositiveDouble 'VDS2RAW_DSNE_WEIGHT_DECAY' 0.0005
+$DsneAlpha = Get-EnvPositiveDouble 'VDS2RAW_DSNE_ALPHA' 0.2
+$DsneLabelSmoothing = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LABEL_SMOOTHING' 0.1
+$McftLr = Get-EnvPositiveDouble 'VDS2RAW_MCFT_LR' 0.0002
+$McftWeightDecay = Get-EnvPositiveDouble 'VDS2RAW_MCFT_WEIGHT_DECAY' 0.0005
+$McftStepSize = Get-EnvInt 'VDS2RAW_MCFT_STEP_SIZE' 15
+$McftGamma = Get-EnvPositiveDouble 'VDS2RAW_MCFT_GAMMA' 0.7
+$McftLabelSmoothing = Get-EnvPositiveDouble 'VDS2RAW_MCFT_LABEL_SMOOTHING' 0.15
+$McftItmWeight = Get-EnvPositiveDouble 'VDS2RAW_MCFT_ITM_WEIGHT' 0.1
+$McftAisDropout = Get-EnvPositiveDouble 'VDS2RAW_MCFT_AIS_DROPOUT_PROBABILITY' 0.6
+$CcsaEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_PATIENCE' 15
+$CcsaEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_MIN_EPOCHS' 20
+$DsneEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_PATIENCE' 8
+$DsneEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_MIN_EPOCHS' 15
+$McftEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE' 20
+$McftEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS' 40
 $legacyTargetValue = [Environment]::GetEnvironmentVariable(
     'VDS2RAW_TARGET_SAMPLES_PER_CLASS'
 )
@@ -144,6 +164,7 @@ if ($Mode -eq 'smoke') {
     $CcsaSourceEpochs = 1
     $DsneSourceEpochs = 1
     $CcsaBatch = 8
+    $CcsaSourceBatch = 4
     $DsneBatch = 4
     $DsneSourceBatch = 4
     $McftBatch = 4
@@ -174,16 +195,36 @@ $config = [ordered]@{
     protocol = 'all source_train and target_train labels for every method; target_test peak checkpoint selection (biased test-selected estimate)'
     ccsa_epochs = $CcsaEpochs
     ccsa_source_epochs = $CcsaSourceEpochs
+    ccsa_batch_size = $CcsaBatch
+    ccsa_source_batch_size = $CcsaSourceBatch
+    ccsa_lr = $CcsaLr
+    ccsa_backbone_lr_multiplier = $CcsaBackboneLrMultiplier
+    ccsa_source_lr = $CcsaSourceLr
+    ccsa_lr_min_ratio = $CcsaLrMinRatio
+    ccsa_source_lr_min_ratio = $CcsaSourceLrMinRatio
     dsne_epochs = $DsneEpochs
     dsne_source_epochs = $DsneSourceEpochs
+    dsne_batch_size = $DsneBatch
     dsne_source_batch_size = $DsneSourceBatch
+    dsne_lr = $DsneLr
+    dsne_adaptation_backbone_lr_multiplier = $DsneAdaptBackboneLrMultiplier
+    dsne_lr_min_ratio = $DsneLrMinRatio
     dsne_source_head_warmup_epochs = $DsneSourceWarmup
     dsne_source_head_lr = $DsneSourceHeadLr
     dsne_source_backbone_lr = $DsneSourceBackboneLr
+    dsne_source_lr_min_ratio = $DsneSourceLrMinRatio
+    dsne_weight_decay = $DsneWeightDecay
+    dsne_alpha = $DsneAlpha
+    dsne_label_smoothing = $DsneLabelSmoothing
     mcft_epochs = $McftEpochs
-    ccsa_batch_size = $CcsaBatch
-    dsne_batch_size = $DsneBatch
     mcft_batch_size = $McftBatch
+    mcft_lr = $McftLr
+    mcft_weight_decay = $McftWeightDecay
+    mcft_step_size = $McftStepSize
+    mcft_gamma = $McftGamma
+    mcft_label_smoothing = $McftLabelSmoothing
+    mcft_itm_weight = $McftItmWeight
+    mcft_ais_dropout_probability = $McftAisDropout
     dsne_layers = $DsneLayers
     ccsa_pair_protocol = 'fixed exhaustive official pair table'
     ccsa_target_samples_per_class = $CcsaTargetPerClass
@@ -250,7 +291,11 @@ foreach ($seed in $Seeds) {
     $ccsaArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_ccsa.py'),
         '--epochs', "$CcsaEpochs", '--source-epochs', "$CcsaSourceEpochs",
-        '--batch-size', "$CcsaBatch",
+        '--batch-size', "$CcsaBatch", '--source-batch-size', "$CcsaSourceBatch",
+        '--lr', "$CcsaLr", '--source-lr', "$CcsaSourceLr",
+        '--backbone-lr-multiplier', "$CcsaBackboneLrMultiplier",
+        '--lr-min-ratio', "$CcsaLrMinRatio",
+        '--source-lr-min-ratio', "$CcsaSourceLrMinRatio", '--class-balanced-ce',
         '--early-stopping-patience', "$CcsaEarlyPatience",
         '--early-stopping-min-epochs', "$CcsaEarlyMinEpochs",
         '--target-samples-per-class', "$CcsaTargetPerClass"
@@ -260,9 +305,14 @@ foreach ($seed in $Seeds) {
         '--epochs', "$DsneEpochs", '--batch-size', "$DsneBatch",
         '--source-epochs', "$DsneSourceEpochs",
         '--source-batch-size', "$DsneSourceBatch",
+        '--lr', "$DsneLr", '--lr-min-ratio', "$DsneLrMinRatio",
+        '--adaptation-backbone-lr-multiplier', "$DsneAdaptBackboneLrMultiplier",
         '--source-head-warmup-epochs', "$DsneSourceWarmup",
         '--source-head-lr', "$DsneSourceHeadLr",
         '--source-backbone-lr', "$DsneSourceBackboneLr",
+        '--source-lr-min-ratio', "$DsneSourceLrMinRatio",
+        '--weight-decay', "$DsneWeightDecay", '--alpha', "$DsneAlpha",
+        '--label-smoothing', "$DsneLabelSmoothing", '--dropout',
         '--early-stopping-patience', "$DsneEarlyPatience",
         '--early-stopping-min-epochs', "$DsneEarlyMinEpochs",
         '--augmentation-strength', 'light', '--class-balanced-source',
@@ -272,6 +322,12 @@ foreach ($seed in $Seeds) {
     $mcftArguments = @(
         (Join-Path $RepoRoot 'vds2raw\train_mcft.py'),
         '--epochs', "$McftEpochs", '--batch-size', "$McftBatch",
+        '--lr', "$McftLr", '--weight-decay', "$McftWeightDecay",
+        '--step-size', "$McftStepSize", '--gamma', "$McftGamma",
+        '--label-smoothing', "$McftLabelSmoothing",
+        '--loss-itm-weight', "$McftItmWeight",
+        '--ais-dropout-probability', "$McftAisDropout",
+        '--class-balanced-train',
         '--eval-frequency', "$McftEvalFrequency",
         '--early-stopping-patience', "$McftEarlyPatience",
         '--early-stopping-min-epochs', "$McftEarlyMinEpochs"

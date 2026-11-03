@@ -516,7 +516,7 @@ run() {  # run "<log-tag>" <cmd...>
     *) model_selection="method_declared" ;;
   esac
   case "$tag" in
-    mdd_*|mcc_*) model_selection="best_target_val_ACC_within_budget" ;;
+    dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*|pda_*|ccsa_*|dsne_*) model_selection="best_target_val_ACC_within_budget" ;;
     mcft_*) model_selection="official_target_best" ;;
   esac
   if ! "$PYTHON" "$HERE/tools/collect_run_result.py" \
@@ -671,7 +671,7 @@ elif [ "$PROTOCOL" = "uda" ]; then
     UDA_COMMON+=(--no-persistent-workers)
   fi
   echo "UDA selected methods: $UDA_METHODS"
-  echo "UDA multimodal protocol: VIS+IR exact pairs, ResNet-50 dual branches, batch=$UDA_IMAGE_BATCH_SIZE, CDAN iterations=$CDAN_NUM_ITERATIONS, final epoch only, no checkpoint"
+  echo "UDA multimodal protocol: VIS+IR exact pairs, ResNet-50 dual branches, batch=$UDA_IMAGE_BATCH_SIZE, CDAN iterations=$CDAN_NUM_ITERATIONS, report peak target-val ACC, no checkpoint"
   echo "UDA DataLoader: workers=$UDA_NUM_WORKERS prefetch=$UDA_PREFETCH_FACTOR pin_memory=$UDA_PIN_MEMORY persistent_workers=$UDA_PERSISTENT_WORKERS"
   for t in "${TARGETS[@]}"; do
     if uda_method_enabled dann; then

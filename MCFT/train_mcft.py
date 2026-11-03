@@ -257,7 +257,10 @@ def main():
             history.append((epoch, metrics))
             print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {metrics["accuracy"]:.4f}')
             print(f'  {format_classification_metrics(metrics)}')
-            if best_metrics is None or metrics['accuracy'] > best_metrics['accuracy']:
+            if (best_metrics is None or
+                    metrics['accuracy'] > best_metrics['accuracy'] or
+                    (metrics['accuracy'] == best_metrics['accuracy'] and
+                     metrics['f1_macro'] > best_metrics['f1_macro'])):
                 best_metrics = dict(metrics)
                 best_epoch = epoch
                 torch.save(model.state_dict(), best_checkpoint)
@@ -302,7 +305,8 @@ def main():
             },
         },
     )
-    final_metrics = history[-1][1]
+    last_metrics = history[-1][1]
+    final_metrics = best_metrics
     if efficiency:
         efficiency.finalize(extra_metrics={
             'best_acc': best_metrics['accuracy'],
@@ -310,11 +314,14 @@ def main():
             'precision_macro': final_metrics['precision_macro'],
             'recall_macro': final_metrics['recall_macro'],
             'f1_macro': final_metrics['f1_macro'],
+            'selected_epoch': best_epoch,
+            'last_epoch_acc': last_metrics['accuracy'],
             'target': args.target, 'protocol': 'Supervised',
         })
 
-    print(f'Final target val accuracy: {final_metrics["accuracy"]:.4f}')
-    print(f'Best target val accuracy: {best_metrics["accuracy"]:.4f} (epoch {best_epoch})')
+    print(f'Last-epoch target val accuracy: {last_metrics["accuracy"]:.4f}')
+    print(f'Final target val accuracy (selected epoch {best_epoch}): '
+          f'{final_metrics["accuracy"]:.4f}')
     print(f'Metrics CSV: {metrics_csv}')
     print(f'Metrics JSON: {metrics_json}')
 

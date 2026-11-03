@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -29,21 +29,44 @@ from vds2raw.models import MCFTWithAIS
 DEFAULT_AIS_FEATURE_PROFILE = "continuous"
 
 
+def class_balanced_sampler(*datasets, seed):
+    """Give every domain/class group equal expected sampling mass."""
+    weights = []
+    counts_by_domain = []
+    for dataset in datasets:
+        labels = [int(label) for _, label in dataset.samples]
+        counts = {label: labels.count(label) for label in sorted(set(labels))}
+        if len(counts) != 3 or any(count <= 0 for count in counts.values()):
+            raise ValueError(
+                f"expected all three classes in every domain; counts={counts}"
+            )
+        counts_by_domain.append(counts)
+        weights.extend(1.0 / counts[label] for label in labels)
+    generator = torch.Generator().manual_seed(int(seed))
+    return WeightedRandomSampler(
+        weights,
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    ), counts_by_domain
+
+
 def main():
     parser = argparse.ArgumentParser(description="MCFT RGB+NIR+AIS on VDS2Raw")
     parser.add_argument("--data-root", default=r"D:\Downloads\VDS2Raw\threeclass_ready")
     parser.add_argument("--save-dir", default=str(ROOT / "runs" / "vds2raw"))
     parser.add_argument("--stats-file", default="")
-    parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--eval-batch-size", type=int, default=128)
     parser.add_argument("--eval-frequency", type=int, default=1)
-    parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--step-size", type=int, default=20)
-    parser.add_argument("--gamma", type=float, default=0.9)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--step-size", type=int, default=15)
+    parser.add_argument("--gamma", type=float, default=0.7)
     parser.add_argument("--loss-ita-weight", type=float, default=0.1)
-    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--loss-itm-weight", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.15)
     parser.add_argument(
         "--ais-feature-profile",
         choices=("continuous", "full"),
@@ -53,20 +76,30 @@ def main():
             "navigation-status label proxies; full restores all 13 AIS fields"
         ),
     )
-    parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.6)
+    parser.add_argument(
+        "--class-balanced-train",
+        dest="class_balanced_train",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--no-class-balanced-train",
+        dest="class_balanced_train",
+        action="store_false",
+    )
     parser.add_argument(
         "--early-stopping-patience",
         type=int,
-        default=0,
+        default=20,
         help=(
             "Stop after this many target_test evaluations without improvement; "
-            "0 (default) disables early stopping so the full epoch budget is searched"
+            "0 disables early stopping so the full epoch budget is searched"
         ),
     )
     parser.add_argument(
         "--early-stopping-min-epochs",
         type=int,
-        default=50,
+        default=40,
         help="Do not stop before this epoch; 0 allows stopping immediately.",
     )
     parser.add_argument("--num-workers", type=int, default=0)
@@ -75,11 +108,17 @@ def main():
     parser.add_argument("--no-augment", dest="augment", action="store_false")
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
-    parser.set_defaults(augment=True)
+    parser.set_defaults(augment=True, class_balanced_train=True)
     args = parser.parse_args()
 
     if args.epochs <= 0 or args.batch_size <= 0 or args.eval_frequency <= 0:
         raise ValueError("epochs, batch-size and eval-frequency must be positive")
+    if args.lr <= 0 or args.weight_decay < 0:
+        raise ValueError("lr must be positive and weight-decay non-negative")
+    if args.step_size <= 0 or not 0.0 < args.gamma <= 1.0:
+        raise ValueError("step-size must be positive and gamma must be in (0, 1]")
+    if args.loss_ita_weight < 0 or args.loss_itm_weight < 0:
+        raise ValueError("auxiliary loss weights must be non-negative")
     if not 0.0 <= args.label_smoothing < 1.0:
         raise ValueError("label-smoothing must be in [0, 1)")
     if not 0.0 <= args.ais_dropout_probability < 1.0:
@@ -110,10 +149,29 @@ def main():
         data_root, "target_test", statistics, image_size=15, augment=False
     )
     generator = torch.Generator().manual_seed(args.seed)
+    train_sampler = None
+    train_class_counts = {
+        label: sum(
+            int(sample_label) == label
+            for dataset in (source, target)
+            for _, sample_label in dataset.samples
+        )
+        for label in range(3)
+    }
+    sampler_domain_class_counts = None
+    if args.class_balanced_train:
+        train_sampler, counts_by_domain = class_balanced_sampler(
+            source, target, seed=args.seed
+        )
+        sampler_domain_class_counts = {
+            "source_train": counts_by_domain[0],
+            "target_train": counts_by_domain[1],
+        }
     train_loader = DataLoader(
         train_data,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=args.num_workers,
         drop_last=False,
         generator=generator,
@@ -159,6 +217,9 @@ def main():
         ),
         "source_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
         "target_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+        "class_balanced_training_sampler": args.class_balanced_train,
+        "original_train_class_counts": train_class_counts,
+        "sampler_domain_class_counts": sampler_domain_class_counts,
         "experiment_profile": "VDS2Raw MCFT RGB-NIR-AIS adaptation",
         "selection_partition": "target_test",
         "diagnostic_partition": "target_val",
@@ -200,7 +261,11 @@ def main():
             "step_size": args.step_size,
             "gamma": args.gamma,
         },
-        "loss": {"ita_weight": args.loss_ita_weight},
+        "loss": {
+            "ita_weight": args.loss_ita_weight,
+            "itm_weight": args.loss_itm_weight,
+            "itm_negative_mask": "all different-class samples, including class 0",
+        },
     }
     run_config = save_run_config(
         save_dir, stem, args, metadata, data_root, input_files=()
@@ -230,7 +295,11 @@ def main():
                 labels,
             )
             classification_loss = criterion(logits, labels)
-            loss = classification_loss + args.loss_ita_weight * loss_ita + loss_itm
+            loss = (
+                classification_loss
+                + args.loss_ita_weight * loss_ita
+                + args.loss_itm_weight * loss_itm
+            )
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

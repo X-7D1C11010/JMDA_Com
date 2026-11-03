@@ -9,6 +9,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from MCFT.mcft_model import MViT
+from tools.domain_pairing import CrossDomainPairDataset, DSNEClassCoverageBatchSampler
 from vds2raw.common import (
     evaluate_multimodal,
     save_checkpoint,
@@ -25,6 +27,16 @@ from vds2raw.dataset import (
     load_or_compute_statistics,
 )
 from vds2raw.models import MCFTWithAIS
+from vds2raw.summarize import training_curve_diagnostics
+from vds2raw.train_ccsa import (
+    adaptation_parameter_groups as ccsa_adaptation_parameter_groups,
+    class_weights,
+)
+from vds2raw.train_dsne import (
+    adaptation_parameter_groups as dsne_adaptation_parameter_groups,
+    cosine_lr_factor,
+)
+from vds2raw.train_mcft import class_balanced_sampler
 
 
 def write_sample(path, rgb_value, nir_value, label):
@@ -181,6 +193,156 @@ class VDS2RawStatisticsTests(unittest.TestCase):
             stats_path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "not fitted"):
                 load_or_compute_statistics(root, stats_path)
+
+
+class _LabelOnlyDataset:
+    def __init__(self, labels):
+        self.samples = [(f"sample_{index}.npz", label) for index, label in enumerate(labels)]
+
+
+class VDS2RawTunedTrainingTests(unittest.TestCase):
+    def test_adaptation_parameter_groups_cover_model_once_and_protect_backbone(self):
+        class TinyModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.features = nn.Linear(3, 4)
+                self.head = nn.Linear(4, 2)
+
+        for builder in (
+            ccsa_adaptation_parameter_groups,
+            dsne_adaptation_parameter_groups,
+        ):
+            model = TinyModel()
+            groups = builder(model, lr=0.2, backbone_multiplier=0.1)
+            self.assertAlmostEqual(groups[0]["lr"], 0.02)
+            self.assertAlmostEqual(groups[1]["lr"], 0.2)
+            grouped = [parameter for group in groups for parameter in group["params"]]
+            self.assertEqual(len(grouped), len(list(model.parameters())))
+            self.assertEqual(len({id(parameter) for parameter in grouped}), len(grouped))
+
+    def test_ccsa_class_weights_are_inverse_frequency_and_mean_one(self):
+        weights = class_weights(
+            _LabelOnlyDataset([0, 0, 0, 0, 1, 1, 2]),
+            device=torch.device("cpu"),
+        )
+        self.assertAlmostEqual(float(weights.mean()), 1.0, places=6)
+        self.assertLess(float(weights[0]), float(weights[1]))
+        self.assertLess(float(weights[1]), float(weights[2]))
+
+    def test_dsne_cosine_multiplier_preserves_configured_floor(self):
+        self.assertAlmostEqual(cosine_lr_factor(0, 20, 0.05), 1.0)
+        self.assertAlmostEqual(cosine_lr_factor(20, 20, 0.05), 0.05)
+        self.assertAlmostEqual(cosine_lr_factor(100, 20, 0.05), 0.05)
+
+    def test_dsne_balanced_epoch_covers_every_available_target_sample(self):
+        source = _LabelOnlyDataset(
+            [label for label, count in ((0, 16), (1, 41), (2, 59)) for _ in range(count)]
+        )
+        target = _LabelOnlyDataset(
+            [label for label, count in ((0, 46), (1, 33), (2, 15)) for _ in range(count)]
+        )
+        pairs = CrossDomainPairDataset(source, target, negative_ratio=1, seed=42)
+        sampler = DSNEClassCoverageBatchSampler(pairs, batch_size=32, seed=42)
+        sampled_pair_indices = [index for batch in sampler for index in batch]
+        sampled_target_indices = {
+            pairs.pairs[pair_index][1] for pair_index in sampled_pair_indices
+        }
+        self.assertEqual(sampled_target_indices, set(range(len(target.samples))))
+
+    def test_mcft_sampler_has_equal_expected_weight_per_class(self):
+        source = _LabelOnlyDataset([0, 0, 0, 1, 2])
+        target = _LabelOnlyDataset([0, 0, 1, 1, 2])
+        sampler, counts = class_balanced_sampler(source, target, seed=42)
+        labels = [label for dataset in (source, target) for _, label in dataset.samples]
+        totals = {
+            label: sum(
+                float(weight)
+                for weight, sample_label in zip(sampler.weights, labels)
+                if sample_label == label
+            )
+            for label in range(3)
+        }
+        self.assertEqual(counts, [{0: 3, 1: 1, 2: 1}, {0: 2, 1: 2, 2: 1}])
+        self.assertAlmostEqual(totals[0], totals[1], places=6)
+        self.assertAlmostEqual(totals[1], totals[2], places=6)
+        offset = len(source.samples)
+        for start, dataset in ((0, source), (offset, target)):
+            domain_totals = {
+                label: sum(
+                    float(sampler.weights[start + index])
+                    for index, (_, sample_label) in enumerate(dataset.samples)
+                    if sample_label == label
+                )
+                for label in range(3)
+            }
+            self.assertAlmostEqual(domain_totals[0], domain_totals[1], places=6)
+            self.assertAlmostEqual(domain_totals[1], domain_totals[2], places=6)
+
+    def test_mcft_hard_negative_mask_keeps_real_class_zero_candidates(self):
+        weights = torch.ones(3, 3)
+        labels = torch.tensor([0, 1, 2])
+        masked, eligible = MViT._mask_same_class_negatives(weights, labels)
+        torch.testing.assert_close(masked.diag(), torch.zeros(3))
+        self.assertEqual(float(masked[1, 0]), 1.0)
+        self.assertEqual(float(masked[2, 0]), 1.0)
+        self.assertTrue(bool(eligible[1, 0]))
+        self.assertFalse(bool(eligible[0, 0]))
+
+    def test_launchers_enable_all_tuned_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        for relative in (
+            "scripts/run_vds2raw_methods.sh",
+            "scripts/run_vds2raw_methods.ps1",
+        ):
+            script = (root / relative).read_text(encoding="utf-8")
+            for argument in (
+                "--class-balanced-ce",
+                "--source-lr-min-ratio",
+                "--label-smoothing",
+                "--dropout",
+                "--class-balanced-train",
+                "--loss-itm-weight",
+            ):
+                self.assertIn(argument, script)
+        linux_script = (root / "scripts/run_vds2raw_methods.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('MCFT_EPOCHS="${VDS2RAW_MCFT_EPOCHS:-200}"', linux_script)
+
+        pilot_script = (
+            root / "scripts/run_vds2raw_tuned_pilot_background.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('VDS2RAW_SEEDS="$PILOT_SEED"', pilot_script)
+        self.assertIn('VDS2RAW_METHOD_ORDER="dsne ccsa mcft3"', pilot_script)
+        self.assertIn("VDS2RAW_RUN_COMPLEXITY_BENCHMARK=0", pilot_script)
+        self.assertIn("run_vds2raw_background.sh\" formal", pilot_script)
+        self.assertIn("must retrain source stages", pilot_script)
+
+    def test_training_summary_flags_early_peak_and_reports_regression(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            history = root / "target_test_metrics.csv"
+            history.write_text(
+                "epoch,ACC,Precision_macro,Recall_macro,F1_macro\n"
+                "1,0.70,0.70,0.70,0.70\n"
+                "10,0.80,0.65,0.65,0.60\n",
+                encoding="utf-8",
+            )
+            payload = {
+                "selected_epoch": 2,
+                "target_test": {"accuracy": 0.90, "f1_macro": 0.80},
+                "metadata": {"epochs": 20, "completed_epochs": 10},
+                "target_test_history_csv": "/server/target_test_metrics.csv",
+            }
+            diagnostic = training_curve_diagnostics(payload, root)
+            self.assertTrue(diagnostic["early_peak"])
+            self.assertEqual(diagnostic["early_peak_threshold_epoch"], 5)
+            self.assertEqual(diagnostic["last_evaluated_epoch"], 10)
+            self.assertAlmostEqual(diagnostic["peak_to_last_ACC_drop_pp"], 10.0)
+            self.assertAlmostEqual(diagnostic["peak_to_last_F1_drop_pp"], 20.0)
+
+            payload["metadata"]["epochs"] = 1
+            self.assertFalse(training_curve_diagnostics(payload, root)["early_peak"])
 
 
 class _OneMultimodalSample(Dataset):

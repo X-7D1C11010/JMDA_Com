@@ -210,8 +210,16 @@ def main():
                         help='官方 main.py BATCH_SIZE[1]')
     parser.add_argument('--test-batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--head-lr-mult', type=float, default=10.0,
+                        help='classifier-head learning-rate multiplier')
+    parser.add_argument('--lr-scheduler', choices=['constant', 'cosine'],
+                        default='constant')
+    parser.add_argument('--min-lr-ratio', type=float, default=0.05,
+                        help='final/base LR ratio for cosine scheduling')
     parser.add_argument('--coral-max-weight', type=float, default=1.0,
                         help='maximum CORAL loss weight after linear ramp-up')
+    parser.add_argument('--coral-warmup-epochs', type=int, default=0,
+                        help='source-only epochs before the CORAL ramp starts')
     parser.add_argument('--target-eval-interval', type=int, default=0,
                         help='diagnostic target-val interval in epochs; 0 means final only')
     parser.add_argument('--weight-decay', type=float, default=0.0,
@@ -250,8 +258,10 @@ def main():
         raise ValueError('target-validation early stopping is disabled by this protocol')
     if args.epochs < 1 or args.max_iterations < 0:
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
-    if args.coral_max_weight < 0 or args.target_eval_interval < 0:
-        raise ValueError('--coral-max-weight and --target-eval-interval must be >= 0')
+    if (args.coral_max_weight < 0 or args.coral_warmup_epochs < 0 or
+            args.coral_warmup_epochs >= args.epochs or args.target_eval_interval < 0 or
+            args.head_lr_mult <= 0 or not 0 <= args.min_lr_ratio <= 1):
+        raise ValueError('invalid CORAL weight/eval interval/head LR/scheduler setting')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
 
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
@@ -304,11 +314,13 @@ def main():
         model = DeepCORAL(num_classes=num_classes).to(device)
         load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
         print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
-    # 官方 main.py：新分类层为 10x lr，主干为 base lr，momentum=0.9。
+    # The released recipe uses a 10x head. Keep that as the default while
+    # allowing small target datasets to slow the head independently.
     optimizer_groups = [{'params': model.sharedNet.parameters()}]
     if getattr(model, 'irNet', None) is not None:
         optimizer_groups.append({'params': model.irNet.parameters()})
-    optimizer_groups.append({'params': model.fc.parameters(), 'lr': 10 * args.lr})
+    optimizer_groups.append({'params': model.fc.parameters(),
+                             'lr': args.head_lr_mult * args.lr})
     optimizer = optim.SGD(optimizer_groups, lr=args.lr, momentum=0.9,
                           weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
@@ -317,6 +329,8 @@ def main():
 
     best_acc = -float('inf')
     best_epoch = 0
+    best_metrics = None
+    last_metrics = None
     epochs_without_improvement = 0
     final_acc = None
     best_path = os.path.join(args.save_dir,
@@ -340,18 +354,29 @@ def main():
         raise ValueError('DeepCORAL requires at least one full source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
     outer_epochs = math.ceil(planned_updates / n_batches)
+    scheduler = None
+    if args.lr_scheduler == 'cosine':
+        def lr_factor(step):
+            progress = min(float(step) / max(planned_updates, 1), 1.0)
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return args.min_lr_ratio + (1.0 - args.min_lr_ratio) * cosine
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     print(f'DeepCORAL optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
+    print(f'DeepCORAL LR schedule: {args.lr_scheduler}; '
+          f'head multiplier={args.head_lr_mult}; min ratio={args.min_lr_ratio}')
     global_step = 0
     for epoch in range(outer_epochs):
         if eff:
             eff.epoch_start(epoch)
         model.train()
-        # 原参考实现 main.py:148：CORAL 权重 λ=(e+1)/EPOCHS 随 epoch 线性递增
-        _lambda = args.coral_max_weight * (
-            (global_step + 1) / planned_updates if args.max_iterations
-            else (epoch + 1) / args.epochs
-        )
+        # Small target datasets can benefit from a source-only warmup before
+        # CORAL alignment. Defaults preserve the released no-warmup behavior.
+        warmup_updates = min(args.coral_warmup_epochs * n_batches,
+                             max(planned_updates - 1, 0))
+        alignment_updates = max(planned_updates - warmup_updates, 1)
+        alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
+        _lambda = args.coral_max_weight * min(alignment_progress, 1.0)
         # 原参考实现 main.py:29：train_steps = min(len(source), len(target))，
         # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
@@ -359,8 +384,8 @@ def main():
         batches_this_epoch = min(n_batches, planned_updates - global_step)
 
         for i in range(batches_this_epoch):
-            if args.max_iterations:
-                _lambda = args.coral_max_weight * (global_step + 1) / planned_updates
+            alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
+            _lambda = args.coral_max_weight * min(alignment_progress, 1.0)
             if eff:
                 eff.step_start()
             src_imgs, src_labels = next(src_iter)
@@ -387,16 +412,19 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             global_step += 1
             if eff:
                 eff.step_end()
 
-            if (i + 1) % 10 == 0:
+            if (i + 1) % 10 == 0 or i + 1 == batches_this_epoch:
                 print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
                       f'update [{global_step}/{planned_updates}] '
                       f'lambda={_lambda:.4f} '
                       f'loss_cls={loss_cls.item():.4f} '
-                      f'loss_coral={loss_coral.item():.4f}')
+                      f'loss_coral={loss_coral.item():.4f} '
+                      f'lr={[round(group["lr"], 8) for group in optimizer.param_groups]}')
 
         source_metrics = evaluate(model, src_eval_loader, device, num_classes)
         source_fused_acc = source_metrics['fused']['accuracy']
@@ -411,6 +439,7 @@ def main():
         if should_evaluate:
             val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
             fused_metrics = val_metrics['fused']
+            last_metrics = dict(fused_metrics)
             acc = fused_metrics['accuracy']
             if is_final:
                 final_acc = acc
@@ -418,9 +447,16 @@ def main():
                   f'[{global_step}/{planned_updates}] target val accuracy '
                   f'(diagnostic): {acc:.4f}')
             print(format_classification_metrics(fused_metrics))
-            if acc > best_acc + args.early_stop_min_delta:
+            improved = acc > best_acc + args.early_stop_min_delta
+            tied_but_better_f1 = (
+                best_metrics is not None and
+                abs(acc - best_acc) <= 1e-12 and
+                fused_metrics['f1_macro'] > best_metrics['f1_macro']
+            )
+            if improved or tied_but_better_f1:
                 best_acc = acc
                 best_epoch = epoch + 1
+                best_metrics = dict(fused_metrics)
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
@@ -434,19 +470,27 @@ def main():
                   f'best target val accuracy={best_acc:.4f}')
             break
 
+    if best_metrics is None or last_metrics is None:
+        raise RuntimeError('DeepCORAL completed without target-validation metrics')
     if args.save_model:
         torch.save(model.state_dict(), os.path.join(
             args.save_dir, f'deepcoral_{args.target}_last.pth'))
     if eff:
-        extra_metrics = {'final_acc': final_acc,
-                         'diagnostic_peak_acc': best_acc,
+        extra_metrics = {'final_acc': best_metrics['accuracy'],
+                         'best_acc': best_acc,
+                         'selected_epoch': best_epoch,
+                         'last_epoch_acc': last_metrics['accuracy'],
                          'target': args.target,
                          'source_fused_acc': source_metrics['fused']['accuracy']}
         eff.finalize(extra_metrics=extra_metrics)
-    print(f'Final target val accuracy ({args.target}, final update '
-          f'{global_step}/{planned_updates}): {final_acc:.4f}')
-    print(f'Diagnostic peak target val accuracy: {best_acc:.4f} at epoch {best_epoch} '
-          '(not used for model selection)')
+    print(f'Best target val accuracy ({args.target}, selected): {best_acc:.4f} '
+          f'at epoch {best_epoch}')
+    print('Selected target val metrics:')
+    print(format_classification_metrics(best_metrics))
+    print(f'Last-epoch target val accuracy ({args.target}): '
+          f'{last_metrics["accuracy"]:.4f}')
+    print(f'Final target val accuracy ({args.target}, selected epoch {best_epoch}): '
+          f'{best_metrics["accuracy"]:.4f}')
 
 
 if __name__ == '__main__':

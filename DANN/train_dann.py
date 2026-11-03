@@ -162,9 +162,19 @@ def main():
                         help='训练轮数（随附 DANN 参考实现默认 100）')
     parser.add_argument('--max-iterations', type=int, default=0,
                         help='exact optimizer-update budget; 0 uses --epochs')
+    parser.add_argument(
+        '--grl-max-iterations', type=int, default=0,
+        help=('gradient-reversal ramp length; 0 uses the optimizer-update '
+              'budget. This allows a shorter training budget without '
+              'artificially accelerating the official logistic GRL ramp.'),
+    )
     parser.add_argument('--batch-size', type=int, default=128,
                         help='官方 DANN/train/main.py 设置为 128')
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr-scheduler', choices=['constant', 'cosine'],
+                        default='constant')
+    parser.add_argument('--min-lr-ratio', type=float, default=0.1,
+                        help='final/base LR ratio for cosine scheduling')
     parser.add_argument('--domain-loss-weight', type=float, default=1.0,
                         help='maximum weight of the source+target domain loss')
     parser.add_argument('--target-eval-interval', type=int, default=0,
@@ -204,7 +214,9 @@ def main():
         raise ValueError('target-validation early stopping is disabled by this protocol')
     if args.epochs < 1 or args.max_iterations < 0:
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
-    if args.domain_loss_weight < 0 or args.target_eval_interval < 0 or args.print_freq < 1:
+    if (args.domain_loss_weight < 0 or args.target_eval_interval < 0 or
+            args.grl_max_iterations < 0 or
+            args.print_freq < 1 or not 0 <= args.min_lr_ratio <= 1):
         raise ValueError('domain loss weight/evaluation interval/print frequency is invalid')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
 
@@ -271,6 +283,8 @@ def main():
 
     best_acc = -float('inf')
     best_epoch = 0
+    best_metrics = None
+    last_metrics = None
     epochs_without_improvement = 0
     final_acc = None
     best_path = os.path.join(args.save_dir, f'dann_{args.target}_{args.backbone}_best.pth')
@@ -291,9 +305,19 @@ def main():
     if n_batches < 1:
         raise ValueError('DANN requires at least one source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
+    grl_max_iterations = args.grl_max_iterations or planned_updates
     outer_epochs = math.ceil(planned_updates / n_batches)
+    scheduler = None
+    if args.lr_scheduler == 'cosine':
+        def lr_factor(step):
+            progress = min(float(step) / max(planned_updates, 1), 1.0)
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return args.min_lr_ratio + (1.0 - args.min_lr_ratio) * cosine
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     print(f'DANN optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
+    print(f'DANN GRL ramp length: {grl_max_iterations} updates')
+    print(f'DANN LR schedule: {args.lr_scheduler}; min ratio={args.min_lr_ratio}')
     global_step = 0
     for epoch in range(outer_epochs):
         if eff:
@@ -307,7 +331,7 @@ def main():
 
         for i in range(batches_this_epoch):
             # 原参考实现 main.py:100-101：逐迭代调度 α（0 基 i 与 epoch）
-            p = float(global_step) / max(planned_updates, 1)
+            p = min(float(global_step) / max(grl_max_iterations, 1), 1.0)
             alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
             if eff:
                 eff.step_start()
@@ -336,6 +360,8 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             global_step += 1
             if eff:
                 eff.step_end()
@@ -344,7 +370,8 @@ def main():
                 print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
                       f'update [{global_step}/{planned_updates}] '
                       f'loss_cls={loss_cls.item():.4f} loss_domain={loss_domain.item():.4f} '
-                      f'domain_weight={args.domain_loss_weight:.3f} alpha={alpha:.4f}')
+                      f'domain_weight={args.domain_loss_weight:.3f} alpha={alpha:.4f} '
+                      f'lr={[round(group["lr"], 8) for group in optimizer.param_groups]}')
 
         is_final = global_step >= planned_updates
         should_evaluate = is_final or (
@@ -353,6 +380,7 @@ def main():
         )
         if should_evaluate:
             val_metrics = evaluate(model, tgt_val_loader, device, num_classes)
+            last_metrics = dict(val_metrics)
             acc = val_metrics['accuracy']
             if is_final:
                 final_acc = acc
@@ -360,9 +388,16 @@ def main():
                   f'[{global_step}/{planned_updates}] target val accuracy '
                   f'(diagnostic): {acc:.4f}')
             print(format_classification_metrics(val_metrics))
-            if acc > best_acc + args.early_stop_min_delta:
+            improved = acc > best_acc + args.early_stop_min_delta
+            tied_but_better_f1 = (
+                best_metrics is not None and
+                abs(acc - best_acc) <= 1e-12 and
+                val_metrics['f1_macro'] > best_metrics['f1_macro']
+            )
+            if improved or tied_but_better_f1:
                 best_acc = acc
                 best_epoch = epoch + 1
+                best_metrics = dict(val_metrics)
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
@@ -376,17 +411,25 @@ def main():
                   f'best target val accuracy={best_acc:.4f}')
             break
 
+    if best_metrics is None or last_metrics is None:
+        raise RuntimeError('DANN completed without target-validation metrics')
     if args.save_model:
         torch.save(model.state_dict(), os.path.join(
             args.save_dir, f'dann_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'final_acc': final_acc,
-                                    'diagnostic_peak_acc': best_acc,
+        eff.finalize(extra_metrics={'final_acc': best_metrics['accuracy'],
+                                    'best_acc': best_acc,
+                                    'selected_epoch': best_epoch,
+                                    'last_epoch_acc': last_metrics['accuracy'],
                                     'target': args.target})
-    print(f'Final target val accuracy ({args.target}, final update '
-          f'{global_step}/{planned_updates}): {final_acc:.4f}')
-    print(f'Diagnostic peak target val accuracy: {best_acc:.4f} at epoch {best_epoch} '
-          '(not used for model selection)')
+    print(f'Best target val accuracy ({args.target}, selected): {best_acc:.4f} '
+          f'at epoch {best_epoch}')
+    print('Selected target val metrics:')
+    print(format_classification_metrics(best_metrics))
+    print(f'Last-epoch target val accuracy ({args.target}): '
+          f'{last_metrics["accuracy"]:.4f}')
+    print(f'Final target val accuracy ({args.target}, selected epoch {best_epoch}): '
+          f'{best_metrics["accuracy"]:.4f}')
 
 
 if __name__ == '__main__':

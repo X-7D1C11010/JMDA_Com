@@ -41,12 +41,24 @@ param(
     [double]$MCCLearningRate = 0.005,
     [double]$PDALearningRate = 0.003,
     [double]$DANNDomainLossWeight = 1.0,
+    [int]$DANNGrlMaxIterations = 0,
     [int]$DANNTargetEvalInterval = 0,
+    [ValidateSet('constant', 'cosine')]
+    [string]$DANNLearningRateScheduler = 'constant',
+    [double]$DANNMinimumLearningRateRatio = 0.1,
     [double]$DeepCoralMaxWeight = 1.0,
+    [int]$DeepCoralWarmupEpochs = 0,
     [double]$DeepCoralWeightDecay = 0.0,
     [int]$DeepCoralTargetEvalInterval = 0,
+    [double]$DeepCoralHeadLearningRateMultiplier = 10.0,
+    [ValidateSet('constant', 'cosine')]
+    [string]$DeepCoralLearningRateScheduler = 'constant',
+    [double]$DeepCoralMinimumLearningRateRatio = 0.05,
     [double]$CDANHeadLearningRateMultiplier = 10.0,
+    [double]$CDANAdLearningRateMultiplier = 10.0,
+    [double]$CDANTradeOff = 1.0,
     [int]$CDANCoeffMaxIterations = 0,
+    [double]$CDANCoeffAlpha = 10.0,
     [int]$CDANTestInterval = 500,
     [int]$MDDIterationsPerEpoch = 1000,
     [double]$MDDTradeOff = 1.0,
@@ -87,6 +99,9 @@ if (-not $DeepCoralWeights) {
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $DeepCoralWeights = $candidate }
 }
 $env:TORCH_HOME = Join-Path $Repo 'pretrained_weights\torch'
+if ($env:JMDA_DETERMINISTIC -match '^(1|true|yes|on)$') {
+    $env:CUBLAS_WORKSPACE_CONFIG = ':4096:8'
+}
 $LogDir = Join-Path $OutDir 'logs'
 New-Item -ItemType Directory -Force -Path $OutDir, $LogDir | Out-Null
 
@@ -169,10 +184,18 @@ if ($EarlyStoppingPatience -lt 0 -or $EarlyStoppingMinDelta -lt 0) {
     Write-Host 'Early stopping patience/min-delta must be non-negative.' -ForegroundColor Red
     exit 1
 }
-if ($DANNDomainLossWeight -lt 0 -or $DANNTargetEvalInterval -lt 0 -or
-    $DeepCoralMaxWeight -lt 0 -or $DeepCoralWeightDecay -lt 0 -or
+if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
+    $DANNTargetEvalInterval -lt 0 -or
+    $DANNMinimumLearningRateRatio -lt 0 -or $DANNMinimumLearningRateRatio -gt 1 -or
+    $DeepCoralMaxWeight -lt 0 -or $DeepCoralWarmupEpochs -lt 0 -or
+    $DeepCoralWeightDecay -lt 0 -or
     $DeepCoralTargetEvalInterval -lt 0 -or
-    $CDANHeadLearningRateMultiplier -le 0 -or $CDANCoeffMaxIterations -lt 0 -or
+    $DeepCoralHeadLearningRateMultiplier -le 0 -or
+    $DeepCoralMinimumLearningRateRatio -lt 0 -or
+    $DeepCoralMinimumLearningRateRatio -gt 1 -or
+    $CDANHeadLearningRateMultiplier -le 0 -or
+    $CDANAdLearningRateMultiplier -le 0 -or $CDANTradeOff -lt 0 -or
+    $CDANCoeffMaxIterations -lt 0 -or $CDANCoeffAlpha -le 0 -or
     $CDANTestInterval -lt 1 -or $MDDIterationsPerEpoch -lt 1 -or
     $MDDTradeOff -lt 0 -or $MCCIterationsPerEpoch -lt 1 -or
     $MCCTradeOff -lt 0 -or $MCCTradeOffWarmupEpochs -lt 0 -or
@@ -242,6 +265,7 @@ Write-Host " Image backbone override: $(if ($ImageBackbone) { $ImageBackbone } e
 Write-Host " Image backbone batch size: $ImageBatchSize"
 Write-Host " Enhanced augmentation: $EnhancedAugmentation"
 Write-Host " Modalities: $(if ($Multimodal) { 'VIS+IR exact pairs' } else { 'VIS' })"
+Write-Host " Result rule: peak target-val ACC within budget (ACC ties: macro-F1)"
 Write-Host " Early stopping: patience=$EarlyStoppingPatience, min_delta=$EarlyStoppingMinDelta"
 if ($EarlyStoppingPatience -gt 0) {
     Write-Host ' WARNING: early stopping uses labelled target validation accuracy; protocol becomes target-validation-selected UDA.' -ForegroundColor Yellow
@@ -308,7 +332,16 @@ foreach ($method in $Methods.Keys) {
                           '--head-lr-mult', ([Convert]::ToString(
                               $CDANHeadLearningRateMultiplier,
                               [Globalization.CultureInfo]::InvariantCulture)),
+                          '--ad-lr-mult', ([Convert]::ToString(
+                              $CDANAdLearningRateMultiplier,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--trade-off', ([Convert]::ToString(
+                              $CDANTradeOff,
+                              [Globalization.CultureInfo]::InvariantCulture)),
                           '--coeff-max-iter', $CDANCoeffMaxIterations)
+                $cli += @('--coeff-alpha', ([Convert]::ToString(
+                              $CDANCoeffAlpha,
+                              [Globalization.CultureInfo]::InvariantCulture)))
             } else {
                 $cli += @('--epochs', $MethodEpochs[$method])
             }
@@ -316,14 +349,27 @@ foreach ($method in $Methods.Keys) {
                 $cli += @('--domain-loss-weight', ([Convert]::ToString(
                               $DANNDomainLossWeight,
                               [Globalization.CultureInfo]::InvariantCulture)),
+                          '--grl-max-iterations', $DANNGrlMaxIterations,
+                          '--lr-scheduler', $DANNLearningRateScheduler,
+                          '--min-lr-ratio', ([Convert]::ToString(
+                              $DANNMinimumLearningRateRatio,
+                              [Globalization.CultureInfo]::InvariantCulture)),
                           '--target-eval-interval', $DANNTargetEvalInterval)
             }
             if ($method -eq 'DeepCORAL') {
                 $cli += @('--coral-max-weight', ([Convert]::ToString(
                               $DeepCoralMaxWeight,
                               [Globalization.CultureInfo]::InvariantCulture)),
+                          '--coral-warmup-epochs', $DeepCoralWarmupEpochs,
                           '--weight-decay', ([Convert]::ToString(
                               $DeepCoralWeightDecay,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--head-lr-mult', ([Convert]::ToString(
+                              $DeepCoralHeadLearningRateMultiplier,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--lr-scheduler', $DeepCoralLearningRateScheduler,
+                          '--min-lr-ratio', ([Convert]::ToString(
+                              $DeepCoralMinimumLearningRateRatio,
                               [Globalization.CultureInfo]::InvariantCulture)),
                           '--target-eval-interval', $DeepCoralTargetEvalInterval)
             }

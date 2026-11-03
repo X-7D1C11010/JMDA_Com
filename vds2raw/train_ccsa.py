@@ -1,6 +1,7 @@
 """CCSA core recipe under the user-specified fully supervised VDS2Raw protocol."""
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -39,12 +40,24 @@ def train_source_initialization(model, loader, device, args):
     model.set_source_initialization_stage(True)
     optimizer = torch.optim.Adadelta(
         model.source_initialization_parameters(),
-        lr=args.lr,
+        lr=args.source_lr,
         rho=args.rho,
         eps=args.eps,
     )
-    criterion = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=max(1, args.source_epochs),
+        eta_min=args.source_lr * args.source_lr_min_ratio,
+    )
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights(loader.dataset, device=device)
+        if args.class_balanced_ce
+        else None
+    )
     history = []
+    best_ce = None
+    best_epoch = None
+    best_state = None
     for epoch in range(1, args.source_epochs + 1):
         model.train()
         total_loss = 0.0
@@ -63,21 +76,74 @@ def train_source_initialization(model, loader, device, args):
                 total_items += stop - start
             optimizer.step()
         epoch_ce = total_loss / max(total_items, 1)
+        epoch_lr = optimizer.param_groups[0]["lr"]
+        improved = best_ce is None or epoch_ce < best_ce
+        if improved:
+            best_ce = epoch_ce
+            best_epoch = epoch
+            best_state = {
+                key: value.detach().cpu().clone()
+                for key, value in model.state_dict().items()
+            }
         history.append(
             {
                 "epoch": epoch,
                 "ce": epoch_ce,
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": epoch_lr,
                 "samples": total_items,
+                "is_best_source_epoch": improved,
             }
         )
+        scheduler.step()
         if epoch == 1 or epoch % 10 == 0 or epoch == args.source_epochs:
             print(
                 f"CCSA source FC initialization [{epoch}/{args.source_epochs}] "
                 f"CE={epoch_ce:.4f}"
             )
+    if best_state is None:
+        raise RuntimeError("CCSA source initialization produced no checkpoint")
+    model.load_state_dict(best_state)
     model.set_source_initialization_stage(False)
-    return history
+    print(
+        f"Restored best CCSA source initialization: epoch={best_epoch} "
+        f"CE={best_ce:.4f}"
+    )
+    return history, best_epoch
+
+
+def class_weights(*datasets, device):
+    """Inverse-frequency weights normalized to mean one for three classes."""
+    counts = torch.zeros(3, dtype=torch.float64)
+    for dataset in datasets:
+        for _, label in dataset.samples:
+            counts[int(label)] += 1
+    if bool((counts == 0).any()):
+        raise ValueError(f"class-balanced CE requires every class; counts={counts.tolist()}")
+    weights = counts.reciprocal()
+    weights = weights / weights.mean()
+    return weights.to(device=device, dtype=torch.float32)
+
+
+def cosine_lr_factor(step, total_steps, min_ratio):
+    progress = min(max(step, 0), max(total_steps, 1)) / max(total_steps, 1)
+    return min_ratio + (1.0 - min_ratio) * 0.5 * (
+        1.0 + math.cos(math.pi * progress)
+    )
+
+
+def adaptation_parameter_groups(model, lr, backbone_multiplier):
+    """Use a conservative LR for the pretrained RGB feature extractor."""
+    backbone = list(model.features.parameters())
+    backbone_ids = {id(parameter) for parameter in backbone}
+    task = [
+        parameter
+        for parameter in model.parameters()
+        if id(parameter) not in backbone_ids
+    ]
+    return [
+        {"params": backbone, "lr": lr * backbone_multiplier},
+        {"params": task, "lr": lr},
+    ]
 
 
 def train_direction(
@@ -130,7 +196,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--source-epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--source-batch-size", type=int, default=256)
+    parser.add_argument("--source-batch-size", type=int, default=32)
     parser.add_argument("--micro-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=64)
     parser.add_argument(
@@ -152,7 +218,11 @@ def main():
             "retained only for explicit fixed-shot ablations"
         ),
     )
-    parser.add_argument("--lr", type=float, default=1.0)
+    parser.add_argument("--lr", type=float, default=0.1)
+    parser.add_argument("--backbone-lr-multiplier", type=float, default=0.1)
+    parser.add_argument("--source-lr", type=float, default=0.5)
+    parser.add_argument("--source-lr-min-ratio", type=float, default=0.1)
+    parser.add_argument("--lr-min-ratio", type=float, default=0.01)
     parser.add_argument("--rho", type=float, default=0.95)
     parser.add_argument("--eps", type=float, default=1e-7)
     parser.add_argument("--alpha", type=float, default=0.25)
@@ -161,12 +231,19 @@ def main():
     parser.add_argument("--pretrained-backbone", default="")
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
+    parser.add_argument(
+        "--class-balanced-ce", dest="class_balanced_ce", action="store_true"
+    )
+    parser.add_argument(
+        "--no-class-balanced-ce", dest="class_balanced_ce", action="store_false"
+    )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--early-stopping-patience", type=int, default=8)
-    parser.add_argument("--early-stopping-min-epochs", type=int, default=5)
+    parser.add_argument("--early-stopping-patience", type=int, default=15)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=20)
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
+    parser.set_defaults(class_balanced_ce=True)
     args = parser.parse_args()
 
     positive_values = (
@@ -186,6 +263,14 @@ def main():
         raise ValueError("early stopping settings cannot be negative")
     if not 0.0 <= args.ais_dropout_probability < 1.0:
         raise ValueError("ais-dropout-probability must be in [0, 1)")
+    if args.lr <= 0 or args.source_lr <= 0:
+        raise ValueError("CCSA learning rates must be positive")
+    if not 0.0 < args.backbone_lr_multiplier <= 1.0:
+        raise ValueError("backbone-lr-multiplier must be in (0, 1]")
+    if not 0.0 <= args.lr_min_ratio <= 1.0:
+        raise ValueError("lr-min-ratio must be in [0, 1]")
+    if not 0.0 <= args.source_lr_min_ratio <= 1.0:
+        raise ValueError("source-lr-min-ratio must be in [0, 1]")
     if args.pairs_per_epoch:
         print(
             "[DEPRECATED] --pairs-per-epoch is ignored: official CCSA uses the "
@@ -276,18 +361,40 @@ def main():
     ).to(device)
     source_checkpoint = save_dir / f"vds2raw_ccsa_seed{args.seed}_source_init.pth"
     source_history = []
+    source_best_epoch = None
     if args.source_checkpoint:
         load_model_state(model, args.source_checkpoint)
         print(f"Loaded CCSA source initialization: {args.source_checkpoint}")
     else:
-        source_history = train_source_initialization(model, source_loader, device, args)
+        source_history, source_best_epoch = train_source_initialization(
+            model, source_loader, device, args
+        )
         torch.save({"model_state": model.state_dict()}, source_checkpoint)
         print(f"Saved CCSA source initialization: {source_checkpoint}")
 
     optimizer = torch.optim.Adadelta(
-        model.parameters(), lr=args.lr, rho=args.rho, eps=args.eps
+        adaptation_parameter_groups(
+            model, args.lr, args.backbone_lr_multiplier
+        ),
+        rho=args.rho,
+        eps=args.eps,
     )
-    criterion = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda step: cosine_lr_factor(
+            step, args.epochs, args.lr_min_ratio
+        ),
+    )
+    source_criterion = nn.CrossEntropyLoss(
+        weight=class_weights(source_train, device=device)
+        if args.class_balanced_ce
+        else None
+    )
+    target_criterion = nn.CrossEntropyLoss(
+        weight=class_weights(target_train, device=device)
+        if args.class_balanced_ce
+        else None
+    )
     stem = f"vds2raw_ccsa_seed{args.seed}"
     checkpoint = save_dir / f"{stem}_best.pth"
     metadata = {
@@ -299,6 +406,7 @@ def main():
         "seed": args.seed,
         "epochs": args.epochs,
         "source_initialization_epochs": args.source_epochs,
+        "source_initialization_selected_epoch": source_best_epoch,
         "source_initialization_checkpoint_input": args.source_checkpoint,
         "pretrained_backbone_checkpoint_input": args.pretrained_backbone,
         "source_initialization_provenance": (
@@ -351,11 +459,37 @@ def main():
         "micro_batch_size": args.micro_batch_size,
         "augmentation": "none; fixed resize256/center-crop224 preprocessing",
         "normalization": "ImageNet",
+        "class_balanced_ce": args.class_balanced_ce,
+        "class_weights": (
+            {
+                "source_train": class_weights(
+                    source_train, device=torch.device("cpu")
+                ).tolist(),
+                "target_train": class_weights(
+                    target_train, device=torch.device("cpu")
+                ).tolist(),
+            }
+            if args.class_balanced_ce
+            else None
+        ),
         "optimizer": {
             "name": "Adadelta",
             "lr": args.lr,
+            "backbone_lr": args.lr * args.backbone_lr_multiplier,
+            "backbone_lr_multiplier": args.backbone_lr_multiplier,
+            "source_lr": args.source_lr,
             "rho": args.rho,
             "eps": args.eps,
+        },
+        "scheduler": {
+            "name": "cosine multiplier preserving backbone/task LR ratio",
+            "eta_min": args.lr * args.lr_min_ratio,
+            "backbone_eta_min": (
+                args.lr * args.backbone_lr_multiplier * args.lr_min_ratio
+            ),
+            "t_max": args.epochs,
+            "source_eta_min": args.source_lr * args.source_lr_min_ratio,
+            "source_t_max": args.source_epochs,
         },
         "loss": {"alpha": args.alpha, "margin": args.margin},
         "early_stopping": {
@@ -402,7 +536,7 @@ def main():
             source_ce, source_csa = train_direction(
                 model,
                 optimizer,
-                criterion,
+                source_criterion,
                 source_images,
                 source_labels,
                 target_images,
@@ -412,7 +546,7 @@ def main():
             target_ce, target_csa = train_direction(
                 model,
                 optimizer,
-                criterion,
+                target_criterion,
                 target_images,
                 target_labels,
                 source_images,
@@ -449,10 +583,13 @@ def main():
                 + args.alpha * source_csa_epoch,
                 "target_total": (1.0 - args.alpha) * target_ce_epoch
                 + args.alpha * target_csa_epoch,
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": optimizer.param_groups[1]["lr"],
+                "backbone_lr": optimizer.param_groups[0]["lr"],
+                "task_lr": optimizer.param_groups[1]["lr"],
                 "batches": completed_batches,
             }
         )
+        scheduler.step()
         val_metrics = evaluate_inputs(model, val_loader, device)
         test_metrics = evaluate_inputs(model, test_loader, device)
         completed_epoch = epoch

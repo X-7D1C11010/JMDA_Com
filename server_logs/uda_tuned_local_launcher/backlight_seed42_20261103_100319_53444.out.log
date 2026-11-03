@@ -1,0 +1,41 @@
+Target-specific tuned UDA run (exact-paired VIS+IR).
+Target=backlight Seed=42 BatchSize=16
+Methods=DANN
+Output=DeepCORAL
+Protocol: exact-paired VIS+IR; report peak target-val ACC within the fixed budget; no checkpoint saving.
+Per-domain batch size: 16
+CDAN iterations: 1500
+==============================================================
+ UDA experiments  (source = sunny, target = other weathers)
+--------------------------------------------------------------
+ Python  : D:\Anaconda\envs\pytorch\python.exe
+ Epochs  : DANN=100
+ CDAN iters: 1500
+ Seeds   : 42
+ Targets : backlight
+ Methods : DANN
+ LR      : DANN=0.0005
+ Paused  : MDD, MCC (override enabled)
+ OutDir  : DeepCORAL
+ Loader  : train_workers=2, eval_workers=0, prefetch=4, persistent=True, timeout=300s
+ TORCH_HOME: D:\Code\JMDA_Com\pretrained_weights\torch
+ Image backbone override: ResNet50
+ Image backbone batch size: 16
+ Enhanced augmentation: True
+ Modalities: VIS+IR exact pairs
+ Result rule: peak target-val ACC within budget (ACC ties: macro-F1)
+ Early stopping: patience=0, min_delta=0
+==============================================================
+[1/1] DANN  target=backlight  seed=42
+      FAILED (exit=1)  log=DeepCORAL\logs\DANN_backlight_seed42.log
+
+[2/2] Regenerating summary ...
+
+==============================================================
+ Done.
+ Raw runs CSV : DeepCORAL\efficiency_runs.csv
+ Summary CSV  : DeepCORAL\efficiency_summary.csv
+ Summary MD   : DeepCORAL\efficiency_table.md
+ Per-run logs : DeepCORAL\logs
+ Failed runs (1): DANN_backlight_seed42
+==============================================================

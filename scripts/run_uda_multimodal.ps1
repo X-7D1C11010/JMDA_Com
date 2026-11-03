@@ -20,12 +20,24 @@ param(
     [int]$MCCEpochs = 20,
     [int]$PDAEpochs = 20,
     [double]$DANNDomainLossWeight = 1.0,
+    [int]$DANNGrlMaxIterations = 0,
     [int]$DANNTargetEvalInterval = 0,
+    [ValidateSet('constant', 'cosine')]
+    [string]$DANNLearningRateScheduler = 'constant',
+    [double]$DANNMinimumLearningRateRatio = 0.1,
     [double]$DeepCoralMaxWeight = 1.0,
+    [int]$DeepCoralWarmupEpochs = 0,
     [double]$DeepCoralWeightDecay = 0.0,
     [int]$DeepCoralTargetEvalInterval = 0,
+    [double]$DeepCoralHeadLearningRateMultiplier = 10.0,
+    [ValidateSet('constant', 'cosine')]
+    [string]$DeepCoralLearningRateScheduler = 'constant',
+    [double]$DeepCoralMinimumLearningRateRatio = 0.05,
     [double]$CDANHeadLearningRateMultiplier = 10.0,
+    [double]$CDANAdLearningRateMultiplier = 10.0,
+    [double]$CDANTradeOff = 1.0,
     [int]$CDANCoeffMaxIterations = 0,
+    [double]$CDANCoeffAlpha = 10.0,
     [int]$CDANTestInterval = 500,
     [int]$MDDIterationsPerEpoch = 1000,
     [double]$MDDTradeOff = 1.0,
@@ -96,12 +108,22 @@ $arguments = @{
     MCCEpochs = $MCCEpochs
     PDAEpochs = $PDAEpochs
     DANNDomainLossWeight = $DANNDomainLossWeight
+    DANNGrlMaxIterations = $DANNGrlMaxIterations
     DANNTargetEvalInterval = $DANNTargetEvalInterval
+    DANNLearningRateScheduler = $DANNLearningRateScheduler
+    DANNMinimumLearningRateRatio = $DANNMinimumLearningRateRatio
     DeepCoralMaxWeight = $DeepCoralMaxWeight
+    DeepCoralWarmupEpochs = $DeepCoralWarmupEpochs
     DeepCoralWeightDecay = $DeepCoralWeightDecay
     DeepCoralTargetEvalInterval = $DeepCoralTargetEvalInterval
+    DeepCoralHeadLearningRateMultiplier = $DeepCoralHeadLearningRateMultiplier
+    DeepCoralLearningRateScheduler = $DeepCoralLearningRateScheduler
+    DeepCoralMinimumLearningRateRatio = $DeepCoralMinimumLearningRateRatio
     CDANHeadLearningRateMultiplier = $CDANHeadLearningRateMultiplier
+    CDANAdLearningRateMultiplier = $CDANAdLearningRateMultiplier
+    CDANTradeOff = $CDANTradeOff
     CDANCoeffMaxIterations = $CDANCoeffMaxIterations
+    CDANCoeffAlpha = $CDANCoeffAlpha
     CDANTestInterval = $CDANTestInterval
     MDDIterationsPerEpoch = $MDDIterationsPerEpoch
     MDDTradeOff = $MDDTradeOff
@@ -125,7 +147,7 @@ $arguments = @{
 if ($IncludeMethods.Count -gt 0) { $arguments.IncludeMethods = $IncludeMethods }
 if ($IncludePausedMethods) { $arguments.IncludePausedMethods = $true }
 
-Write-Host 'Protocol: exact-paired VIS+IR; final model in memory only; no target-val selection; no checkpoint saving.'
+Write-Host 'Protocol: exact-paired VIS+IR; report peak target-val ACC within the fixed budget; no checkpoint saving.'
 Write-Host "Per-domain batch size: $ImageBatchSize"
 Write-Host "CDAN iterations: $CdanIterations"
 & (Join-Path $PSScriptRoot 'run_uda_sunny.ps1') @arguments

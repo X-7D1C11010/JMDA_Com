@@ -59,6 +59,24 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("default='ResNet18'", cdan)
         self.assertIn("resnet_name=args.backbone", cdan)
 
+    def test_dann_can_decouple_grl_ramp_from_shortened_budget(self):
+        with open(os.path.join(ROOT, "DANN", "train_dann.py"), encoding="utf-8") as f:
+            dann = f.read()
+        with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
+                  encoding="utf-8-sig") as f:
+            launcher = f.read()
+        self.assertIn("--grl-max-iterations", dann)
+        self.assertIn("grl_max_iterations = args.grl_max_iterations or planned_updates", dann)
+        self.assertIn("[int]$DANNGrlMaxIterations = 0", launcher)
+        self.assertIn("'--grl-max-iterations', $DANNGrlMaxIterations", launcher)
+
+    def test_pda_peak_tie_uses_tolerant_accuracy_comparison(self):
+        with open(os.path.join(ROOT, "PDA", "official", "trainers", "baseda.py"),
+                  encoding="utf-8") as f:
+            trainer = f.read()
+        self.assertIn("acc_tolerance = 1e-9", trainer)
+        self.assertIn("tied_acc_better_f1", trainer)
+
     def test_evaluation_loaders_do_not_add_worker_pools_by_default(self):
         tools_dir = os.path.join(ROOT, "tools")
         module = load_module(
@@ -207,7 +225,11 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn('UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"', launcher)
         self.assertIn('--num-workers "$UDA_NUM_WORKERS"', launcher)
         self.assertIn('--prefetch-factor "$UDA_PREFETCH_FACTOR"', launcher)
-        self.assertIn('mdd_*|mcc_*) model_selection="best_target_val_ACC_within_budget"', launcher)
+        self.assertIn(
+            'dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*|pda_*|ccsa_*|dsne_*) '
+            'model_selection="best_target_val_ACC_within_budget"',
+            launcher,
+        )
         self.assertIn('mdd_*|mcc_*|pda_*|jmda_net_*|mcft_*) input_modalities="VIS+IR"', launcher)
 
         for relative in ("MDD/train_mdd.py", "MCC/train_mcc.py"):

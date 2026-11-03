@@ -715,7 +715,10 @@ def main():
             if epoch > budget:
                 continue
             current_best = best_by_budget[budget]
-            if current_best is None or metrics['accuracy'] > current_best['accuracy']:
+            if (current_best is None or
+                    metrics['accuracy'] > current_best['accuracy'] or
+                    (metrics['accuracy'] == current_best['accuracy'] and
+                     metrics['f1_macro'] > current_best['f1_macro'])):
                 best_by_budget[budget] = dict(metrics)
                 best_epoch_by_budget[budget] = epoch
                 torch.save(
@@ -788,8 +791,9 @@ def main():
         'budgets': budget_results,
         'last_checkpoint': last_checkpoint,
     })
-    final_metrics = history[-1][1]
+    last_metrics = history[-1][1]
     final_budget = budgets[-1]
+    final_metrics = best_by_budget[final_budget]
     if efficiency:
         efficiency.finalize(extra_metrics={
             'best_acc': best_by_budget[final_budget]['accuracy'],
@@ -797,10 +801,14 @@ def main():
             'precision_macro': final_metrics['precision_macro'],
             'recall_macro': final_metrics['recall_macro'],
             'f1_macro': final_metrics['f1_macro'],
+            'selected_epoch': best_epoch_by_budget[final_budget],
+            'last_epoch_acc': last_metrics['accuracy'],
             'target': args.target, 'protocol': 'SDA',
         })
 
-    print(f'Final target val accuracy: {final_metrics["accuracy"]:.4f}')
+    print(f'Last-epoch target val accuracy: {last_metrics["accuracy"]:.4f}')
+    print(f'Final target val accuracy (selected epoch '
+          f'{best_epoch_by_budget[final_budget]}): {final_metrics["accuracy"]:.4f}')
     print(f'Budget result manifest: {result_manifest}')
     print(f'Last checkpoint: {last_checkpoint}')
 

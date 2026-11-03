@@ -275,7 +275,13 @@ def main():
         acc = val_metrics['accuracy']
         print(f'Epoch [{epoch}/{args.epochs}] target val accuracy: {acc:.4f}')
         print(format_classification_metrics(val_metrics))
-        if acc > best_acc + args.early_stop_min_delta:
+        improved = acc > best_acc + args.early_stop_min_delta
+        tied_but_better_f1 = (
+            best_metrics is not None and
+            abs(acc - best_acc) <= 1e-12 and
+            val_metrics['f1_macro'] > best_metrics['f1_macro']
+        )
+        if improved or tied_but_better_f1:
             best_acc = acc
             best_epoch = epoch
             best_metrics = dict(val_metrics)

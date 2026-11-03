@@ -167,8 +167,14 @@ def main():
                         help='inv 调度参数 power（原参考实现 0.75）')
     parser.add_argument('--head-lr-mult', type=float, default=10.0,
                         help='multiplier for multimodal bottleneck/fusion/classifier groups')
+    parser.add_argument('--ad-lr-mult', type=float, default=10.0,
+                        help='domain-discriminator learning-rate multiplier')
+    parser.add_argument('--trade-off', type=float, default=1.0,
+                        help='weight applied to the conditional adversarial loss')
     parser.add_argument('--coeff-max-iter', type=int, default=0,
                         help='GRL ramp length; 0 uses --num-iterations')
+    parser.add_argument('--coeff-alpha', type=float, default=10.0,
+                        help='steepness of the GRL logistic ramp')
     parser.add_argument('--method', type=str, default='CDAN+E',
                         choices=['CDAN', 'CDAN+E'],
                         help='原参考实现 train_image.py:198 默认 CDAN+E（熵条件化，论文最优变体）')
@@ -200,7 +206,9 @@ def main():
     if args.early_stop_patience:
         raise ValueError('target-validation early stopping is disabled by this protocol')
     if (args.num_iterations < 1 or args.test_interval < 1 or
-            args.head_lr_mult <= 0 or args.coeff_max_iter < 0):
+            args.head_lr_mult <= 0 or args.ad_lr_mult <= 0 or
+            args.trade_off < 0 or args.coeff_max_iter < 0 or
+            args.coeff_alpha <= 0):
         raise ValueError('invalid CDAN iteration/evaluation/lr-mult/ramp setting')
     coeff_max_iter = args.coeff_max_iter or args.num_iterations
     args.seed = seed_everything(args.seed)
@@ -277,13 +285,17 @@ def main():
         ad_net = AdversarialNetwork(in_feature=256 * num_classes,
                                     hidden_size=1024).to(device)
     ad_net.max_iter = float(coeff_max_iter)
+    ad_net.alpha = float(args.coeff_alpha)
     print(f'Random projection (--random): {args.random}; '
           f'ad_net input dim={256 * num_classes if not args.random else 1024}')
 
     # 原参考实现把带 lr_mult/decay_mult 的参数组直接交给 SGD，再由 inv 调度逐步
     # 按 lr_mult 缩放学习率、按 decay_mult 缩放权重衰减；PyTorch 允许参数组携带
     # 这两个自定义字段，故这里保持原样而不预先 materialize。
-    optimizer = optim.SGD(model.get_parameters() + ad_net.get_parameters(),
+    ad_parameters = ad_net.get_parameters()
+    for group in ad_parameters:
+        group['lr_mult'] = args.ad_lr_mult
+    optimizer = optim.SGD(model.get_parameters() + ad_parameters,
                           lr=args.lr, momentum=0.9, weight_decay=5e-4, nesterov=True)
     print(
         'CDAN optimizer group lr_mult: '
@@ -293,6 +305,8 @@ def main():
 
     best_acc = -float('inf')
     best_iteration = 0
+    best_metrics = None
+    last_metrics = None
     evaluations_without_improvement = 0
     final_acc = None
     best_path = os.path.join(args.save_dir,
@@ -356,12 +370,13 @@ def main():
         if args.method == 'CDAN+E':
             entropy = Entropy(softmax_out)
             loss_transfer = CDAN([features, softmax_out], ad_net, entropy,
-                                 calc_coeff(iter_num, max_iter=coeff_max_iter), random_layer)
+                                 calc_coeff(iter_num, alpha=args.coeff_alpha,
+                                            max_iter=coeff_max_iter), random_layer)
         else:
             loss_transfer = CDAN([features, softmax_out], ad_net,
                                  None, None, random_layer)
 
-        loss = loss_cls + loss_transfer
+        loss = loss_cls + args.trade_off * loss_transfer
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -372,7 +387,8 @@ def main():
                 iter_num == args.num_iterations - 1):
             print(f'  iter [{iter_num + 1}/{args.num_iterations}] '
                   f'loss_cls={loss_cls.item():.4f} loss_transfer={loss_transfer.item():.4f} '
-                  f'coeff={calc_coeff(iter_num, max_iter=coeff_max_iter):.4f} '
+                  f'trade_off={args.trade_off:.3f} '
+                  f'coeff={calc_coeff(iter_num, alpha=args.coeff_alpha, max_iter=coeff_max_iter):.4f} '
                   f'lr={optimizer.param_groups[0]["lr"]:.2e}')
 
         # Diagnostic target evaluation is periodic, but never controls
@@ -388,15 +404,22 @@ def main():
                                           worker_timeout_seconds=args.worker_timeout_seconds,
                                           multimodal=args.multimodal)
             acc = val_metrics['accuracy']
+            last_metrics = dict(val_metrics)
             if iter_num == args.num_iterations - 1:
                 final_acc = acc
             print(f'iter [{iter_num + 1}/{args.num_iterations}] '
                   f'target val accuracy (10-crop): {acc:.4f}')
             print(format_classification_metrics(val_metrics))
             improved = acc > best_acc + args.early_stop_min_delta
-            if improved:
+            tied_but_better_f1 = (
+                best_metrics is not None and
+                abs(acc - best_acc) <= 1e-12 and
+                val_metrics['f1_macro'] > best_metrics['f1_macro']
+            )
+            if improved or tied_but_better_f1:
                 best_acc = acc
                 best_iteration = iter_num + 1
+                best_metrics = dict(val_metrics)
                 evaluations_without_improvement = 0
             else:
                 evaluations_without_improvement += 1
@@ -409,16 +432,25 @@ def main():
                       f'best target val accuracy={best_acc:.4f}')
                 break
 
+    if best_metrics is None or last_metrics is None:
+        raise RuntimeError('CDAN completed without target-validation metrics')
     if args.save_model:
         torch.save(model.state_dict(), os.path.join(
             args.save_dir, f'cdan_{args.target}_last.pth'))
     if eff:
-        eff.finalize(extra_metrics={'final_acc': final_acc,
-                                    'diagnostic_peak_acc': best_acc,
+        eff.finalize(extra_metrics={'final_acc': best_metrics['accuracy'],
+                                    'best_acc': best_acc,
+                                    'selected_iteration': best_iteration,
+                                    'last_iteration_acc': last_metrics['accuracy'],
                                     'target': args.target})
-    print(f'Final target val accuracy ({args.target}, iteration {args.num_iterations}): '
-          f'{final_acc:.4f}')
-    print(f'Diagnostic peak target val accuracy (not used for model selection): {best_acc:.4f}')
+    print(f'Best target val accuracy ({args.target}, selected): {best_acc:.4f} '
+          f'at iteration {best_iteration}')
+    print('Selected target val metrics:')
+    print(format_classification_metrics(best_metrics))
+    print(f'Last-iteration target val accuracy ({args.target}): '
+          f'{last_metrics["accuracy"]:.4f}')
+    print(f'Final target val accuracy ({args.target}, selected iteration '
+          f'{best_iteration}): {best_metrics["accuracy"]:.4f}')
 
 
 if __name__ == '__main__':

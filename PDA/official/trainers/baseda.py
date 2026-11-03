@@ -197,12 +197,40 @@ class BaseDA(TrainerXU):
             if not hasattr(self, "diagnostic_best_result"):
                 self.diagnostic_best_result = -float("inf")
                 self.diagnostic_best_epoch = 0
-            if curr_result > self.diagnostic_best_result:
+                self.diagnostic_best_metrics = None
+                self.diagnostic_best_labels = None
+                self.diagnostic_best_predictions = None
+            current_metrics = dict(getattr(self, "last_evaluation_results", {}))
+            current_f1 = current_metrics.get("macro_f1", -float("inf"))
+            best_f1 = (
+                self.diagnostic_best_metrics.get("macro_f1", -float("inf"))
+                if self.diagnostic_best_metrics is not None else -float("inf")
+            )
+            # Evaluators report percentages as floats.  The same number of
+            # correct samples can differ by a few ulps, so exact equality can
+            # incorrectly bypass the macro-F1 tie-break (for example 27/36 at
+            # two epochs).  Treat numerically equal ACC values as a tie.
+            acc_tolerance = 1e-9
+            improved_acc = curr_result > (
+                self.diagnostic_best_result + acc_tolerance
+            )
+            tied_acc_better_f1 = (
+                abs(curr_result - self.diagnostic_best_result) <= acc_tolerance
+                and current_f1 > best_f1
+            )
+            if improved_acc or tied_acc_better_f1:
                 self.diagnostic_best_result = curr_result
                 self.diagnostic_best_epoch = self.epoch + 1
+                self.diagnostic_best_metrics = current_metrics
+                self.diagnostic_best_labels = list(
+                    getattr(self, "last_evaluation_labels", [])
+                )
+                self.diagnostic_best_predictions = list(
+                    getattr(self, "last_evaluation_predictions", [])
+                )
             print(
-                "Diagnostic target accuracy at epoch {}: {:.4f}; peak {:.4f} "
-                "at epoch {} (not used for model selection)".format(
+                "Target accuracy at epoch {}: {:.4f}; selected peak {:.4f} "
+                "at epoch {}".format(
                     self.epoch + 1, curr_result,
                     self.diagnostic_best_result, self.diagnostic_best_epoch,
                 )
@@ -253,6 +281,13 @@ class BaseDA(TrainerXU):
             self.evaluator.process(output, label)
 
         results = self.evaluator.evaluate()
+        self.last_evaluation_results = dict(results)
+        self.last_evaluation_labels = list(
+            getattr(self.evaluator, "_y_true", [])
+        )
+        self.last_evaluation_predictions = list(
+            getattr(self.evaluator, "_y_pred", [])
+        )
         for k, v in results.items():
             tag = "{}/{}".format(split, k)
             self.write_scalar(tag, v, self.epoch)

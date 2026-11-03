@@ -46,9 +46,12 @@ MCFT 原论文只有 HSI/LiDAR 两路栅格模态，不包含 AIS 或 AIS mask�
 航行状态字段默认排除。mask 只做 `AIS*mask` 有效性门控，不显式送入 MLP。
 
 当前 VDS2Raw MCFT 的小样本正则化默认包括：RGB/NIR 成对水平/垂直翻转（同时
-按镜像方向修正 AIS heading sin/cos）、AIS 分支 0.5
-模态 dropout、0.1 label smoothing 和 Adam weight decay 1e-4。为完整搜索
-`target_test` 峰值，正式协议默认每轮评价且关闭早停，执行完整 500 epoch；这些正则化属于
+按镜像方向修正 AIS heading sin/cos）、AIS 分支 0.6 模态 dropout、0.15 label
+smoothing、Adam weight decay 5e-4，以及 source/target × 类别六组均衡采样。正式
+预算为 200 epoch，每轮评价，最少训练 40 轮且 patience 20；旧 500 epoch 是对当前
+小数据集明显过长的上限，已被覆盖。ITM hard-negative 掩码按标签是否相等计算，避免
+0-based Cargo 标签被误当成 sentinel 排除；VDS2Raw 总损失为
+`CE + 0.1*ITA + 0.1*ITM`，降低仅首轮较大的 ITM 对梯度的冲击。这些正则化属于
 VDS2Raw 三模态适配，不反向修改 JMDA 的官方配方 VIS+IR 基线。
 
 CCSA 先冻结 ImageNet VGG-16 卷积层，使用全部 `source_train` 初始化新加入的
@@ -64,8 +67,9 @@ pair 与发布代码的整数除法一样不参与更新。每个完整 batch �
 
 d-SNE 先从 ImageNet ResNetV2-101 开始，在全部 `source_train` 上监督微调 80
 epoch：前 10 epoch 冻结 RGB backbone，训练 4096/512 分类头及 NIR/AIS 适配层，随后
-联合微调；再以 batch size 32、`--fn`、SGD 0.001、momentum 0.9、weight decay
-1e-4 对全部有标签 `target_train` 进行适配。NIR 经轻量卷积编码为 512 维残差，连续
+联合微调；再以 batch size 32、`--fn`、task LR 2e-4、RGB backbone LR 2e-5、
+momentum 0.9、weight decay 5e-4 对全部有标签 `target_train` 进行适配。NIR 经轻量
+卷积编码为 512 维残差，连续
 AIS 经门控后形成另一条 512 维残差；官方 RGB ResNetV2-101、4096/512 头、损失和
 默认目标方向更新不变。10 epoch 是官方 Office-31 预算；程序继续到 20 epoch，并分别
 以 `target_test` 在 1--10 和 1--20 范围选峰值，输出 `d-SNE@10` 与 `d-SNE@20`。
@@ -106,18 +110,32 @@ $env:VDS2RAW_SEEDS = '42'
 `VDS2RAW_CCSA_TARGET_SAMPLES_PER_CLASS`、`VDS2RAW_DSNE_TARGET_SAMPLES_PER_CLASS`
 均默认 0，即全部；正式启动会拒绝任一非零值。兼容变量
 `VDS2RAW_TARGET_SAMPLES_PER_CLASS` 仅供显式消融。适配训练轮数默认分别为
-80/20/500。三种方法均启用 `target_test` 峰值协议下的早停：CCSA 默认最少 5 轮、
-patience 8；d-SNE 默认最少 10 轮、patience 6；MCFT 默认最少 50 轮、patience 30。
+80/20/200。三种方法均启用 `target_test` 峰值协议下的早停：CCSA 默认最少 20 轮、
+patience 15；d-SNE 默认最少 15 轮、patience 8；MCFT 默认最少 40 轮、patience 20。
 这些值分别可由对应的 `VDS2RAW_*_EARLY_STOPPING_PATIENCE` 和
 `VDS2RAW_*_EARLY_STOPPING_MIN_EPOCHS` 环境变量覆盖，设 patience 为 0 可关闭。
 
 d-SNE 的正式适配 batch 仍为官方 32；源域阶段单独使用 batch 16、80 epoch，先冻结
-ImageNet backbone 对官方 4096/512/分类器头预热 10 epoch，再用 backbone/head 学习率
-0.001/0.01 联合微调。源域采样和适配 batch 默认类别均衡，适配 batch 保证三类均有
+ImageNet backbone 对官方 4096/512/分类器头预热 10 epoch，再用 backbone/head 初始
+学习率 0.001/0.01 联合微调，以余弦调度降低后期漂移，并恢复源域训练 ACC 最高
+（CE 并列判据）的模型。源域采样和
+适配 batch 默认类别均衡，适配 batch 保证三类均有
 正配对支持；增强使用遥感轻增强。相关变量为
 `VDS2RAW_DSNE_SOURCE_BATCH_SIZE`、`VDS2RAW_DSNE_SOURCE_HEAD_WARMUP_EPOCHS`、
 `VDS2RAW_DSNE_SOURCE_HEAD_LR` 和 `VDS2RAW_DSNE_SOURCE_BACKBONE_LR`。
 适配阶段仍不传 `--train-src`，保持官方 Office-31 d-SNE 默认方向。
+
+2026-11-03 日志诊断后的 VDS2Raw 调优配置覆盖旧超参数：CCSA 的 source/adaptation
+Adadelta 初始学习率分别为 0.5/0.1，并使用独立余弦衰减和类别加权 CE；source batch
+32 下每轮约 4 次更新，源阶段累计有效步幅与旧 batch 256、LR 1.0 配置近似，而适配
+batch 仍为 256，避免增加已经偏高的适配更新密度。d-SNE 适配学习率为 0.0002、
+`alpha=0.2`、weight decay 0.0005、label smoothing 0.1，启用分类头 dropout 和余弦
+衰减。CCSA/d-SNE 适配时预训练 RGB backbone 使用 task head/多模态适配层的 0.1 倍
+学习率（分别为 0.01/0.1 与 0.00002/0.0002），余弦调度始终保持该比例，减少 source
+表征被目标适配快速覆盖；MCFT 使用学习率 0.0002、weight decay 0.0005、StepLR(15, 0.7)、label
+smoothing 0.15、AIS dropout 0.6 和 source/target × 类别的分组均衡采样。CCSA 的
+source/target CE 也分别使用各域自身频数的类别权重。所有值均可用启动器中对应的
+`VDS2RAW_*` 环境变量覆盖。
 
 CCSA/d-SNE 的多模态适配层是为与本项目方法保持相同传感器输入而增加的数据集适配，
 不是 CCSA 或 d-SNE 官方仓库的原生结构。mask 只门控 AIS 缺失字段，不作为第四模态。
@@ -212,6 +230,21 @@ bash scripts/run_vds2raw_background.sh formal
 Linux 也可设置 `VDS2RAW_CCSA_SOURCE_CHECKPOINT` 和
 `VDS2RAW_DSNE_SOURCE_CHECKPOINT` 复用源域检查点。
 
+在扩展到 seed 42--46 前，先执行一次完整调优验证（默认仅 seed 42）：
+
+```bash
+cd /home/lixiang/lx/JMDA_Com
+export VDS2RAW_DATA_ROOT=/home/lixiang/lx/VDS2Raw/threeclass_ready
+export VDS2RAW_GPU_CANDIDATES="0,1"
+bash scripts/run_vds2raw_tuned_pilot_background.sh
+```
+
+该入口固定按 `d-SNE -> CCSA -> MCFT` 顺序运行，重新训练 CCSA/d-SNE source 阶段，
+严格使用本地 ImageNet backbone，关闭未改变的复杂度重复测试。可用
+`VDS2RAW_PILOT_SEED` 改单个 seed；若设置了旧 source checkpoint 会直接拒绝启动，
+避免新旧 source 调度混用。完成后必须检查 `summary/runs.csv` 中的 `early_peak`、
+peak-to-last 回落和逐类混淆矩阵，再决定是否扩展五个 seed。
+
 ## 输出
 
 每次运行写入 `runs/vds2raw/<运行ID>/`：
@@ -221,13 +254,17 @@ Linux 也可设置 `VDS2RAW_CCSA_SOURCE_CHECKPOINT` 和
   逐通道最小/最大值；MCFT 使用训练统计做 z-score。自然图像分支保留 RGB 色彩比例，
   固定除以 255 并裁剪稀疏高 DN 异常值（训练集各通道超过 255 的比例为 0.42%–1.46%）；
 - `logs/`：各方法标准输出和错误日志；
-- `artifacts/*_best.pth`：由 `target_val` 选择的最佳模型；
+- `artifacts/*_best.pth`：按用户指定的 `target_test` ACC、macro-F1 并列判据选择的峰值模型；
 - `artifacts/*_last.pth`：最后一轮模型；
 - `artifacts/*_source_init.pth`、`*_source_tuned.pth`：CCSA/d-SNE 源域初始化；
 - `artifacts/*_target_val_metrics.csv/json`：验证曲线；
-- `artifacts/*_result.csv/json`：选中验证指标和一次性最终测试指标；
+- `artifacts/*_result.csv/json`：选中 epoch 的验证/测试指标（明确标记
+  `test_selection_bias=true`，不是无偏测试估计）；
 - `summary/runs.csv`：每个方法、每个随机种子的最终四项测试指标；
 - `summary/summary.csv`：跨随机种子的均值和总体标准差。
+- 汇总表同时记录 planned/completed/selected epoch、峰值相对预算的位置、末轮指标及
+  peak-to-last 回落。当预算至少 10 轮且最佳 epoch 位于前 25%（至少前 3 轮）时，
+  汇总器输出 `[EARLY-PEAK]`，明确提示优化计划仍需复核；smoke 的单轮结果不会误报。
 - `efficiency/`：当前 CCSA、d-SNE、三模态 MCFT 的参数量、MAC/GFLOPs、延迟、吞吐及
   训练 step/显存微基准；smoke 为快速验证，论文表应使用正式重复基准。
 

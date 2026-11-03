@@ -294,6 +294,13 @@ class MViT(nn.Module):
                     idx.append(int(torch.randint(row.numel(), (1,), device=row.device).item()))
         return torch.tensor(idx, device=weights.device, dtype=torch.long)
 
+    @staticmethod
+    def _mask_same_class_negatives(weights, labels):
+        """Retain every different-class candidate, including class id zero."""
+        same = labels.view(1, -1).eq(labels.view(-1, 1))
+        masked = weights.clone().masked_fill(same, 0)
+        return masked, ~same
+
     def forward(self, x1, x2, label=None, mask=None, return_features=False,
                 compute_auxiliary=True):
         # ── multimodal tokenisation ─────────────────────────────────────────
@@ -355,19 +362,13 @@ class MViT(nn.Module):
         weights_i2t = torch.nn.functional.softmax(logits_per_image[:, :bs], dim=1)
         weights_t2i = torch.nn.functional.softmax(logits_per_text[:, :bs], dim=1)
 
-        # matrix[i][j] = label[j]; same-class entries zeroed, then such entries
-        # (and the diagonal) are removed from the negative pool.
-        matrix = label.view(1, -1).expand(bs, bs).clone()
-        same = matrix.eq(label.view(-1, 1))
-        matrix = torch.where(same, torch.zeros_like(matrix), matrix)
-        weights_i2t = weights_i2t.clone()
-        weights_t2i = weights_t2i.clone()
-        weights_i2t.fill_diagonal_(0)
-        weights_t2i.fill_diagonal_(0)
-        weights_i2t = weights_i2t.masked_fill(matrix == 0, 0)
-        weights_t2i = weights_t2i.masked_fill(matrix == 0, 0)
-
-        eligible_negatives = ~same
+        # Mask by equality, not by the numeric label value.  The released
+        # expression used zero as a sentinel and therefore dropped every
+        # genuine class-0 candidate after datasets were remapped to 0..C-1.
+        weights_i2t, eligible_negatives = self._mask_same_class_negatives(
+            weights_i2t, label
+        )
+        weights_t2i, _ = self._mask_same_class_negatives(weights_t2i, label)
         neg_idx_i = self._sample_negative(weights_t2i, eligible_negatives)
         neg_idx_t = self._sample_negative(weights_i2t, eligible_negatives)
         image_embeds_neg = x1[neg_idx_i]
