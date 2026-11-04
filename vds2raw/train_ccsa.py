@@ -219,11 +219,12 @@ def main():
         ),
     )
     # The exhaustive VDS2Raw pair table yields 42 two-direction updates per
-    # epoch.  A task LR of 0.1 drove both CEs to ~4e-4 by epoch 20 while test
-    # accuracy peaked at epoch 1.  Keep the official Adadelta training rule,
-    # but scale it for this much denser update schedule.
-    parser.add_argument("--lr", type=float, default=0.02)
-    parser.add_argument("--backbone-lr-multiplier", type=float, default=0.05)
+    # epoch.  Lowering the task LR from 0.1 to 0.02 improved peak ACC, but the
+    # next pilot still peaked at epoch 2, drove both CEs to ~0.002 by epoch 30,
+    # and lost 33.33 ACC points.  Keep the official Adadelta training rule and
+    # scale it further for this unusually dense update schedule.
+    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--backbone-lr-multiplier", type=float, default=0.02)
     parser.add_argument("--source-lr", type=float, default=0.5)
     parser.add_argument("--source-lr-min-ratio", type=float, default=0.1)
     parser.add_argument("--lr-min-ratio", type=float, default=0.01)

@@ -169,15 +169,16 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8-sig") as f:
             tuned = f.read()
         for expected in (
-            "DANNEpochs = 18",
-            "DANNGrlMaxIterations = 1000",
+            "DANNEpochs = 22",
+            "DANNGrlMaxIterations = 700",
             "DANNTargetEvalInterval = 1",
-            "DeepCoralWarmupEpochs = 3",
-            "CdanIterations = 1200",
-            "CDANCoeffMaxIterations = 10000",
+            "DeepCoralWarmupEpochs = 0",
+            "DeepCoralLabelSmoothing = 0.05",
+            "CdanIterations = 1400",
+            "CDANCoeffMaxIterations = 12000",
             "CDANTestInterval = 100",
-            "PDAEpochs = 22",
-            "PDAConfidenceThreshold = 0.90",
+            "PDAEpochs = 24",
+            "PDAConfidenceThreshold = 0.93",
         ):
             self.assertIn(expected, tuned)
 
@@ -185,18 +186,38 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8") as f:
             server_heavy = f.read()
         for expected in (
-            'UDA_MDD_EPOCHS:-30',
+            'UDA_MDD_EPOCHS:-36',
             'UDA_MDD_LR:-0.0025',
-            'UDA_MDD_ITERS_PER_EPOCH:-100',
-            'UDA_MDD_TRADE_OFF:-0.5',
-            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-10',
-            'UDA_MCC_EPOCHS:-22',
-            'UDA_MCC_LR:-0.0025',
+            'UDA_MDD_ITERS_PER_EPOCH:-80',
+            'UDA_MDD_TRADE_OFF:-0.45',
+            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-12',
+            'UDA_MCC_EPOCHS:-26',
+            'UDA_MCC_LR:-0.002',
             'UDA_MCC_ITERS_PER_EPOCH:-100',
-            'UDA_MCC_TRADE_OFF:-0.2',
-            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-10',
+            'UDA_MCC_TRADE_OFF:-0.15',
+            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-12',
+            'UDA_MCC_LABEL_SMOOTHING:-0.10',
         ):
             self.assertIn(expected, server_heavy)
+
+    def test_source_label_smoothing_is_explicit_and_launcher_controlled(self):
+        with open(os.path.join(ROOT, "DeepCORAL", "train_deepcoral.py"),
+                  encoding="utf-8") as f:
+            coral = f.read()
+        self.assertIn("--label-smoothing", coral)
+        self.assertIn("CrossEntropyLoss(label_smoothing=args.label_smoothing)", coral)
+
+        with open(os.path.join(ROOT, "MCC", "train_mcc.py"),
+                  encoding="utf-8") as f:
+            mcc = f.read()
+        self.assertIn("--label-smoothing", mcc)
+        self.assertIn("label_smoothing=args.label_smoothing", mcc)
+
+        with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
+                  encoding="utf-8-sig") as f:
+            launcher = f.read()
+        self.assertIn("[double]$DeepCoralLabelSmoothing = 0.0", launcher)
+        self.assertIn("[double]$MCCLabelSmoothing = 0.0", launcher)
 
     def test_local_split_launcher_uses_small_batch_and_forwards_it_to_pda(self):
         with open(os.path.join(ROOT, "scripts", "run_local_uda_four.ps1"),

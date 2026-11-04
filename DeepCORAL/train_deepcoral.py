@@ -224,6 +224,8 @@ def main():
                         help='diagnostic target-val interval in epochs; 0 means final only')
     parser.add_argument('--weight-decay', type=float, default=0.0,
                         help='官方 main.py 定义 5e-4 但实际未传给 SGD，故默认 0')
+    parser.add_argument('--label-smoothing', type=float, default=0.0,
+                        help='source cross-entropy label smoothing; 0 preserves baseline')
     parser.add_argument('--alexnet-weights', type=str, default='',
                         help='离线 torchvision AlexNet ImageNet state_dict；为空则使用官方 URL/cache')
     parser.add_argument('--backbone', choices=['alexnet', 'resnet50'], default='alexnet')
@@ -260,7 +262,8 @@ def main():
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
     if (args.coral_max_weight < 0 or args.coral_warmup_epochs < 0 or
             args.coral_warmup_epochs >= args.epochs or args.target_eval_interval < 0 or
-            args.head_lr_mult <= 0 or not 0 <= args.min_lr_ratio <= 1):
+            args.head_lr_mult <= 0 or not 0 <= args.min_lr_ratio <= 1 or
+            not 0 <= args.label_smoothing < 1):
         raise ValueError('invalid CORAL weight/eval interval/head LR/scheduler setting')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
 
@@ -325,7 +328,8 @@ def main():
                           weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
           f'{[group["lr"] for group in optimizer.param_groups]}')
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    print(f'DeepCORAL source label smoothing: {args.label_smoothing}')
 
     best_acc = -float('inf')
     best_epoch = 0

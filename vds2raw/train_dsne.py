@@ -329,7 +329,11 @@ def main():
     # source fine-tuning oscillated from 73% back to 60%.  Use smaller source
     # and adaptation steps so that the new head and pretrained backbone do not
     # move on the same aggressive scale as the previous pilot.
-    parser.add_argument("--lr", type=float, default=1e-4)
+    # A small upward correction moves useful adaptation back inside the
+    # 10-epoch reporting window, while remaining far below the unstable
+    # 2e-4 pilot.  The conservative backbone ratio and full 20-epoch search
+    # are retained because they removed the @20 early peak and late collapse.
+    parser.add_argument("--lr", type=float, default=1.25e-4)
     parser.add_argument(
         "--adaptation-backbone-lr-multiplier", type=float, default=0.05
     )

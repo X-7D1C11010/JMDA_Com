@@ -60,10 +60,14 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--eval-batch-size", type=int, default=128)
     parser.add_argument("--eval-frequency", type=int, default=1)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    # Natural sampling and lighter regularization recovered 3.03 ACC points.
+    # Complete that move toward the earlier 90.91%-ACC recipe: its 5e-4 LR,
+    # step-20/gamma-0.9 schedule and 0.5 AIS dropout peaked at epoch 54 rather
+    # than at the beginning of training.
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--step-size", type=int, default=20)
-    parser.add_argument("--gamma", type=float, default=0.85)
+    parser.add_argument("--gamma", type=float, default=0.9)
     parser.add_argument("--loss-ita-weight", type=float, default=0.1)
     # The released MCFT objective gives ITM unit weight.  Retain that official
     # scale; the previous 0.1 pilot made an already short-lived ITM signal
@@ -79,7 +83,7 @@ def main():
             "navigation-status label proxies; full restores all 13 AIS fields"
         ),
     )
-    parser.add_argument("--ais-dropout-probability", type=float, default=0.4)
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
     parser.add_argument(
         "--class-balanced-train",
         dest="class_balanced_train",

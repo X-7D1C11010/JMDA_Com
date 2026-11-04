@@ -49,6 +49,7 @@ param(
     [double]$DeepCoralMaxWeight = 1.0,
     [int]$DeepCoralWarmupEpochs = 0,
     [double]$DeepCoralWeightDecay = 0.0,
+    [double]$DeepCoralLabelSmoothing = 0.0,
     [int]$DeepCoralTargetEvalInterval = 0,
     [double]$DeepCoralHeadLearningRateMultiplier = 10.0,
     [ValidateSet('constant', 'cosine')]
@@ -66,6 +67,7 @@ param(
     [int]$MCCIterationsPerEpoch = 1000,
     [double]$MCCTradeOff = 1.0,
     [int]$MCCTradeOffWarmupEpochs = 0,
+    [double]$MCCLabelSmoothing = 0.0,
     [int]$PDAWarmupEpochs = 1,
     [double]$PDAConfidenceThreshold = 0.9,
     [int]$PDATargetEvalInterval = 0,
@@ -190,6 +192,7 @@ if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
     $DANNMinimumLearningRateRatio -lt 0 -or $DANNMinimumLearningRateRatio -gt 1 -or
     $DeepCoralMaxWeight -lt 0 -or $DeepCoralWarmupEpochs -lt 0 -or
     $DeepCoralWeightDecay -lt 0 -or
+    $DeepCoralLabelSmoothing -lt 0 -or $DeepCoralLabelSmoothing -ge 1 -or
     $DeepCoralTargetEvalInterval -lt 0 -or
     $DeepCoralHeadLearningRateMultiplier -le 0 -or
     $DeepCoralMinimumLearningRateRatio -lt 0 -or
@@ -201,6 +204,7 @@ if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
     $MDDTradeOff -lt 0 -or $MDDTradeOffWarmupEpochs -lt 0 -or
     $MCCIterationsPerEpoch -lt 1 -or
     $MCCTradeOff -lt 0 -or $MCCTradeOffWarmupEpochs -lt 0 -or
+    $MCCLabelSmoothing -lt 0 -or $MCCLabelSmoothing -ge 1 -or
     $PDAWarmupEpochs -lt 0 -or $PDAConfidenceThreshold -le 0 -or
     $PDAConfidenceThreshold -ge 1 -or $PDATargetEvalInterval -lt 0) {
     Write-Host 'Invalid method-specific tuning settings.' -ForegroundColor Red
@@ -366,6 +370,9 @@ foreach ($method in $Methods.Keys) {
                           '--weight-decay', ([Convert]::ToString(
                               $DeepCoralWeightDecay,
                               [Globalization.CultureInfo]::InvariantCulture)),
+                          '--label-smoothing', ([Convert]::ToString(
+                              $DeepCoralLabelSmoothing,
+                              [Globalization.CultureInfo]::InvariantCulture)),
                           '--head-lr-mult', ([Convert]::ToString(
                               $DeepCoralHeadLearningRateMultiplier,
                               [Globalization.CultureInfo]::InvariantCulture)),
@@ -388,7 +395,10 @@ foreach ($method in $Methods.Keys) {
                           '--trade-off', ([Convert]::ToString(
                               $MCCTradeOff,
                               [Globalization.CultureInfo]::InvariantCulture)),
-                          '--trade-off-warmup-epochs', $MCCTradeOffWarmupEpochs)
+                          '--trade-off-warmup-epochs', $MCCTradeOffWarmupEpochs,
+                          '--label-smoothing', ([Convert]::ToString(
+                              $MCCLabelSmoothing,
+                              [Globalization.CultureInfo]::InvariantCulture)))
             }
             if ($method -eq 'PDA') {
                 $cli += @('--class-names-file', $ClassNamesFile,

@@ -28,6 +28,7 @@ param(
     [double]$DeepCoralMaxWeight = 1.0,
     [int]$DeepCoralWarmupEpochs = 0,
     [double]$DeepCoralWeightDecay = 0.0,
+    [double]$DeepCoralLabelSmoothing = 0.0,
     [int]$DeepCoralTargetEvalInterval = 0,
     [double]$DeepCoralHeadLearningRateMultiplier = 10.0,
     [ValidateSet('constant', 'cosine')]
@@ -45,6 +46,7 @@ param(
     [int]$MCCIterationsPerEpoch = 1000,
     [double]$MCCTradeOff = 1.0,
     [int]$MCCTradeOffWarmupEpochs = 0,
+    [double]$MCCLabelSmoothing = 0.0,
     [int]$PDAWarmupEpochs = 1,
     [double]$PDAConfidenceThreshold = 0.9,
     [int]$PDATargetEvalInterval = 0,
@@ -116,6 +118,7 @@ $arguments = @{
     DeepCoralMaxWeight = $DeepCoralMaxWeight
     DeepCoralWarmupEpochs = $DeepCoralWarmupEpochs
     DeepCoralWeightDecay = $DeepCoralWeightDecay
+    DeepCoralLabelSmoothing = $DeepCoralLabelSmoothing
     DeepCoralTargetEvalInterval = $DeepCoralTargetEvalInterval
     DeepCoralHeadLearningRateMultiplier = $DeepCoralHeadLearningRateMultiplier
     DeepCoralLearningRateScheduler = $DeepCoralLearningRateScheduler
@@ -132,6 +135,7 @@ $arguments = @{
     MCCIterationsPerEpoch = $MCCIterationsPerEpoch
     MCCTradeOff = $MCCTradeOff
     MCCTradeOffWarmupEpochs = $MCCTradeOffWarmupEpochs
+    MCCLabelSmoothing = $MCCLabelSmoothing
     PDAWarmupEpochs = $PDAWarmupEpochs
     PDAConfidenceThreshold = $PDAConfidenceThreshold
     PDATargetEvalInterval = $PDATargetEvalInterval

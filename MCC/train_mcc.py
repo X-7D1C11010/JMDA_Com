@@ -133,7 +133,9 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
         x = torch.cat((x_s, x_t), dim=0)
         y, _ = classifier(x)
         y_s, y_t = y.chunk(2, dim=0)
-        cls_loss = F.cross_entropy(y_s, labels_s)
+        cls_loss = F.cross_entropy(
+            y_s, labels_s, label_smoothing=args.label_smoothing
+        )
         transfer_loss = mcc(y_t)
         if args.trade_off_warmup_epochs > 0:
             completed_updates = (epoch - 1) * args.iters_per_epoch + i + 1
@@ -175,6 +177,8 @@ def main():
     parser.add_argument('--trade-off', default=1., type=float)
     parser.add_argument('--trade-off-warmup-epochs', default=0, type=int,
                         help='linearly ramp MCC weight during the first N epochs')
+    parser.add_argument('--label-smoothing', default=0.0, type=float,
+                        help='source cross-entropy label smoothing; 0 preserves baseline')
     parser.add_argument('--bottleneck-dim', default=256, type=int)
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
@@ -198,7 +202,9 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
-    if args.iters_per_epoch < 1 or args.trade_off < 0 or args.trade_off_warmup_epochs < 0:
+    if (args.iters_per_epoch < 1 or args.trade_off < 0 or
+            args.trade_off_warmup_epochs < 0 or
+            not 0 <= args.label_smoothing < 1):
         raise ValueError('invalid MCC iterations/trade-off/warmup setting')
     if args.early_stop_patience < 0:
         raise ValueError('--early-stop-patience must be >= 0')
