@@ -23,7 +23,7 @@ class ThreeMethodServerLauncherTests(unittest.TestCase):
         self.assertIn('DANN/train_dann.py', self.script)
         self.assertIn('DeepCORAL/train_deepcoral.py', self.script)
         self.assertIn('CDAN/train_cdan.py', self.script)
-        for unwanted in ('MDD/train_mdd.py', 'MCC/train_mcc.py', 'PDA/train_pda.py'):
+        for unwanted in ('MDD/train_mdd.py', 'MCC/train_mcc.py'):
             self.assertNotIn(unwanted, self.script)
 
     def test_all_update_budgets_are_configurable(self):

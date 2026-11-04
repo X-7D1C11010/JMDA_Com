@@ -6,7 +6,7 @@ Official implementation used as the reference:
     https://github.com/SYFYN0317/MCFT   ->  ``MViT_pytorch_upload.py``
 
 Reference architecture (``MViT`` in the release, driven by
-``MViT_demo_h2013.py`` with patch_size=15, dim=64, depth=6, heads=4,
+``MViT_demo_h2013.py`` with a 15x15 token grid, dim=64, depth=6, heads=4,
 mlp_dim=32, dropout=0.1, emb_dropout=0.1 and loss
 ``CE + 0.1 * loss_ita + loss_itm``):
 
@@ -26,6 +26,12 @@ Faithfulness notes -- deviations are listed explicitly:
   * ``einops.rearrange`` / unused ``timm`` / ``scipy.stats`` imports are gone:
     the port uses plain ``reshape``/``permute`` and keeps PyTorch's released
     parameter initialisation, so no extra dependency is required.
+  * Dataset adapters may provide a larger raster (96x96 for VDS2Raw/JMDA).
+    The released depthwise-separable convolution stack now processes that
+    native raster first, then ``AdaptiveAvgPool2d`` reduces its feature maps
+    to the released 15x15 token grid.  Inputs that are already 15x15 are
+    unchanged.  All transformer, ITA, ITM, position-embedding and head shapes
+    therefore retain the released 225-token geometry.
   * The release hardcodes the 15x15 reshape in ``get_position_embedding`` and
     the centre index ``(7, 7)`` at its call site.  Both are rewritten in terms
     of the actual token count / patch size, which for patch_size = 15 gives the
@@ -233,6 +239,7 @@ class MViT(nn.Module):
 
         self.separable1 = _separable_stack(num_patches[0], nout)
         self.separable2 = _separable_stack(num_patches[1], nout)
+        self.token_grid_pool = nn.AdaptiveAvgPool2d((patch_size, patch_size))
 
         self.to_patch_embedding2 = nn.Linear(nout * 4, dim)
         self.to_patch_embedding2c = nn.Linear(nout * 4, dim)
@@ -304,12 +311,12 @@ class MViT(nn.Module):
     def forward(self, x1, x2, label=None, mask=None, return_features=False,
                 compute_auxiliary=True):
         # ── multimodal tokenisation ─────────────────────────────────────────
-        x1 = self.separable1(x1).flatten(2).transpose(1, 2)
+        x1 = self.token_grid_pool(self.separable1(x1)).flatten(2).transpose(1, 2)
         x1 = self.to_patch_embedding2(x1)
         pos_emb = torch.unsqueeze(self.get_position_embedding(x1, cls_token=False), dim=0)
         x1 = self.dropout(x1 + pos_emb)
 
-        x2 = self.separable2(x2).flatten(2).transpose(1, 2)
+        x2 = self.token_grid_pool(self.separable2(x2)).flatten(2).transpose(1, 2)
         x2 = self.to_patch_embedding2c(x2)
         x2 = self.dropout(x2 + pos_emb)
 

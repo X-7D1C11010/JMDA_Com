@@ -25,8 +25,6 @@
 #   JMDA_PIN_MEMORY  是否为 JMDA UDA DataLoader 启用 pinned memory（0/1，默认 1）
 #   JMDA_RUN_INVARIANT_TESTS  JMDA 训练前运行 Tensor/OT 数值门禁（0/1，默认 1）
 #   JMDA_MIN_FREE_GPU_MEMORY_MIB  可选的启动前空闲显存门禁（MiB；默认不启用）
-#   JMDA_CLASS_NAMES_FILE  14类真实英文名称文件（PDA 文本提示必需）
-#   CLIP_CACHE_DIR  CLIP 权重缓存目录（PDA；默认 pretrained_weights/clip）
 #   TORCH_HOME      torchvision/tllib 权重根目录（默认 pretrained_weights/torch）
 #   JMDA_GPU_SCHEDULER  是否在每个方法前等待合适GPU（0/1，默认1）
 #   JMDA_GPU_MAX_UTIL_PERCENT  允许启动时的最高GPU利用率（默认10）
@@ -34,15 +32,14 @@
 #   JMDA_GPU_CANDIDATES  可选物理GPU编号或UUID，逗号分隔（默认全部）
 #   GPU_MIN_FREE_<METHOD>_MIB  覆盖各方法最低空闲显存门槛
 #   UDA_DANN_EPOCHS / UDA_DEEPCORAL_EPOCHS / UDA_MDD_EPOCHS /
-#   UDA_MCC_EPOCHS / UDA_PDA_EPOCHS  所选方法的训练轮数
+#   UDA_MCC_EPOCHS  所选方法的训练轮数
 #   UDA_METHODS  本次 UDA 方法列表，逗号或空格分隔；默认
-#     DANN,DeepCORAL,CDAN,PDA。服务器重方法可设为 MDD,MCC
+#     DANN,DeepCORAL,CDAN。服务器重方法可设为 MDD,MCC
 #   CDAN_NUM_ITERATIONS  CDAN 总迭代数（多模态协议默认 2000）
-#   UDA_IMAGE_BATCH_SIZE  双分支 ResNet-50/CLIP 每域批次（默认16）
+#   UDA_IMAGE_BATCH_SIZE  JMDA式 VIS+IR 编码器每域批次（默认16）
 #   UDA_NUM_WORKERS / UDA_PREFETCH_FACTOR  对比方法加载进程/每进程预取（默认8/4）
 #   UDA_PIN_MEMORY / UDA_PERSISTENT_WORKERS  对比方法 pinned/persistent worker（默认1/1）
 #   DEEPCORAL_ALEXNET_WEIGHTS  可选的离线 torchvision AlexNet 权重文件
-#   SDA_CCSA_EPOCHS / SDA_DSNE_EPOCHS  有监督域适应官方预算（默认80/20）
 #   SUPERVISED_MCFT_EPOCHS  MCFT官方预算（默认500）
 #
 # 本仓库 JMDA-Net/ 子目录为本文方法（JMDA-Net）的源码镜像，与对比方法目录区分。
@@ -101,23 +98,19 @@ UDA_MCC_LR="${UDA_MCC_LR:-0.005}"
 UDA_MCC_ITERS_PER_EPOCH="${UDA_MCC_ITERS_PER_EPOCH:-1000}"
 UDA_MCC_TRADE_OFF="${UDA_MCC_TRADE_OFF:-1.0}"
 UDA_MCC_TRADE_OFF_WARMUP_EPOCHS="${UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-0}"
+UDA_MCC_SOURCE_WARMUP_EPOCHS="${UDA_MCC_SOURCE_WARMUP_EPOCHS:-5}"
 UDA_MCC_LABEL_SMOOTHING="${UDA_MCC_LABEL_SMOOTHING:-0}"
-UDA_PDA_EPOCHS="${UDA_PDA_EPOCHS:-20}"
 CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-2000}"
 UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
-UDA_METHODS="${UDA_METHODS:-DANN,DeepCORAL,CDAN,PDA}"
+UDA_METHODS="${UDA_METHODS:-DANN,DeepCORAL,CDAN}"
 UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"
 UDA_PREFETCH_FACTOR="${UDA_PREFETCH_FACTOR:-4}"
 UDA_PIN_MEMORY="${UDA_PIN_MEMORY:-1}"
 UDA_PERSISTENT_WORKERS="${UDA_PERSISTENT_WORKERS:-1}"
 DEEPCORAL_ALEXNET_WEIGHTS="${DEEPCORAL_ALEXNET_WEIGHTS:-}"
 if [ "$EPOCHS_WAS_EXPLICIT" = "1" ]; then
-  SDA_CCSA_EPOCHS="${SDA_CCSA_EPOCHS:-$EPOCHS}"
-  SDA_DSNE_EPOCHS="${SDA_DSNE_EPOCHS:-$EPOCHS}"
   SUPERVISED_MCFT_EPOCHS="${SUPERVISED_MCFT_EPOCHS:-$EPOCHS}"
 else
-  SDA_CCSA_EPOCHS="${SDA_CCSA_EPOCHS:-80}"
-  SDA_DSNE_EPOCHS="${SDA_DSNE_EPOCHS:-20}"
   SUPERVISED_MCFT_EPOCHS="${SUPERVISED_MCFT_EPOCHS:-500}"
 fi
 # Version lock: the lightweight gate recomputes the same portable fingerprint
@@ -135,9 +128,6 @@ GPU_MIN_FREE_DEEPCORAL_MIB="${GPU_MIN_FREE_DEEPCORAL_MIB:-16000}"
 GPU_MIN_FREE_CDAN_MIB="${GPU_MIN_FREE_CDAN_MIB:-18000}"
 GPU_MIN_FREE_MDD_MIB="${GPU_MIN_FREE_MDD_MIB:-20000}"
 GPU_MIN_FREE_MCC_MIB="${GPU_MIN_FREE_MCC_MIB:-18000}"
-GPU_MIN_FREE_PDA_MIB="${GPU_MIN_FREE_PDA_MIB:-16000}"
-GPU_MIN_FREE_CCSA_MIB="${GPU_MIN_FREE_CCSA_MIB:-7168}"
-GPU_MIN_FREE_DSNE_MIB="${GPU_MIN_FREE_DSNE_MIB:-12288}"
 GPU_MIN_FREE_JMDA_MIB="${GPU_MIN_FREE_JMDA_MIB:-20000}"
 GPU_MIN_FREE_MCFT_MIB="${GPU_MIN_FREE_MCFT_MIB:-4608}"
 
@@ -163,12 +153,12 @@ read -r -a UDA_METHOD_ARRAY <<< "$UDA_METHOD_TEXT"
 for method_name in "${UDA_METHOD_ARRAY[@]}"; do
   method_key="${method_name,,}"
   case "$method_key" in
-    dann|deepcoral|cdan|mdd|mcc|pda)
+    dann|deepcoral|cdan|mdd|mcc)
       UDA_METHOD_ENABLED["$method_key"]=1
       ;;
     *)
       echo "UDA_METHODS 包含未知方法: $method_name"
-      echo "允许: DANN, DeepCORAL, CDAN, MDD, MCC, PDA"
+      echo "允许: DANN, DeepCORAL, CDAN, MDD, MCC"
       exit 1
       ;;
   esac
@@ -198,9 +188,7 @@ if [[ "$PROTOCOL" = "uda" ]]; then
     require_positive_integer "UDA_MCC_EPOCHS" "$UDA_MCC_EPOCHS"
     require_positive_integer "UDA_MCC_ITERS_PER_EPOCH" "$UDA_MCC_ITERS_PER_EPOCH"
     require_nonnegative_integer "UDA_MCC_TRADE_OFF_WARMUP_EPOCHS" "$UDA_MCC_TRADE_OFF_WARMUP_EPOCHS"
-  fi
-  if uda_method_enabled pda; then
-    require_positive_integer "UDA_PDA_EPOCHS" "$UDA_PDA_EPOCHS"
+    require_nonnegative_integer "UDA_MCC_SOURCE_WARMUP_EPOCHS" "$UDA_MCC_SOURCE_WARMUP_EPOCHS"
   fi
   if uda_method_enabled cdan; then
     require_positive_integer "CDAN_NUM_ITERATIONS" "$CDAN_NUM_ITERATIONS"
@@ -216,10 +204,6 @@ if [[ "$PROTOCOL" = "uda" ]]; then
     echo "UDA_PERSISTENT_WORKERS 必须是 0 或 1: $UDA_PERSISTENT_WORKERS"
     exit 1
   fi
-fi
-if [[ "$PROTOCOL" = "sda" ]]; then
-  require_positive_integer "SDA_CCSA_EPOCHS" "$SDA_CCSA_EPOCHS"
-  require_positive_integer "SDA_DSNE_EPOCHS" "$SDA_DSNE_EPOCHS"
 fi
 if [[ "$PROTOCOL" = "supervised" ]]; then
   require_positive_integer "SUPERVISED_MCFT_EPOCHS" "$SUPERVISED_MCFT_EPOCHS"
@@ -305,18 +289,12 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 SUITE_ID="${JMDA_SUITE_ID:-$RUN_ID}"
 CHECKPOINT_ROOT="$HERE/checkpoints/$PROTOCOL/$RUN_ID"
 FAIR_LIST_DIR="$HERE/prepared_lists/$SUITE_ID"
-CLASS_NAMES_FILE="${JMDA_CLASS_NAMES_FILE:-$HERE/class.txt}"
-CLIP_CACHE_DIR="${CLIP_CACHE_DIR:-$HERE/pretrained_weights/clip}"
 TORCH_HOME="${TORCH_HOME:-$HERE/pretrained_weights/torch}"
 export TORCH_HOME
 if [ -z "$DEEPCORAL_ALEXNET_WEIGHTS" ] \
     && [ -f "$HERE/pretrained_weights/deepcoral_alexnet_owt_4df8aa71.pth" ]; then
   DEEPCORAL_ALEXNET_WEIGHTS="$HERE/pretrained_weights/deepcoral_alexnet_owt_4df8aa71.pth"
 fi
-# CCSA keeps the declared fixed-shot protocol. d-SNE uses every labelled
-# target-training sample by default; a positive override restores few-shot.
-SDA_LABELS_PER_CLASS="${JMDA_SDA_LABELS_PER_CLASS:-10}"
-DSNE_LABELS_PER_CLASS="${JMDA_DSNE_LABELS_PER_CLASS:-0}"
 export JMDA_DATA_ROOT="$DATA_ROOT"
 export JMDA_EFFICIENCY_OUTPUT_DIR="$EFF_DIR"
 mkdir -p "$LOG_ROOT" "$EFF_DIR" "$RESULTS_DIR" "$CHECKPOINT_ROOT" "$FAIR_LIST_DIR"
@@ -332,24 +310,6 @@ done
 
 if [ ! -d "$DATA_ROOT" ]; then
   echo "数据根不存在: $DATA_ROOT（可用 JMDA_DATA_ROOT 指定）"; exit 1
-fi
-if [ "$PROTOCOL" = "uda" ]; then
-  if [ -z "$CLASS_NAMES_FILE" ]; then
-    echo "uda 协议包含 PDA，必须设置 JMDA_CLASS_NAMES_FILE。"
-    echo "该文件应按原始类别 1..14 的顺序，每行写一个真实英文船舶类别名称。"
-    echo "示例: export JMDA_CLASS_NAMES_FILE=/home/lixiang/lx/JMDA_Com/config/14_class_names.txt"
-    exit 1
-  fi
-  if [ ! -f "$CLASS_NAMES_FILE" ]; then
-    echo "类别名称文件不存在: $CLASS_NAMES_FILE"
-    echo "注意：/path/to/14_class_names.txt 只是示例占位路径，不能直接使用。"
-    exit 1
-  fi
-  if ! "$PYTHON" "$HERE/tools/class_names.py" \
-      "$CLASS_NAMES_FILE" --expected-count 14; then
-    echo "类别名称文件格式或内容无效；尚未生成清单，也未启动训练。"
-    exit 1
-  fi
 fi
 echo "协议=$PROTOCOL 轮数=$EPOCHS 数据根=$DATA_ROOT"
 echo "日志目录=$LOG_ROOT"
@@ -411,9 +371,6 @@ gpu_min_free_for_tag() {
     cdan_*)      echo "$GPU_MIN_FREE_CDAN_MIB" ;;
     mdd_*)       echo "$GPU_MIN_FREE_MDD_MIB" ;;
     mcc_*)       echo "$GPU_MIN_FREE_MCC_MIB" ;;
-    pda_*)       echo "$GPU_MIN_FREE_PDA_MIB" ;;
-    ccsa_*)      echo "$GPU_MIN_FREE_CCSA_MIB" ;;
-    dsne_*)      echo "$GPU_MIN_FREE_DSNE_MIB" ;;
     jmda_net_*)  echo "$GPU_MIN_FREE_JMDA_MIB" ;;
     mcft_*)      echo "$GPU_MIN_FREE_MCFT_MIB" ;;
     *)           echo "16000" ;;
@@ -511,7 +468,7 @@ run() {  # run "<log-tag>" <cmd...>
       ;;
   esac
   case "$tag" in
-    dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*|pda_*|jmda_net_*|mcft_*) input_modalities="VIS+IR" ;;
+    dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*|jmda_net_*|mcft_*) input_modalities="VIS+IR" ;;
     *) input_modalities="VIS" ;;
   esac
   case "$record_protocol" in
@@ -519,7 +476,7 @@ run() {  # run "<log-tag>" <cmd...>
     *) model_selection="method_declared" ;;
   esac
   case "$tag" in
-    dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*|pda_*|ccsa_*|dsne_*) model_selection="best_target_val_ACC_within_budget" ;;
+    dann_*|deepcoral_*|cdan_*|mdd_*|mcc_*) model_selection="best_target_val_ACC_within_budget" ;;
     mcft_*) model_selection="official_target_best" ;;
   esac
   if ! "$PYTHON" "$HERE/tools/collect_run_result.py" \
@@ -548,22 +505,13 @@ COMMON=(--epochs "$EPOCHS" --seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficien
 METHOD_COMMON=(--seed "$SEED" --data-dir "$FAIR_LIST_DIR" --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT")
 
 if [ "$PROTOCOL" = "sda" ]; then
-  # ---- SDA：CCSA fixed-shot；d-SNE 默认使用完整目标训练标签 ----
+  # ---- SDA retained baselines ----
   for t in "${TARGETS[@]}"; do
     run "dann_$t"         "$PYTHON" "$HERE/DANN/train_dann_sda.py"             --target "$t" "${COMMON[@]}"
     run "deepcoral_$t"    "$PYTHON" "$HERE/DeepCORAL/train_deepcoral_sda.py"   --target "$t" "${COMMON[@]}"
     run "cdan_$t"         "$PYTHON" "$HERE/CDAN/train_cdan_sda.py"             --target "$t" "${COMMON[@]}"
     run "mdd_$t"          "$PYTHON" "$HERE/MDD/train_mdd_sda.py"               --target "$t" "${COMMON[@]}"
     run "mcc_$t"          "$PYTHON" "$HERE/MCC/train_mcc_sda.py"               --target "$t" "${COMMON[@]}"
-    # CCSA retains the fixed-shot experiment; d-SNE defaults to all labels.
-    run "ccsa_$t" --record-epochs "$SDA_CCSA_EPOCHS" \
-      "$PYTHON" "$HERE/CCSA/train_ccsa.py" --target "$t" \
-      --epochs "$SDA_CCSA_EPOCHS" "${METHOD_COMMON[@]}" \
-      --target-labels-per-class "$SDA_LABELS_PER_CLASS" --sda-seed "$SEED"
-    run "dsne_$t" --record-epochs "$SDA_DSNE_EPOCHS" \
-      "$PYTHON" "$HERE/d-SNE/train_dsne.py" --target "$t" \
-      --epochs "$SDA_DSNE_EPOCHS" "${METHOD_COMMON[@]}" \
-      --target-labels-per-class "$DSNE_LABELS_PER_CLASS" --sda-seed "$SEED"
     # JMDA-Net-SDA（本文方法，仓库内 JMDA-Net/ 目录）
     run "jmda_net_sda_$t" bash -c \
       "cd '$JMDA_NET_DIR' && JMDA_SDA_LIST_DIR='$FAIR_LIST_DIR' '$PYTHON' main_sda.py --target '$t' --epochs '$EPOCHS' --num-iterations '${JMDA_NUM_ITERATIONS:-5}' --sda-seed '$SEED'"
@@ -656,9 +604,9 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
 
 elif [ "$PROTOCOL" = "uda" ]; then
   # ---- VIS+IR exact-paired multimodal extensions; final epoch, no checkpoints ----
-  RESNET50_WEIGHT="$TORCH_HOME/hub/checkpoints/resnet50-0676ba61.pth"
-  if [ ! -f "$RESNET50_WEIGHT" ]; then
-    echo "缺少 ResNet-50 ImageNet 权重: $RESNET50_WEIGHT"
+  RESNET18_WEIGHT="$TORCH_HOME/hub/checkpoints/resnet18-f37072fd.pth"
+  if [ ! -f "$RESNET18_WEIGHT" ]; then
+    echo "缺少 JMDA VIS ResNet-18 ImageNet 权重: $RESNET18_WEIGHT"
     echo "请先在本地运行 tools/download_official_uda_weights.py 并上传 pretrained_weights。"
     exit 1
   fi
@@ -674,27 +622,23 @@ elif [ "$PROTOCOL" = "uda" ]; then
     UDA_COMMON+=(--no-persistent-workers)
   fi
   echo "UDA selected methods: $UDA_METHODS"
-  echo "UDA multimodal protocol: VIS+IR exact pairs, ResNet-50 dual branches, batch=$UDA_IMAGE_BATCH_SIZE, CDAN iterations=$CDAN_NUM_ITERATIONS, report peak target-val ACC, no checkpoint"
+  echo "UDA multimodal protocol: JMDA non-tensor VIS ResNet-18 + IR U-Net, 512+512 direct concatenation, batch=$UDA_IMAGE_BATCH_SIZE, CDAN iterations=$CDAN_NUM_ITERATIONS, report peak target-val ACC, no checkpoint"
   echo "UDA DataLoader: workers=$UDA_NUM_WORKERS prefetch=$UDA_PREFETCH_FACTOR pin_memory=$UDA_PIN_MEMORY persistent_workers=$UDA_PERSISTENT_WORKERS"
   for t in "${TARGETS[@]}"; do
     if uda_method_enabled dann; then
-      run "dann_$t" --record-epochs "$UDA_DANN_EPOCHS" "$PYTHON" "$HERE/DANN/train_dann.py" --target "$t" --epochs "$UDA_DANN_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+      run "dann_$t" --record-epochs "$UDA_DANN_EPOCHS" "$PYTHON" "$HERE/DANN/train_dann.py" --target "$t" --epochs "$UDA_DANN_EPOCHS" --backbone jmda --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     if uda_method_enabled deepcoral; then
-      run "deepcoral_$t" --record-epochs "$UDA_DEEPCORAL_EPOCHS" "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py" --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" --backbone resnet50 --source-batch-size "$UDA_IMAGE_BATCH_SIZE" --target-batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+      run "deepcoral_$t" --record-epochs "$UDA_DEEPCORAL_EPOCHS" "$PYTHON" "$HERE/DeepCORAL/train_deepcoral.py" --target "$t" --epochs "$UDA_DEEPCORAL_EPOCHS" --backbone jmda --source-batch-size "$UDA_IMAGE_BATCH_SIZE" --target-batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     if uda_method_enabled cdan; then
-      run "cdan_$t"       "$PYTHON" "$HERE/CDAN/train_cdan.py"           --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone ResNet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+      run "cdan_$t"       "$PYTHON" "$HERE/CDAN/train_cdan.py"           --target "$t" --num-iterations "$CDAN_NUM_ITERATIONS" --backbone JMDA --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     if uda_method_enabled mdd; then
-      run "mdd_$t" --record-epochs "$UDA_MDD_EPOCHS" "$PYTHON" "$HERE/MDD/train_mdd.py" --target "$t" --epochs "$UDA_MDD_EPOCHS" --lr "$UDA_MDD_LR" --iters-per-epoch "$UDA_MDD_ITERS_PER_EPOCH" --trade-off "$UDA_MDD_TRADE_OFF" --trade-off-warmup-epochs "$UDA_MDD_TRADE_OFF_WARMUP_EPOCHS" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
+      run "mdd_$t" --record-epochs "$UDA_MDD_EPOCHS" "$PYTHON" "$HERE/MDD/train_mdd.py" --target "$t" --epochs "$UDA_MDD_EPOCHS" --lr "$UDA_MDD_LR" --iters-per-epoch "$UDA_MDD_ITERS_PER_EPOCH" --trade-off "$UDA_MDD_TRADE_OFF" --trade-off-warmup-epochs "$UDA_MDD_TRADE_OFF_WARMUP_EPOCHS" --backbone jmda --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
     if uda_method_enabled mcc; then
-      run "mcc_$t" --record-epochs "$UDA_MCC_EPOCHS" "$PYTHON" "$HERE/MCC/train_mcc.py" --target "$t" --epochs "$UDA_MCC_EPOCHS" --lr "$UDA_MCC_LR" --iters-per-epoch "$UDA_MCC_ITERS_PER_EPOCH" --trade-off "$UDA_MCC_TRADE_OFF" --trade-off-warmup-epochs "$UDA_MCC_TRADE_OFF_WARMUP_EPOCHS" --label-smoothing "$UDA_MCC_LABEL_SMOOTHING" --backbone resnet50 --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
-    fi
-    # PDA：CLIP ViT-B/16 提示学习 + 伪标签（无目标标签）
-    if uda_method_enabled pda; then
-      run "pda_$t" --record-epochs "$UDA_PDA_EPOCHS" "$PYTHON" "$HERE/PDA/train_pda.py" --target "$t" --epochs "$UDA_PDA_EPOCHS" --batch-size "$UDA_IMAGE_BATCH_SIZE" --test-batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}" --class-names-file "$CLASS_NAMES_FILE" --clip-cache-dir "$CLIP_CACHE_DIR"
+      run "mcc_$t" --record-epochs "$UDA_MCC_EPOCHS" "$PYTHON" "$HERE/MCC/train_mcc.py" --target "$t" --epochs "$UDA_MCC_EPOCHS" --lr "$UDA_MCC_LR" --iters-per-epoch "$UDA_MCC_ITERS_PER_EPOCH" --trade-off "$UDA_MCC_TRADE_OFF" --trade-off-warmup-epochs "$UDA_MCC_TRADE_OFF_WARMUP_EPOCHS" --source-warmup-epochs "$UDA_MCC_SOURCE_WARMUP_EPOCHS" --label-smoothing "$UDA_MCC_LABEL_SMOOTHING" --backbone jmda --batch-size "$UDA_IMAGE_BATCH_SIZE" "${UDA_COMMON[@]}"
     fi
   done
 

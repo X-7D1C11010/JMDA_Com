@@ -1,7 +1,7 @@
 """MCFT multimodal Transformer training on paired JMDA VIS+IR images.
 
 Reference: https://github.com/SYFYN0317/MCFT.  The model and optimiser recipe
-follow ``MViT_pytorch_upload.py`` and ``MViT_demo_h2013.py``: 15x15 inputs,
+follow ``MViT_pytorch_upload.py`` and ``MViT_demo_h2013.py``: a 15x15 token grid,
 dim=64, depth=6, four heads, CE + 0.1*ITA + ITM, Adam 5e-4, StepLR(20, 0.9),
 batch 64, 500 epochs and evaluation every 10 epochs.  HSI+LiDAR cannot be
 recreated from this dataset, so the explicit modality adaptation is HSI->RGB
@@ -35,12 +35,13 @@ from mcft_model import MViT
 
 
 PATCH_SIZE = 15
+INPUT_SIZE = 96
 
 
 class PairedVisIrDataset(Dataset):
     """Exact-stem VIS/IR pairs filtered into a compact target label space."""
 
-    def __init__(self, list_path, label_map, patch_size=PATCH_SIZE,
+    def __init__(self, list_path, label_map, image_size=INPUT_SIZE,
                  horizontal_flip=False):
         self.samples = []
         self.dropped_unpaired = 0
@@ -63,7 +64,7 @@ class PairedVisIrDataset(Dataset):
                 self.samples.append((vis_path, ir_path, label_map[raw_label]))
         if not self.samples:
             raise ValueError(f'no paired sample remains after filtering {list_path}')
-        self.patch_size = patch_size
+        self.image_size = image_size
         self.horizontal_flip = horizontal_flip
 
     def __len__(self):
@@ -73,7 +74,7 @@ class PairedVisIrDataset(Dataset):
         vis_path, ir_path, label = self.samples[index]
         vis_image = Image.open(vis_path).convert('RGB')
         ir_image = Image.open(ir_path).convert('L')
-        output_size = [self.patch_size, self.patch_size]
+        output_size = [self.image_size, self.image_size]
         vis_image = TF.resize(vis_image, output_size)
         ir_image = TF.resize(ir_image, output_size)
         if self.horizontal_flip and bool(torch.rand(()) < 0.5):
@@ -101,7 +102,7 @@ def evaluate(model, loader, device, num_classes):
 
 
 def build_model(num_classes):
-    """Released H2013 configuration with dataset-specific input channels."""
+    """Released H2013 token geometry with 96x96 pre-token convolution."""
     return MViT(
         patch_size=PATCH_SIZE,
         num_patches=[3, 1],
@@ -294,6 +295,9 @@ def main():
             'class_ids_original_zero_based': class_ids, 'label_map': label_map,
             'epochs': args.epochs, 'eval_frequency': args.eval_frequency,
             'seed': args.seed, 'input_modalities': 'VIS_RGB+IR_grayscale',
+            'input_raster_size': INPUT_SIZE,
+            'token_grid_size': PATCH_SIZE,
+            'spatial_adapter': '96x96 convolution then adaptive pooling to 15x15',
             'official_modality_adaptation': 'HSI->VIS; LiDAR->IR',
             'max_train_batches': args.max_train_batches,
             'completed_epochs': completed_epoch,

@@ -2,7 +2,7 @@ param(
     [string]$Target = 'backlight',
     [int]$Seed = 42,
     [int]$BatchSize = 16,
-    [string[]]$IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'PDA'),
+    [string[]]$IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN'),
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$DataDir = ''
 )

@@ -3,18 +3,12 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Epochs 5  # 显式统一覆盖（冒烟）
-#   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Methods CCSA,d-SNE
-#   powershell -ExecutionPolicy Bypass -File scripts\run_all_sunny.ps1 -Seeds 42 -Targets backlight -Methods PDA
 #
 # Every method keeps its OWN original supervision setting; methods are never
 # mixed across protocols and each protocol is reported in its own summary table:
 #
 #   UDA (no target labels at all)
 #     DANN, DeepCORAL, CDAN, MDD, MCC  - single-modal VIS, per original papers
-#     PDA                              - CLIP ViT-B/16 prompt + pseudo labels
-#   SDA
-#     CCSA                             - fixed-shot labelled target subset
-#     d-SNE                            - all labelled target-training data by default
 #   Supervised (source-only, multimodal)
 #     MCFT                             - VIS + IR contrastive fusion transformer
 #
@@ -36,29 +30,15 @@ param(
     [string]$OutDir = '',
     [int]$BenchRepeats = 5,
     [switch]$SkipBenchmark,
-    [int]$TargetLabelsPerClass = 10,          # CCSA fixed-shot label budget
-    [int]$DSNETargetLabelsPerClass = 0,       # d-SNE: 0 = all target-train labels
-    [int]$SdaSeed = 42,                       # seed used by tools/make_sda_lists.py
-    [string]$ClipCacheDir = '',               # PDA: CLIP weight cache ('' = ~/.cache/clip)
     [int]$DANNEpochs = 100,
     [int]$DeepCoralEpochs = 20,
     [int]$MDDEpochs = 20,
     [int]$MCCEpochs = 20,
-    [int]$PDAEpochs = 20,
-    [int]$CCSAEpochs = 80,
-    [int]$DSNEEpochs = 20,
     [int]$MCFTEpochs = 500,
     [int]$CdanIterations = 100004
 )
 
 $ErrorActionPreference = 'Continue'
-
-if ($TargetLabelsPerClass -le 0) {
-    throw 'TargetLabelsPerClass (CCSA) must be positive.'
-}
-if ($DSNETargetLabelsPerClass -lt 0) {
-    throw 'DSNETargetLabelsPerClass cannot be negative.'
-}
 
 $Repo = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $Repo 'efficiency_results\all_sunny' }
@@ -72,13 +52,6 @@ $MethodSpecs = [ordered]@{
     'CDAN'      = @{ script = 'CDAN\train_cdan.py';           protocol = 'UDA';        args = @() }
     'MDD'       = @{ script = 'MDD\train_mdd.py';             protocol = 'UDA';        args = @() }
     'MCC'       = @{ script = 'MCC\train_mcc.py';             protocol = 'UDA';        args = @() }
-    'PDA'       = @{ script = 'PDA\train_pda.py';             protocol = 'UDA';        args = @() }
-    'CCSA'      = @{ script = 'CCSA\train_ccsa.py';           protocol = 'SDA';        args = @(
-                        '--target-labels-per-class', $TargetLabelsPerClass,
-                        '--sda-seed', $SdaSeed) }
-    'd-SNE'     = @{ script = 'd-SNE\train_dsne.py';          protocol = 'SDA';        args = @(
-                        '--target-labels-per-class', $DSNETargetLabelsPerClass,
-                        '--sda-seed', $SdaSeed) }
     'MCFT'      = @{ script = 'MCFT\train_mcft.py';           protocol = 'Supervised'; args = @() }
 }
 
@@ -87,18 +60,13 @@ $MethodEpochs = [ordered]@{
     'DeepCORAL' = $DeepCoralEpochs
     'MDD'       = $MDDEpochs
     'MCC'       = $MCCEpochs
-    'PDA'       = $PDAEpochs
-    'CCSA'      = $CCSAEpochs
-    'd-SNE'     = $DSNEEpochs
     'MCFT'      = $MCFTEpochs
 }
 if ($Epochs -gt 0) {
     foreach ($name in @($MethodEpochs.Keys)) { $MethodEpochs[$name] = $Epochs }
 }
 
-# ``powershell -File script.ps1 -Methods CCSA,d-SNE`` binds "CCSA,d-SNE" as ONE
-# string, so comma-separated single arguments are split here too.  ``-Methods
-# CCSA,d-SNE`` (PowerShell host) and ``-Methods CCSA -Methods d-SNE`` both work.
+# Comma-separated single arguments are split here too.
 function Expand-List([string[]]$Values) {
     $out = @()
     foreach ($v in $Values) {
@@ -136,52 +104,17 @@ if (-not (Test-Path $Python)) {
     exit 1
 }
 
-# CCSA reads a fixed-shot list; d-SNE reads the complete target train list by
-# default and retains a positive fixed-shot override for compatibility.
-foreach ($m in @('CCSA', 'd-SNE')) {
-    if ($Selected -contains $m) {
-        foreach ($t in $Targets) {
-            $labelsPerClass = if ($m -eq 'CCSA') {
-                $TargetLabelsPerClass
-            } else {
-                $DSNETargetLabelsPerClass
-            }
-            $listName = if ($labelsPerClass -eq 0) {
-                "${t}_train.txt"
-            } else {
-                "${t}_sda_${labelsPerClass}shot_seed${SdaSeed}.txt"
-            }
-            $listFile = Join-Path $Repo "data_lists\$listName"
-            if (-not (Test-Path $listFile)) {
-                Write-Host "Missing labelled target list: $listFile" -ForegroundColor Red
-                Write-Host "Generate protocol lists first." -ForegroundColor Yellow
-                exit 1
-            }
-        }
-    }
-}
-
 Write-Host "=============================================================="
 Write-Host " Experiments  (source = sunny, target = other weathers)"
 Write-Host "--------------------------------------------------------------"
 Write-Host " Python   : $Python"
-Write-Host (" Epochs   : DANN={0}, DeepCORAL={1}, MDD={2}, MCC={3}, PDA={4}, CCSA={5}, d-SNE={6}, MCFT={7}" -f `
+Write-Host (" Epochs   : DANN={0}, DeepCORAL={1}, MDD={2}, MCC={3}, MCFT={4}" -f `
     $MethodEpochs.DANN, $MethodEpochs.DeepCORAL, $MethodEpochs.MDD,
-    $MethodEpochs.MCC, $MethodEpochs.PDA, $MethodEpochs.CCSA,
-    $MethodEpochs.'d-SNE', $MethodEpochs.MCFT)
+    $MethodEpochs.MCC, $MethodEpochs.MCFT)
 Write-Host " CDAN     : $CdanIterations iterations"
 Write-Host " Seeds    : $($Seeds -join ', ')"
 Write-Host " Targets  : $($Targets -join ', ')"
 Write-Host " Methods  : $($Selected -join ', ')"
-if ($Selected -contains 'CCSA' -or $Selected -contains 'd-SNE') {
-    Write-Host " CCSA SDA : ${TargetLabelsPerClass} labels/class, subset seed $SdaSeed"
-    $dsnePolicy = if ($DSNETargetLabelsPerClass -eq 0) {
-        'all labelled target-train samples'
-    } else {
-        "${DSNETargetLabelsPerClass} labels/class, subset seed $SdaSeed"
-    }
-    Write-Host " d-SNE SDA: $dsnePolicy"
-}
 Write-Host " OutDir   : $OutDir"
 Write-Host "=============================================================="
 
@@ -194,12 +127,11 @@ if (-not $SkipBenchmark) {
     # names above must be mapped before they are passed to --methods.
     $AdapterKeys = @{
         'DANN' = 'dann'; 'DeepCORAL' = 'deepcoral'; 'CDAN' = 'cdan'
-        'MDD' = 'mdd'; 'MCC' = 'mcc'; 'PDA' = 'pda'
-        'CCSA' = 'ccsa'; 'd-SNE' = 'dsne'; 'MCFT' = 'mcft'
+        'MDD' = 'mdd'; 'MCC' = 'mcc'
+        'MCFT' = 'mcft'
     }
     $benchGroups = [ordered]@{
-        'UDA'        = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC', 'PDA')
-        'SDA'        = @('CCSA', 'd-SNE')
+        'UDA'        = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC')
         'Supervised' = @('MCFT')
     }
     foreach ($proto in $benchGroups.Keys) {
@@ -212,9 +144,6 @@ if (-not $SkipBenchmark) {
                  '--protocol', $proto,
                  '--benchmark_repeats', $BenchRepeats,
                  '--efficiency_output_dir', $OutDir)
-        if ($proto -eq 'SDA') {
-            $cli += @('--target-labels-per-class', $TargetLabelsPerClass)
-        }
         Write-Host "      [$proto] $($groupMethods -join ', ')"
         & $Python @cli *> $protoLog
         Write-Host ("      exit={0}   log={1}" -f $LASTEXITCODE, $protoLog)
@@ -251,10 +180,6 @@ foreach ($method in $Selected) {
                 $cli += @('--epochs', $MethodEpochs[$method])
             }
             $cli += $spec['args']
-            if ($method -eq 'PDA' -and $ClipCacheDir) {
-                $cli += @('--clip-cache-dir', $ClipCacheDir)
-            }
-
             & $Python @cli *> $log
 
             if ($LASTEXITCODE -ne 0) {

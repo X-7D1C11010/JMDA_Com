@@ -3,9 +3,13 @@
 VDS2Raw v2 的独立三模态跨日协议、训练入口和输出说明见
 [`VDS2RAW_PROTOCOL.md`](VDS2RAW_PROTOCOL.md)。
 
-## CCSA / d-SNE / MCFT 顺序训练入口
+> **2026-11-04 现行状态：** CCSA 与 d-SNE 的源码、专用启动器和专属实验产物已
+> 删除。下文关于二者的内容只保留为历史记录，不再代表当前可运行方法；当前
+> VDS2Raw 入口仅包含 MCFT 与 TIR。
 
-三种官方方法移植版可以用一个命令按 `CCSA -> d-SNE -> MCFT` 的顺序训练、
+## 历史：CCSA / d-SNE / MCFT 顺序训练入口（已删除）
+
+以下入口已删除；这里仅记录当时曾按 `CCSA -> d-SNE -> MCFT` 的顺序训练、
 记录并汇总：
 
 ```bash

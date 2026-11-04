@@ -10,7 +10,10 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
     (tools/uda_data.py: only target-domain classes are kept, labels remapped
     to 0..|T|-1, so the classifier head width equals that target's class count);
   * ResizeImage implemented locally (tllib.vision.transforms not downloaded);
-  * DataLoader workers/prefetch/pinned memory 可配置；训练超参保持官方值。
+  * DataLoader workers/prefetch/pinned memory 可配置；
+  * 多模态使用 JMDA 非张量部分的 VIS ResNet-18 + IR U-Net，512+512 直接拼接；
+  * 先纯源域监督预热，再逐步启用 MCC，避免随机分类头产生的低质量目标
+    概率立即主导类别混淆矩阵。
 
 2026-10-21 修复（逐项核对 tllib 官方 mcc.py 后）：
   * iters_per_epoch 恢复官方默认 1000（mcc.py:248），不再用数据加载器长度
@@ -18,7 +21,7 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
   * 前向恢复官方 mcc.py:166-168 的 ``torch.cat((x_s, x_t))`` 一次前向 +
     ``y.chunk(2)``（分别前向在含 BatchNorm 的 ResNet 下与官方不等价）。
 
-优化器/调度/超参保持与 tllib 官方示例 mcc.py 完全一致（未做任何改动）。
+MCC 损失与联合前向保持 tllib 官方实现；源域预热是数据集迁移所需的显式阶段。
 
 Usage:
     python train_mcc.py --target backlight
@@ -61,7 +64,7 @@ from data_loader_options import (
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
-from uda_multimodal import DualBackbone, paired_dataset, describe_pairing
+from uda_multimodal import JmdaTllibBackbone, paired_dataset, describe_pairing
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -129,19 +132,31 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
         if eff:
             eff.dataloader_done()
 
-        # tllib 官方 mcc.py:166-168：拼接后一次前向，再 chunk 回源/目标。
-        x = torch.cat((x_s, x_t), dim=0)
-        y, _ = classifier(x)
-        y_s, y_t = y.chunk(2, dim=0)
+        source_warmup = epoch <= args.source_warmup_epochs
+        if source_warmup:
+            # Establish a source-trained classifier before MCC is allowed to
+            # trust and sharpen its target predictions.
+            y_s, _ = classifier(x_s)
+            y_t = None
+        else:
+            # tllib official MCC joint forward once adaptation starts.
+            x = torch.cat((x_s, x_t), dim=0)
+            y, _ = classifier(x)
+            y_s, y_t = y.chunk(2, dim=0)
         cls_loss = F.cross_entropy(
             y_s, labels_s, label_smoothing=args.label_smoothing
         )
-        transfer_loss = mcc(y_t)
-        if args.trade_off_warmup_epochs > 0:
-            completed_updates = (epoch - 1) * args.iters_per_epoch + i + 1
+        if source_warmup:
+            transfer_loss = cls_loss.new_zeros(())
+            transfer_weight = 0.0
+        elif args.trade_off_warmup_epochs > 0:
+            transfer_loss = mcc(y_t)
+            completed_updates = ((epoch - args.source_warmup_epochs - 1)
+                                 * args.iters_per_epoch + i + 1)
             warmup_updates = args.trade_off_warmup_epochs * args.iters_per_epoch
             transfer_weight = args.trade_off * min(1.0, completed_updates / warmup_updates)
         else:
+            transfer_loss = mcc(y_t)
             transfer_weight = args.trade_off
         loss = cls_loss + transfer_loss * transfer_weight
         loss.backward()
@@ -152,11 +167,13 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
 
         if (i + 1) % args.print_freq == 0:
             acc = accuracy(y_s, labels_s)[0]
+            target_confidence = (float('nan') if y_t is None else
+                                 F.softmax(y_t.detach(), dim=1).max(dim=1).values.mean().item())
             learning_rates = lr_scheduler.get_last_lr()
             print(f'  Epoch [{epoch}/{args.epochs}] iter [{i + 1}/{args.iters_per_epoch}] '
                   f'loss={loss.item():.4f} cls={cls_loss.item():.4f} '
                   f'mcc={transfer_loss.item():.4f} transfer_weight={transfer_weight:.4f} '
-                  f'src_acc={acc.item():.2f} '
+                  f'src_acc={acc.item():.2f} target_conf={target_confidence:.4f} '
                   f'lr=[{min(learning_rates):.3e},{max(learning_rates):.3e}]',
                   flush=True)
 
@@ -176,14 +193,16 @@ def main():
     parser.add_argument('--temperature', default=2.5, type=float)
     parser.add_argument('--trade-off', default=1., type=float)
     parser.add_argument('--trade-off-warmup-epochs', default=0, type=int,
-                        help='linearly ramp MCC weight during the first N epochs')
+                        help='linearly ramp MCC weight for N epochs after source warmup')
+    parser.add_argument('--source-warmup-epochs', default=5, type=int,
+                        help='pure source-supervised epochs before MCC target adaptation')
     parser.add_argument('--label-smoothing', default=0.0, type=float,
                         help='source cross-entropy label smoothing; 0 preserves baseline')
     parser.add_argument('--bottleneck-dim', default=256, type=int)
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
                         help='Number of iterations per epoch (tllib official default: 1000)')
-    parser.add_argument('--backbone', choices=['resnet18', 'resnet50'],
+    parser.add_argument('--backbone', choices=['resnet18', 'resnet50', 'jmda'],
                         default='resnet18')
     parser.add_argument('--enhanced-augmentation', action='store_true')
     parser.add_argument('--multimodal', action='store_true')
@@ -204,6 +223,7 @@ def main():
     args = parser.parse_args()
     if (args.iters_per_epoch < 1 or args.trade_off < 0 or
             args.trade_off_warmup_epochs < 0 or
+            args.source_warmup_epochs < 0 or
             not 0 <= args.label_smoothing < 1):
         raise ValueError('invalid MCC iterations/trade-off/warmup setting')
     if args.early_stop_patience < 0:
@@ -248,12 +268,20 @@ def main():
     train_source_iter = ForeverDataIterator(src_loader)
     train_target_iter = ForeverDataIterator(tgt_loader)
 
-    backbone_fn = resnet50 if args.backbone == 'resnet50' else resnet18
-    backbone = backbone_fn(pretrained=True)
     if args.multimodal:
-        backbone = DualBackbone(backbone, backbone_fn(pretrained=True))
-    print(f'MCC backbone: {args.backbone} (ImageNet pretrained), '
-          f'modalities={"VIS+IR" if args.multimodal else "VIS"}')
+        if args.backbone != 'jmda':
+            raise ValueError('--multimodal requires --backbone jmda')
+        backbone = JmdaTllibBackbone()
+        print('MCC encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
+              '512+512 direct concatenation')
+    else:
+        if args.backbone == 'jmda':
+            raise ValueError('--backbone jmda requires --multimodal')
+        backbone_fn = resnet50 if args.backbone == 'resnet50' else resnet18
+        backbone = backbone_fn(pretrained=True)
+        print(f'MCC backbone: {args.backbone} (ImageNet pretrained), modalities=VIS')
+    print(f'MCC schedule: source-only warmup={args.source_warmup_epochs} epochs; '
+          f'MCC ramp={args.trade_off_warmup_epochs} epochs')
     classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim).to(device)
     mcc = MinimumClassConfusionLoss(temperature=args.temperature)
     optimizer = SGD(classifier.get_parameters(), args.lr, momentum=args.momentum,

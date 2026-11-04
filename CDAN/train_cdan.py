@@ -57,39 +57,35 @@ from uda_data import (
     format_dropped,
 )
 from data_loader_options import add_data_loader_args, data_loader_kwargs
-from uda_multimodal import paired_dataset, split_modalities, describe_pairing
+from uda_multimodal import JmdaMultimodalEncoder, paired_dataset, describe_pairing
 
 
 class DualResNetFc(nn.Module):
-    """CDAN feature extractor with independent VIS/IR ResNet branches."""
+    """CDAN head over JMDA's non-tensor VIS/IR direct concatenation."""
 
-    def __init__(self, resnet_name, class_num, bottleneck_dim=256,
+    def __init__(self, class_num, bottleneck_dim=256,
                  head_lr_mult=10.0):
         super().__init__()
         self.head_lr_mult = float(head_lr_mult)
-        self.vis = ResNetFc(resnet_name=resnet_name, use_bottleneck=True,
-                            bottleneck_dim=bottleneck_dim, new_cls=True,
-                            class_num=class_num)
-        self.ir = ResNetFc(resnet_name=resnet_name, use_bottleneck=True,
-                           bottleneck_dim=bottleneck_dim, new_cls=True,
-                           class_num=class_num)
-        self.fusion = nn.Linear(bottleneck_dim * 2, bottleneck_dim)
+        self.encoder = JmdaMultimodalEncoder()
+        # This is CDAN's official bottleneck after the already-concatenated
+        # multimodal feature; it is not an additional fusion mechanism.
+        self.bottleneck = nn.Linear(self.encoder.out_features, bottleneck_dim)
         self.fc = nn.Linear(bottleneck_dim, class_num)
+        nn.init.xavier_normal_(self.bottleneck.weight)
+        nn.init.zeros_(self.bottleneck.bias)
+        nn.init.xavier_normal_(self.fc.weight)
+        nn.init.zeros_(self.fc.bias)
 
     def forward(self, images):
-        vis, ir = split_modalities(images)
-        vis_features, _ = self.vis(vis)
-        ir_features, _ = self.ir(ir)
-        features = self.fusion(torch.cat((vis_features, ir_features), dim=1))
+        features = self.bottleneck(self.encoder(images))
         return features, self.fc(features)
 
     def get_parameters(self):
         return [
-            {'params': self.vis.feature_layers.parameters(), 'lr_mult': 1, 'decay_mult': 2},
-            {'params': self.vis.bottleneck.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
-            {'params': self.ir.feature_layers.parameters(), 'lr_mult': 1, 'decay_mult': 2},
-            {'params': self.ir.bottleneck.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
-            {'params': self.fusion.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
+            {'params': self.encoder.vis_encoder.parameters(), 'lr_mult': 1, 'decay_mult': 2},
+            {'params': self.encoder.ir_encoder.parameters(), 'lr_mult': 1, 'decay_mult': 2},
+            {'params': self.bottleneck.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
             {'params': self.fc.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
         ]
 
@@ -181,7 +177,7 @@ def main():
     parser.add_argument('--random', action='store_true',
                         help='使用随机多线性映射（原参考实现 --random 默认 False；'
                              '论文仅在外积维度 >4096 时启用）')
-    parser.add_argument('--backbone', choices=['ResNet18', 'ResNet50'],
+    parser.add_argument('--backbone', choices=['ResNet18', 'ResNet50', 'JMDA'],
                         default='ResNet18')
     parser.add_argument('--enhanced-augmentation', action='store_true',
                         help='add color jitter to the official resize/crop/flip pipeline')
@@ -265,10 +261,15 @@ def main():
                             drop_last=True, **loader_kwargs)
 
     if args.multimodal:
-        model = DualResNetFc(args.backbone, num_classes,
+        if args.backbone != 'JMDA':
+            raise ValueError('--multimodal requires --backbone JMDA')
+        model = DualResNetFc(num_classes,
                              head_lr_mult=args.head_lr_mult).to(device)
-        print(f'CDAN-MM backbone: dual {args.backbone} VIS+IR branches')
+        print('CDAN-MM encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
+              '512+512 direct concatenation; CDAN bottleneck=256')
     else:
+        if args.backbone == 'JMDA':
+            raise ValueError('--backbone JMDA requires --multimodal')
         model = ResNetFc(resnet_name=args.backbone, use_bottleneck=True,
                          bottleneck_dim=256, new_cls=True,
                          class_num=num_classes).to(device)

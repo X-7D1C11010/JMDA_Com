@@ -10,7 +10,8 @@ Adaptations (documented in REPRODUCTION_RECORD.md):
     (tools/uda_data.py: only target-domain classes are kept, labels remapped
     to 0..|T|-1, so the classifier head width equals that target's class count);
   * ResizeImage implemented locally (tllib.vision.transforms not downloaded);
-  * DataLoader workers/prefetch/pinned memory 可配置；训练超参保持官方值。
+  * DataLoader workers/prefetch/pinned memory 可配置；
+  * 多模态使用 JMDA 非张量部分的 VIS ResNet-18 + IR U-Net，512+512 直接拼接。
 
 2026-10-21 修复（逐项核对 tllib 官方 mdd.py 后）：
   * bottleneck_dim 恢复官方默认 1024（mdd.py:227），原为 256；
@@ -60,7 +61,7 @@ from data_loader_options import (
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
-from uda_multimodal import DualBackbone, paired_dataset, describe_pairing
+from uda_multimodal import JmdaTllibBackbone, paired_dataset, describe_pairing
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -183,7 +184,7 @@ def main():
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
                         help='Number of iterations per epoch (tllib official default: 1000)')
-    parser.add_argument('--backbone', choices=['resnet18', 'resnet50'],
+    parser.add_argument('--backbone', choices=['resnet18', 'resnet50', 'jmda'],
                         default='resnet18')
     parser.add_argument('--enhanced-augmentation', action='store_true')
     parser.add_argument('--multimodal', action='store_true')
@@ -246,12 +247,18 @@ def main():
     train_source_iter = ForeverDataIterator(src_loader)
     train_target_iter = ForeverDataIterator(tgt_loader)
 
-    backbone_fn = resnet50 if args.backbone == 'resnet50' else resnet18
-    backbone = backbone_fn(pretrained=True)
     if args.multimodal:
-        backbone = DualBackbone(backbone, backbone_fn(pretrained=True))
-    print(f'MDD backbone: {args.backbone} (ImageNet pretrained), '
-          f'modalities={"VIS+IR" if args.multimodal else "VIS"}')
+        if args.backbone != 'jmda':
+            raise ValueError('--multimodal requires --backbone jmda')
+        backbone = JmdaTllibBackbone()
+        print('MDD encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
+              '512+512 direct concatenation')
+    else:
+        if args.backbone == 'jmda':
+            raise ValueError('--backbone jmda requires --multimodal')
+        backbone_fn = resnet50 if args.backbone == 'resnet50' else resnet18
+        backbone = backbone_fn(pretrained=True)
+        print(f'MDD backbone: {args.backbone} (ImageNet pretrained), modalities=VIS')
     classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim,
                                  width=args.bottleneck_dim).to(device)
     mdd = MarginDisparityDiscrepancy(args.margin).to(device)

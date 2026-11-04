@@ -1,4 +1,4 @@
-"""Download all additional official weights needed by the six UDA baselines.
+"""Download all additional weights needed by the UDA baselines.
 
 Run this on a machine with fast internet, then upload the whole output folder
 to the server repository's ``pretrained_weights`` directory.
@@ -36,16 +36,6 @@ WEIGHTS = (
         "url": "https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth",
         "relative_path": "deepcoral_alexnet_owt_4df8aa71.pth",
         "sha256_prefix": "4df8aa71",
-    },
-    {
-        "method": "PDA",
-        "url": (
-            "https://openaipublic.azureedge.net/clip/models/"
-            "5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/"
-            "ViT-B-16.pt"
-        ),
-        "relative_path": os.path.join("clip", "ViT-B-16.pt"),
-        "sha256": "5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f",
     },
 )
 

@@ -24,7 +24,7 @@ from collections import defaultdict
 from pathlib import Path
 
 # 兼容两种训练日志格式：tllib 系（MDD/MCC）用 "iter [i/n]"，
-# 其余方法（DANN/DeepCORAL/CDAN/PDA）用 "batch [i/n]"。
+# 其余方法（DANN/DeepCORAL/CDAN）用 "batch [i/n]"。
 PROGRESS_RE = re.compile(r'Epoch \[(\d+)/(\d+)\] (?:iter|batch) \[\d+/\d+\]\s+(.*)$')
 ACC_RE = re.compile(r'^Epoch \[(\d+)/\d+\] target val accuracy:\s*([0-9.]+)')
 PRF_RE = re.compile(

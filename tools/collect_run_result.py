@@ -218,7 +218,7 @@ def main():
     parser.add_argument('--model-selection', default='')
     parser.add_argument(
         '--budget-results', default='',
-        help='Optional d-SNE budget-result JSON; emits one row per declared budget.',
+        help='Optional budget-result JSON; emits one row per declared budget.',
     )
     args = parser.parse_args()
 

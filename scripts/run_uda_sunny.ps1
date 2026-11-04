@@ -33,13 +33,11 @@ param(
     [int]$DeepCoralEpochs = 20,
     [int]$MDDEpochs = 20,
     [int]$MCCEpochs = 20,
-    [int]$PDAEpochs = 20,
     [double]$DANNLearningRate = 0.001,
     [double]$DeepCoralLearningRate = 0.001,
     [double]$CDANLearningRate = 0.001,
     [double]$MDDLearningRate = 0.004,
     [double]$MCCLearningRate = 0.005,
-    [double]$PDALearningRate = 0.003,
     [double]$DANNDomainLossWeight = 1.0,
     [int]$DANNGrlMaxIterations = 0,
     [int]$DANNTargetEvalInterval = 0,
@@ -67,12 +65,8 @@ param(
     [int]$MCCIterationsPerEpoch = 1000,
     [double]$MCCTradeOff = 1.0,
     [int]$MCCTradeOffWarmupEpochs = 0,
+    [int]$MCCSourceWarmupEpochs = 5,
     [double]$MCCLabelSmoothing = 0.0,
-    [int]$PDAWarmupEpochs = 1,
-    [double]$PDAConfidenceThreshold = 0.9,
-    [int]$PDATargetEvalInterval = 0,
-    [string]$ClassNamesFile = $env:JMDA_CLASS_NAMES_FILE,
-    [string]$ClipCacheDir = '',
     [string]$DeepCoralWeights = '',
     [int]$NumWorkers = 4,
     [int]$EvalNumWorkers = 0,
@@ -95,8 +89,6 @@ $ErrorActionPreference = 'Continue'
 $Repo = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $Repo 'efficiency_results\uda_sunny' }
 if (-not $DataDir) { $DataDir = Join-Path $Repo 'data_lists_vis' }
-if (-not $ClassNamesFile) { $ClassNamesFile = Join-Path $Repo 'class.txt' }
-if (-not $ClipCacheDir) { $ClipCacheDir = Join-Path $Repo 'pretrained_weights\clip' }
 if (-not $DeepCoralWeights) {
     $candidate = Join-Path $Repo 'pretrained_weights\deepcoral_alexnet_owt_4df8aa71.pth'
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $DeepCoralWeights = $candidate }
@@ -115,7 +107,6 @@ $Methods = [ordered]@{
     'CDAN'      = 'CDAN\train_cdan.py'
     'MDD'       = 'MDD\train_mdd.py'
     'MCC'       = 'MCC\train_mcc.py'
-    'PDA'       = 'PDA\train_pda.py'
 }
 $PausedMethods = @('MDD', 'MCC')
 if (-not $IncludePausedMethods) {
@@ -146,7 +137,6 @@ $MethodEpochs = [ordered]@{
     'DeepCORAL' = $DeepCoralEpochs
     'MDD'       = $MDDEpochs
     'MCC'       = $MCCEpochs
-    'PDA'       = $PDAEpochs
 }
 $MethodLearningRates = [ordered]@{
     'DANN'      = $DANNLearningRate
@@ -154,7 +144,6 @@ $MethodLearningRates = [ordered]@{
     'CDAN'      = $CDANLearningRate
     'MDD'       = $MDDLearningRate
     'MCC'       = $MCCLearningRate
-    'PDA'       = $PDALearningRate
 }
 if ($Epochs -gt 0) {
     foreach ($name in @($MethodEpochs.Keys)) { $MethodEpochs[$name] = $Epochs }
@@ -169,8 +158,8 @@ if ($NumWorkers -lt 0 -or $EvalNumWorkers -lt 0 -or
     Write-Host 'Invalid DataLoader settings.' -ForegroundColor Red
     exit 1
 }
-if ($ImageBackbone -and $ImageBackbone -ine 'ResNet50') {
-    Write-Host 'ImageBackbone currently supports only ResNet50 or an empty value.' -ForegroundColor Red
+if ($ImageBackbone -and $ImageBackbone -ine 'ResNet50' -and $ImageBackbone -ine 'JMDA') {
+    Write-Host 'ImageBackbone supports ResNet50, JMDA, or an empty value.' -ForegroundColor Red
     exit 1
 }
 if ($ImageBatchSize -lt 2) {
@@ -204,9 +193,8 @@ if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
     $MDDTradeOff -lt 0 -or $MDDTradeOffWarmupEpochs -lt 0 -or
     $MCCIterationsPerEpoch -lt 1 -or
     $MCCTradeOff -lt 0 -or $MCCTradeOffWarmupEpochs -lt 0 -or
-    $MCCLabelSmoothing -lt 0 -or $MCCLabelSmoothing -ge 1 -or
-    $PDAWarmupEpochs -lt 0 -or $PDAConfidenceThreshold -le 0 -or
-    $PDAConfidenceThreshold -ge 1 -or $PDATargetEvalInterval -lt 0) {
+    $MCCSourceWarmupEpochs -lt 0 -or
+    $MCCLabelSmoothing -lt 0 -or $MCCLabelSmoothing -ge 1) {
     Write-Host 'Invalid method-specific tuning settings.' -ForegroundColor Red
     exit 1
 }
@@ -241,10 +229,6 @@ if ($env:OS -eq 'Windows_NT') {
     $UsePersistentWorkers = ($EffectiveNumWorkers -gt 0)
 }
 $env:PYTHONUNBUFFERED = '1'
-if (-not $ClassNamesFile -or -not (Test-Path -LiteralPath $ClassNamesFile -PathType Leaf)) {
-    Write-Host 'PDA requires a real ordered 14-class English name file. Pass -ClassNamesFile or set JMDA_CLASS_NAMES_FILE.' -ForegroundColor Red
-    exit 1
-}
 
 Write-Host "=============================================================="
 Write-Host " UDA experiments  (source = sunny, target = other weathers)"
@@ -396,22 +380,10 @@ foreach ($method in $Methods.Keys) {
                               $MCCTradeOff,
                               [Globalization.CultureInfo]::InvariantCulture)),
                           '--trade-off-warmup-epochs', $MCCTradeOffWarmupEpochs,
+                          '--source-warmup-epochs', $MCCSourceWarmupEpochs,
                           '--label-smoothing', ([Convert]::ToString(
                               $MCCLabelSmoothing,
                               [Globalization.CultureInfo]::InvariantCulture)))
-            }
-            if ($method -eq 'PDA') {
-                $cli += @('--class-names-file', $ClassNamesFile,
-                          '--clip-cache-dir', $ClipCacheDir,
-                          '--warmup-epochs', $PDAWarmupEpochs,
-                          '--confidence-threshold', ([Convert]::ToString(
-                              $PDAConfidenceThreshold,
-                              [Globalization.CultureInfo]::InvariantCulture)),
-                          '--target-eval-interval', $PDATargetEvalInterval)
-                if ($ImageBackbone) {
-                    $cli += @('--batch-size', $ImageBatchSize,
-                              '--test-batch-size', $ImageBatchSize)
-                }
             }
             if ($method -eq 'DeepCORAL' -and $DeepCoralWeights) {
                 $cli += @('--alexnet-weights', $DeepCoralWeights)
@@ -427,7 +399,13 @@ foreach ($method in $Methods.Keys) {
                           '--early-stop-min-delta', $EarlyStoppingMinDelta)
             }
             if ($ImageBackbone) {
-                if ($method -eq 'DANN' -or $method -eq 'DeepCORAL') {
+                if ($ImageBackbone -ieq 'JMDA') {
+                    if ($method -eq 'CDAN') {
+                        $cli += @('--backbone', 'JMDA')
+                    } else {
+                        $cli += @('--backbone', 'jmda')
+                    }
+                } elseif ($method -eq 'DANN' -or $method -eq 'DeepCORAL') {
                     $cli += @('--backbone', 'resnet50')
                 } elseif ($method -eq 'CDAN') {
                     $cli += @('--backbone', 'ResNet50')
@@ -438,7 +416,7 @@ foreach ($method in $Methods.Keys) {
                     $cli += @('--source-batch-size', $ImageBatchSize,
                               '--target-batch-size', $ImageBatchSize,
                               '--test-batch-size', $ImageBatchSize)
-                } elseif ($method -ne 'PDA') {
+                } else {
                     $cli += @('--batch-size', $ImageBatchSize)
                 }
             }

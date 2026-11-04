@@ -11,8 +11,7 @@ param(
     [double]$DeepCoralLearningRate = 0.0005,
     [double]$CDANLearningRate = 0.0005,
     [double]$MDDLearningRate = 0.002,
-    [double]$MCCLearningRate = 0.0025,
-    [double]$PDALearningRate = 0.0015
+    [double]$MCCLearningRate = 0.0025
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,7 +34,7 @@ if (-not $OutDir) {
 $arguments = @{
     Seeds = @($Seed)
     Targets = @($Target)
-    IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC', 'PDA')
+    IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC')
     IncludePausedMethods = $true
     Python = $Python
     OutDir = $OutDir
@@ -47,15 +46,14 @@ $arguments = @{
     CDANLearningRate = $CDANLearningRate
     MDDLearningRate = $MDDLearningRate
     MCCLearningRate = $MCCLearningRate
-    PDALearningRate = $PDALearningRate
     SkipBenchmark = $true
 }
 if ($DataDir) { $arguments.DataDir = $DataDir }
 
-Write-Host 'Local sequential low-LR run: DANN, DeepCORAL, CDAN, MDD, MCC, PDA.'
+Write-Host 'Local sequential low-LR run: DANN, DeepCORAL, CDAN, MDD, MCC.'
 Write-Host "Target=$Target Seed=$Seed BatchSize=$BatchSize CDAN iterations=$CdanIterations"
 Write-Host ("LR: DANN=$DANNLearningRate, DeepCORAL=$DeepCoralLearningRate, " +
            "CDAN=$CDANLearningRate, MDD=$MDDLearningRate, " +
-           "MCC=$MCCLearningRate, PDA=$PDALearningRate")
+           "MCC=$MCCLearningRate")
 & (Join-Path $PSScriptRoot 'run_uda_multimodal.ps1') @arguments
 exit $LASTEXITCODE

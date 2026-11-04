@@ -13,7 +13,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchvision import transforms
-from torchvision.transforms import functional as TF
 
 CLASS_NAMES = ("Cargo", "Fishing", "Sailing_Pleasure")
 DISPLAY_CLASS_NAMES = ("Cargo", "Fishing", "Sailing & Pleasure")
@@ -321,92 +320,43 @@ class VDS2RawDataset(Dataset):
         }
 
 
-class RGBView(Dataset):
-    """Pair-table compatible RGB view of :class:`VDS2RawDataset`."""
+class VDS2RawTIRDataset(Dataset):
+    """VDS2Raw view for CLIP/TIR with paired RGB/NIR geometry.
 
-    def __init__(self, dataset):
-        self.dataset = dataset
-        self.samples = dataset.samples
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, index):
-        item = self.dataset[index]
-        return item["rgb"], item["label"]
-
-
-class NaturalImageRGBDataset(Dataset):
-    """RGB view for ImageNet-initialized CCSA and d-SNE backbones.
-
-    The d-SNE release resizes to 256, crops to 224, applies horizontal flip
-    and colour jitter, then normalizes around 0.5.  A vertical flip is added
-    for this overhead-imagery dataset; it does not change band semantics.
+    RGB follows the official CLIP ViT-B/16 224x224 normalization. NIR stays in
+    train-fitted z-score space for the project-specific residual adapter. AIS
+    and its validity mask are returned unchanged. Random crop/flip parameters
+    are shared by RGB and NIR, and heading components are corrected after
+    reflections.
     """
 
-    def __init__(
-        self,
-        root,
-        partition,
-        statistics,
-        augment=False,
-        normalization="half",
-        augmentation_strength="standard",
-    ):
+    CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
+    CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+
+    def __init__(self, root, partition, statistics, augment=False, image_size=224):
         self.root = Path(root).expanduser().resolve()
         self.partition = partition
+        self.statistics = statistics
+        self.augment = bool(augment)
+        self.image_size = int(image_size)
+        if self.image_size != 224:
+            raise ValueError("official CLIP ViT-B/16 requires image_size=224")
         self.paths = partition_files(self.root, partition)
         self.samples = [
             (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
         ]
-        self.statistics = statistics
-        if normalization == "half":
-            mean, std = (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
-        elif normalization == "imagenet":
-            mean = (0.485, 0.456, 0.406)
-            std = (0.229, 0.224, 0.225)
-        else:
-            raise ValueError(f"unknown RGB normalization {normalization!r}")
-        if augmentation_strength not in {"standard", "light"}:
-            raise ValueError(
-                f"unknown natural-image augmentation strength {augmentation_strength!r}"
-            )
-        if augment:
-            if augmentation_strength == "light":
-                crop_scale = (0.9, 1.0)
-                crop_ratio = (0.95, 1.05)
-                color_jitter = (0.1, 0.1, 0.1, 0.05)
-            else:
-                crop_scale = (0.8, 1.0)
-                crop_ratio = (0.9, 1.1)
-                color_jitter = (0.2, 0.2, 0.2, 0.1)
-            spatial = [
-                transforms.Resize(256, antialias=True),
-                transforms.RandomResizedCrop(
-                    224,
-                    scale=crop_scale,
-                    ratio=crop_ratio,
-                    antialias=True,
-                ),
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomVerticalFlip(),
-                transforms.ColorJitter(
-                    brightness=color_jitter[0],
-                    contrast=color_jitter[1],
-                    saturation=color_jitter[2],
-                    hue=color_jitter[3],
-                ),
-            ]
-        else:
-            spatial = [
-                transforms.Resize(256, antialias=True),
-                transforms.CenterCrop(224),
-            ]
-        self.transform = transforms.Compose(
-            spatial + [transforms.Normalize(mean=mean, std=std)]
+        self.nir_mean = torch.tensor(statistics.nir_mean, dtype=torch.float32).view(
+            1, 1, 1
         )
-        self.normalization = normalization
-        self.augmentation_strength = augmentation_strength
+        self.nir_std = torch.tensor(statistics.nir_std, dtype=torch.float32).view(
+            1, 1, 1
+        )
+        self.clip_mean = torch.tensor(self.CLIP_MEAN, dtype=torch.float32).view(
+            3, 1, 1
+        )
+        self.clip_std = torch.tensor(self.CLIP_STD, dtype=torch.float32).view(
+            3, 1, 1
+        )
 
     def __len__(self):
         return len(self.paths)
@@ -415,154 +365,41 @@ class NaturalImageRGBDataset(Dataset):
         path = self.paths[index]
         with np.load(path, allow_pickle=False) as item:
             rgb = torch.from_numpy(item["rgb"].astype(np.float32))
-            label = int(item["label"])
-        # More than 98.5% of every training RGB channel remains within the
-        # conventional 8-bit image range.  Preserve RGB colour balance with a
-        # fixed 255 scale and clip the sparse high-DN outliers, rather than
-        # compressing the whole image by a per-channel extreme maximum.
-        rgb = rgb.div_(255.0)
-        rgb = self.transform(rgb.clamp_(0.0, 1.0))
-        return rgb, label
-
-
-class NaturalImageMultimodalDataset(Dataset):
-    """Aligned RGB+NIR+AIS view for ImageNet-initialized baselines.
-
-    RGB and NIR always receive the same crop and flips.  RGB keeps the
-    natural-image normalization required by the pretrained backbone; NIR is
-    scaled to ``[-1, 1]`` before the model repeats it to three channels.  AIS
-    remains in the dataset's train-fitted feature space, and ``ais_mask`` is
-    carried only as a missing-value gate rather than as a fourth modality.
-    """
-
-    def __init__(
-        self,
-        root,
-        partition,
-        statistics,
-        augment=False,
-        normalization="half",
-        augmentation_strength="standard",
-    ):
-        self.root = Path(root).expanduser().resolve()
-        self.partition = partition
-        self.paths = partition_files(self.root, partition)
-        self.samples = [
-            (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
-        ]
-        self.statistics = statistics
-        self.augment = bool(augment)
-        if normalization == "half":
-            self.rgb_mean, self.rgb_std = (0.5,) * 3, (0.5,) * 3
-        elif normalization == "imagenet":
-            self.rgb_mean = (0.485, 0.456, 0.406)
-            self.rgb_std = (0.229, 0.224, 0.225)
-        else:
-            raise ValueError(f"unknown RGB normalization {normalization!r}")
-        if augmentation_strength not in {"standard", "light"}:
-            raise ValueError(
-                f"unknown natural-image augmentation strength {augmentation_strength!r}"
-            )
-        if augmentation_strength == "light":
-            self.crop_scale = (0.9, 1.0)
-            self.crop_ratio = (0.95, 1.05)
-            jitter = (0.1, 0.1, 0.1, 0.05)
-        else:
-            self.crop_scale = (0.8, 1.0)
-            self.crop_ratio = (0.9, 1.1)
-            jitter = (0.2, 0.2, 0.2, 0.1)
-        self.color_jitter = transforms.ColorJitter(
-            brightness=jitter[0],
-            contrast=jitter[1],
-            saturation=jitter[2],
-            hue=jitter[3],
-        )
-        self.normalization = normalization
-        self.augmentation_strength = augmentation_strength
-
-    def __len__(self):
-        return len(self.paths)
-
-    def __getitem__(self, index):
-        path = self.paths[index]
-        with np.load(path, allow_pickle=False) as item:
-            rgb = torch.from_numpy(item["rgb"].astype(np.float32)).div_(255.0)
-            nir = torch.from_numpy(item["nir"].astype(np.float32)).div_(255.0)
+            nir = torch.from_numpy(item["nir"].astype(np.float32))
             ais = torch.from_numpy(item["ais"].astype(np.float32))
             ais_mask = torch.from_numpy(item["ais_mask"].astype(np.float32))
             label = int(item["label"])
-        rgb = rgb.clamp_(0.0, 1.0)
-        nir = nir.clamp_(0.0, 1.0)
-        rgb = TF.resize(rgb, 256, antialias=True)
-        nir = TF.resize(nir, 256, antialias=True)
+
+        rgb = (rgb / 255.0).clamp_(0.0, 1.0)
+        nir = (nir - self.nir_mean) / self.nir_std
         if self.augment:
             top, left, height, width = transforms.RandomResizedCrop.get_params(
-                rgb, scale=self.crop_scale, ratio=self.crop_ratio
+                rgb, scale=(0.9, 1.0), ratio=(0.95, 1.05)
             )
-            rgb = TF.resized_crop(
-                rgb, top, left, height, width, (224, 224), antialias=True
-            )
-            nir = TF.resized_crop(
-                nir, top, left, height, width, (224, 224), antialias=True
-            )
+            rgb = rgb[:, top : top + height, left : left + width]
+            nir = nir[:, top : top + height, left : left + width]
             if bool(torch.rand(()) < 0.5):
-                rgb, nir = TF.hflip(rgb), TF.hflip(nir)
+                rgb, nir = rgb.flip(-1), nir.flip(-1)
                 ais[0] = -ais[0]
             if bool(torch.rand(()) < 0.5):
-                rgb, nir = TF.vflip(rgb), TF.vflip(nir)
+                rgb, nir = rgb.flip(-2), nir.flip(-2)
                 ais[1] = -ais[1]
-            rgb = self.color_jitter(rgb)
-        else:
-            rgb = TF.center_crop(rgb, (224, 224))
-            nir = TF.center_crop(nir, (224, 224))
-        rgb = TF.normalize(rgb, self.rgb_mean, self.rgb_std)
-        nir = TF.normalize(nir, (0.5,), (0.5,))
+        size = (self.image_size, self.image_size)
+        rgb = F.interpolate(
+            rgb.unsqueeze(0), size=size, mode="bicubic", align_corners=False
+        ).squeeze(0)
+        nir = F.interpolate(
+            nir.unsqueeze(0), size=size, mode="bilinear", align_corners=False
+        ).squeeze(0)
+        rgb = (rgb.clamp_(0.0, 1.0) - self.clip_mean) / self.clip_std
         return {
             "rgb": rgb,
             "nir": nir,
             "ais": ais,
             "ais_mask": ais_mask,
-        }, label
-
-
-class FixedPerClassSubset(Dataset):
-    """Deterministic, class-balanced subset that keeps ``samples`` visible."""
-
-    def __init__(self, dataset, indices):
-        self.dataset = dataset
-        self.indices = tuple(map(int, indices))
-        self.samples = [dataset.samples[index] for index in self.indices]
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, index):
-        return self.dataset[self.indices[index]]
-
-
-def fixed_samples_per_class(dataset, samples_per_class, seed):
-    """Select a fixed per-class subset, or return all samples when set to zero."""
-    import random
-
-    if samples_per_class < 0:
-        raise ValueError("samples_per_class cannot be negative")
-    if samples_per_class == 0:
-        return dataset
-    by_class = {}
-    for index, (_, label) in enumerate(dataset.samples):
-        by_class.setdefault(int(label), []).append(index)
-    rng = random.Random(int(seed))
-    chosen = []
-    for label in sorted(by_class):
-        candidates = by_class[label]
-        if len(candidates) < samples_per_class:
-            raise ValueError(
-                f"class {label} has {len(candidates)} samples, fewer than "
-                f"requested {samples_per_class}"
-            )
-        chosen.extend(rng.sample(candidates, samples_per_class))
-    chosen.sort()
-    return FixedPerClassSubset(dataset, chosen)
+            "label": label,
+            "path": str(path),
+        }
 
 
 __all__ = [
@@ -571,15 +408,11 @@ __all__ = [
     "EXPECTED_COUNTS",
     "PARTITIONS",
     "TRAIN_PARTITIONS",
-    "FixedPerClassSubset",
     "ImageStatistics",
-    "NaturalImageRGBDataset",
-    "NaturalImageMultimodalDataset",
-    "RGBView",
     "VDS2RawDataset",
+    "VDS2RawTIRDataset",
     "audit_dataset",
     "compute_image_statistics",
-    "fixed_samples_per_class",
     "load_or_compute_statistics",
     "partition_files",
 ]

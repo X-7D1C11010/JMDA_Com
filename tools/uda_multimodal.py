@@ -1,14 +1,18 @@
-"""Shared VIS+IR input plumbing for multimodal UDA baselines.
+"""Shared VIS+IR plumbing and JMDA-style encoders for UDA baselines.
 
 The JMDA protocol represents one observation by an exact-stem visible/infrared
 pair.  Geometric and photometric random choices are replayed for the infrared
 image so the two registered views remain aligned.  The returned tensor is
-``[VIS(3), IR(3)]`` along the channel axis; model adapters split it back into
-two independent feature branches before feature fusion.
+``[VIS(3), IR(3)]`` along the channel axis.  Multimodal baselines use the
+non-tensor part of JMDA's released architecture: an ImageNet ResNet-18 VIS
+encoder, a four-stage U-Net-like IR encoder, 512-D projections per modality,
+and direct feature concatenation.  JMDA's tensor alignment, OT generator and
+domain discriminator are deliberately not imported here.
 """
 from __future__ import annotations
 
 import copy
+import math
 import random
 
 import numpy as np
@@ -16,6 +20,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
+from torchvision import models
 
 from data_paths import exact_ir_partner, remap_data_path
 from uda_data import read_image_list
@@ -106,22 +111,128 @@ def split_modalities(images):
     return images[:, :3], images[:, 3:]
 
 
-class DualBackbone(nn.Module):
-    """Run two independent same-family backbones and concatenate features."""
+class JmdaVisualEncoder(nn.Module):
+    """JMDA's non-tensor VIS feature extractor (ResNet-18 + projection)."""
 
-    def __init__(self, vis_backbone, ir_backbone):
+    def __init__(self, output_dim=512, pretrained=True):
         super().__init__()
-        self.vis_backbone = vis_backbone
-        self.ir_backbone = ir_backbone
-        self.out_features = vis_backbone.out_features + ir_backbone.out_features
+        try:
+            weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+            resnet = models.resnet18(weights=weights)
+        except AttributeError:  # torchvision < 0.13
+            resnet = models.resnet18(pretrained=pretrained)
+        self.features = nn.Sequential(*list(resnet.children())[:-1])
+        self.proj = nn.Linear(resnet.fc.in_features, output_dim)
+        self.out_features = output_dim
 
     def forward(self, images):
+        features = self.features(images)
+        return self.proj(torch.flatten(features, 1))
+
+
+class JmdaInfraredEncoder(nn.Module):
+    """JMDA's non-tensor four-stage U-Net-style infrared encoder."""
+
+    def __init__(self, input_channels=3, output_dim=512):
+        super().__init__()
+
+        def conv_block(in_channels, out_channels):
+            return nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(out_channels, out_channels, 3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(2),
+            )
+
+        self.enc1 = conv_block(input_channels, 64)
+        self.enc2 = conv_block(64, 128)
+        self.enc3 = conv_block(128, 256)
+        self.enc4 = conv_block(256, 512)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.proj = nn.Linear(512, output_dim)
+        self.out_features = output_dim
+
+    def forward(self, images):
+        features = self.enc1(images)
+        features = self.enc2(features)
+        features = self.enc3(features)
+        features = self.enc4(features)
+        features = torch.flatten(self.avgpool(features), 1)
+        return self.proj(features)
+
+
+class JmdaMultimodalEncoder(nn.Module):
+    """Directly concatenate JMDA VIS and IR features, without tensor fusion."""
+
+    def __init__(self, modality_dim=512, pretrained_vis=True):
+        super().__init__()
+        self.vis_encoder = JmdaVisualEncoder(modality_dim, pretrained_vis)
+        self.ir_encoder = JmdaInfraredEncoder(3, modality_dim)
+        self.out_features = modality_dim * 2
+
+    def forward_components(self, images):
         vis, ir = split_modalities(images)
-        vis_features = self.vis_backbone(vis)
-        ir_features = self.ir_backbone(ir)
-        if vis_features.shape[2:] != ir_features.shape[2:]:
-            raise ValueError('VIS/IR backbone feature maps have different spatial shapes')
+        return self.vis_encoder(vis), self.ir_encoder(ir)
+
+    def forward(self, images):
+        vis_features, ir_features = self.forward_components(images)
         return torch.cat((vis_features, ir_features), dim=1)
+
+
+class JmdaTllibBackbone(JmdaMultimodalEncoder):
+    """JMDA encoder adapter for tllib image classifiers expecting 4-D maps."""
+
+    def forward(self, images):
+        return super().forward(images).unsqueeze(-1).unsqueeze(-1)
+
+
+class CyclingDataIterator:
+    """Cycle a shorter loader without truncating the longer domain loader."""
+
+    def __init__(self, loader):
+        if len(loader) < 1:
+            raise ValueError('cannot cycle an empty data loader')
+        self.loader = loader
+        self.iterator = iter(loader)
+
+    def __next__(self):
+        try:
+            return next(self.iterator)
+        except StopIteration:
+            self.iterator = iter(self.loader)
+            return next(self.iterator)
+
+
+class FullCoverageBatchSampler(torch.utils.data.Sampler):
+    """Shuffle all indices while preventing a final singleton covariance batch."""
+
+    def __init__(self, data_source, batch_size, shuffle=True):
+        if batch_size < 2:
+            raise ValueError('full-coverage covariance batches require batch_size >= 2')
+        if len(data_source) < 2:
+            raise ValueError('full-coverage covariance batches require at least 2 samples')
+        self.data_source = data_source
+        self.batch_size = int(batch_size)
+        self.shuffle = bool(shuffle)
+
+    def __iter__(self):
+        if self.shuffle:
+            indices = torch.randperm(len(self.data_source)).tolist()
+        else:
+            indices = list(range(len(self.data_source)))
+        batches = [
+            indices[start:start + self.batch_size]
+            for start in range(0, len(indices), self.batch_size)
+        ]
+        if len(batches) > 1 and len(batches[-1]) == 1:
+            batches[-1].insert(0, batches[-2].pop())
+        yield from batches
+
+    def __len__(self):
+        return math.ceil(len(self.data_source) / self.batch_size)
 
 
 def paired_dataset(list_path, transform, label_map):
@@ -137,6 +248,9 @@ def describe_pairing(name, dataset):
 
 
 __all__ = [
-    'DualBackbone', 'UdaPairedImageListDataset', 'describe_pairing',
-    'ir_transform_from_vis', 'paired_dataset', 'split_modalities',
+    'CyclingDataIterator', 'FullCoverageBatchSampler',
+    'JmdaInfraredEncoder', 'JmdaMultimodalEncoder',
+    'JmdaTllibBackbone', 'JmdaVisualEncoder', 'UdaPairedImageListDataset',
+    'describe_pairing', 'ir_transform_from_vis', 'paired_dataset',
+    'split_modalities',
 ]

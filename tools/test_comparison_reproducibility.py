@@ -1,153 +1,58 @@
-"""Static protocol checks that run without importing heavyweight ML stacks."""
+"""Static reproducibility checks for the retained VDS2Raw comparison."""
 
-from pathlib import Path
-import importlib.util
+import re
 import unittest
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
-COMPARISON_ENTRYPOINTS = (
-    "DANN/train_dann.py",
-    "DANN/train_dann_sda.py",
-    "DeepCORAL/train_deepcoral.py",
-    "DeepCORAL/train_deepcoral_sda.py",
-    "CDAN/train_cdan.py",
-    "CDAN/train_cdan_sda.py",
-    "MDD/train_mdd.py",
-    "MDD/train_mdd_sda.py",
-    "MCC/train_mcc.py",
-    "MCC/train_mcc_sda.py",
-    "CCSA/train_ccsa.py",
-    "d-SNE/train_dsne.py",
-    "PDA/train_pda.py",
-    "MCFT/train_mcft.py",
-)
-
 
 class ComparisonReproducibilityTests(unittest.TestCase):
-    def test_ccsa_dsne_mcft_suite_uses_waiting_gpu_gate(self):
-        launcher = (ROOT / "scripts/run_ccsa_dsne_mcft.sh").read_text(
+    def test_tir_upstream_identity_is_pinned(self):
+        provenance = (ROOT / "TIR" / "UPSTREAM.md").read_text(encoding="utf-8")
+        adapter = (ROOT / "TIR" / "vds2raw_adapter.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("tools/run_on_available_gpu.py", launcher)
-        self.assertIn("JMDA_GPU_MAX_UTIL_PERCENT", launcher)
-        self.assertIn("JMDA_GPU_STABLE_CHECKS", launcher)
-        self.assertIn("JMDA_GPU_CANDIDATES", launcher)
-        self.assertIn("JMDA_METHOD_ORDER", launcher)
-        self.assertIn("JMDA_CCSA_MIN_FREE_MIB", launcher)
-        self.assertIn("JMDA_DSNE_MIN_FREE_MIB", launcher)
-        self.assertIn("JMDA_MCFT_MIN_FREE_MIB", launcher)
-        self.assertIn('JMDA_CCSA_MIN_FREE_MIB:-7168', launcher)
-        self.assertIn('JMDA_DSNE_MIN_FREE_MIB:-12288', launcher)
-        self.assertIn('JMDA_MCFT_MIN_FREE_MIB:-4608', launcher)
-        self.assertIn('gpu_args+=(--gpus "$GPU_CANDIDATES")', launcher)
+        commit = "188ff2fcb7373fd5882319212bf712a676e90773"
+        self.assertIn("https://github.com/shuaiyi308/TIR", provenance)
+        self.assertIn(commit, provenance)
+        self.assertIn(f'OFFICIAL_COMMIT = "{commit}"', adapter)
+        self.assertIn("did not contain a `LICENSE`", provenance)
 
-    def test_vds2raw_suite_uses_measured_memory_gate_defaults(self):
-        launcher = (ROOT / "scripts/run_vds2raw_methods.sh").read_text(
+    def test_clip_checkpoint_loading_is_strict(self):
+        adapter = (ROOT / "TIR" / "vds2raw_adapter.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('VDS2RAW_CCSA_MIN_FREE_MIB:-7168', launcher)
-        self.assertIn('VDS2RAW_DSNE_MIN_FREE_MIB:-12288', launcher)
-        self.assertIn('VDS2RAW_MCFT_MIN_FREE_MIB:-4608', launcher)
+        self.assertIn("missing = sorted", adapter)
+        self.assertIn("unexpected = sorted", adapter)
+        self.assertIn("shape_mismatch = sorted", adapter)
+        self.assertIn("load_state_dict(loadable, strict=True)", adapter)
 
-    def test_efficiency_benchmark_records_actual_training_probe_batch(self):
-        benchmark = (ROOT / "tools/benchmark_efficiency.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("'batch_size': train_bs", benchmark)
-        self.assertIn("--benchmark_train_warmup", benchmark)
-        self.assertIn("--benchmark_train_iters", benchmark)
+    def test_mcft_native_resolution_precedes_token_pool(self):
+        model = (ROOT / "MCFT" / "mcft_model.py").read_text(encoding="utf-8")
+        train = (ROOT / "vds2raw" / "train_mcft.py").read_text(encoding="utf-8")
+        self.assertIn("self.token_grid_pool(self.separable1(x1))", model)
+        self.assertIn("self.token_grid_pool(self.separable2(x2))", model)
+        self.assertGreaterEqual(train.count("image_size=96"), 4)
 
-    def test_every_launched_comparison_entrypoint_applies_seed(self):
-        for relative_path in COMPARISON_ENTRYPOINTS:
-            with self.subTest(entrypoint=relative_path):
-                source = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn(
-                    "from reproducibility import seed_everything",
-                    source,
-                )
-                self.assertIn(
-                    "args.seed = seed_everything(args.seed)",
-                    source,
-                )
-
-    def test_sda_entrypoints_resolve_their_declared_label_mode(self):
-        ccsa = (ROOT / "CCSA/train_ccsa.py").read_text(encoding="utf-8")
-        self.assertIn("def target_training_list_path", ccsa)
-        self.assertIn("if labels_per_class == 0", ccsa)
-        self.assertIn("target_training_list_path(", ccsa)
-
-        dsne = (ROOT / "d-SNE/train_dsne.py").read_text(encoding="utf-8")
-        self.assertIn("def target_training_list_path", dsne)
-        self.assertIn("if labels_per_class == 0", dsne)
-        self.assertIn("target_training_list_path(", dsne)
-
-    def test_supervised_suite_defaults_to_all_target_training_labels(self):
-        launcher = (ROOT / "scripts/run_ccsa_dsne_mcft.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('SDA_CCSA_LABELS_PER_CLASS:-0', launcher)
-        self.assertIn('SDA_DSNE_LABELS_PER_CLASS:-0', launcher)
-        self.assertIn('CCSA_TARGET_LABEL_POLICY="all"', launcher)
-        self.assertIn('正式对比要求 CCSA、d-SNE、MCFT 使用全部 target_train 标签', launcher)
-        self.assertIn('for method in "${METHOD_ORDER[@]}"', launcher)
-
-    def test_requested_methods_use_target_driven_class_space_and_save_metrics(self):
-        for relative_path in (
-            "CCSA/train_ccsa.py", "d-SNE/train_dsne.py", "MCFT/train_mcft.py"
+    def test_vds2raw_launchers_are_mcft_tir_only(self):
+        for relative in (
+            "scripts/run_vds2raw_methods.sh",
+            "scripts/run_vds2raw_methods.ps1",
         ):
-            with self.subTest(entrypoint=relative_path):
-                source = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn("uda_label_space(args.data_dir, args.target)", source)
-                self.assertIn("save_metric_history(", source)
-                self.assertIn("num_classes = len(class_ids)", source)
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertRegex(source, re.compile(r"mcft3", re.I))
+            self.assertRegex(source, re.compile(r"tir", re.I))
+            self.assertNotRegex(source, re.compile(r"train_(?:ccsa|dsne)", re.I))
 
-    def test_released_default_training_protocols_are_explicit(self):
-        ccsa = (ROOT / "CCSA/train_ccsa.py").read_text(encoding="utf-8")
-        dsne = (ROOT / "d-SNE/train_dsne.py").read_text(encoding="utf-8")
-        mcft = (ROOT / "MCFT/train_mcft.py").read_text(encoding="utf-8")
-        self.assertIn("default=80", ccsa)
-        self.assertIn("negative_ratio=3", ccsa)
-        self.assertIn("default=101", dsne)
-        self.assertIn("class ResNetV2Features", dsne)
-        self.assertIn("--train-src", dsne)
-        self.assertIn("default=500", mcft)
-        self.assertIn("num_patches=[3, 1]", mcft)
-
-    def test_per_seed_artifacts_cannot_overwrite_each_other(self):
-        for relative_path, prefix in (
-            ("CCSA/train_ccsa.py", "ccsa"),
-            ("d-SNE/train_dsne.py", "dsne"),
-            ("MCFT/train_mcft.py", "mcft"),
-        ):
-            with self.subTest(entrypoint=relative_path):
-                source = (ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn(
-                    f"run_stem = f'{prefix}_{{args.target}}_seed{{args.seed}}'",
-                    source,
-                )
-
-    def test_cdan_relative_optimizer_metadata_is_materialized(self):
-        module_path = ROOT / "CDAN/optimizer_utils.py"
-        spec = importlib.util.spec_from_file_location(
-            "cdan_optimizer_utils_for_test", module_path
+    def test_efficiency_registry_has_current_methods(self):
+        benchmark = (ROOT / "tools" / "benchmark_efficiency.py").read_text(
+            encoding="utf-8"
         )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        groups = module.materialize_cdan_parameter_groups(
-            [
-                {"params": [object()], "lr_mult": 1, "decay_mult": 2},
-                {"params": [object()], "lr_mult": 10, "decay_mult": 2},
-            ],
-            base_lr=1e-3,
-            weight_decay=1e-4,
-        )
-        self.assertEqual([group["lr"] for group in groups], [1e-3, 1e-2])
-        self.assertEqual(
-            [group["weight_decay"] for group in groups],
-            [2e-4, 2e-4],
-        )
+        self.assertIn("'vds_mcft3': adapter_vds_mcft3", benchmark)
+        self.assertIn("'vds_tir': adapter_vds_tir", benchmark)
+        self.assertIn("96x96 conv", benchmark)
 
 
 if __name__ == "__main__":

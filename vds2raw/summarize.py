@@ -43,8 +43,7 @@ def training_curve_diagnostics(payload, results_dir):
     last_epoch = int(history[-1]["epoch"]) if history else int(
         metadata.get("completed_epochs", selected_epoch)
     )
-    # Budget-specific d-SNE records may be emitted after a longer run; their
-    # own history is the authoritative completed range for this result row.
+    # The recorded history is authoritative when early stopping shortens a run.
     completed_epochs = last_epoch
     early_threshold = (
         max(3, math.ceil(planned_epochs * EARLY_PEAK_FRACTION))

@@ -1,10 +1,4 @@
-"""Small recursive helpers for tensor or multimodal mini-batches.
-
-The legacy CCSA and d-SNE entry points accept a single image tensor.  Their
-multimodal dataset adaptations use dictionaries instead.  Keeping device and
-micro-batch handling here lets both call styles share the same public model
-interfaces without hiding modality-specific special cases in the losses.
-"""
+"""Small recursive helpers for tensor or multimodal mini-batches."""
 
 from __future__ import annotations
 

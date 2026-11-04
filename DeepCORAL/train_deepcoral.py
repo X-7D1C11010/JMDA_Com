@@ -16,8 +16,9 @@ Usage:
 2026-10-21 变更（逐项核对官方实现后的修复）：
   * CORAL 损失作用点改为分类器输出（main.py:46 ``models.CORAL(out1, out2)``，
     即 fc 之后、softmax 之前的 logits），不再作用于 512 维池化特征；
-  * 每轮步数改为 min(len(source), len(target))（main.py:29），不再对较短
-    一侧循环取样。
+  * 多模态协议使用 JMDA 的非张量异构编码器；本数据集适配完整遍历源域并
+    循环较短目标域。末批由完整覆盖采样器保证至少2个样本，
+    因而可在不丢样本的前提下计算协方差。
 
 2026-10-27 官方网络/数据流程恢复：
   * 直接使用随附官方端口 models.py 的 AlexNet + 4096 维分类器；
@@ -64,7 +65,13 @@ from data_loader_options import (
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
-from uda_multimodal import paired_dataset, split_modalities, describe_pairing
+from uda_multimodal import (
+    CyclingDataIterator,
+    FullCoverageBatchSampler,
+    JmdaMultimodalEncoder,
+    paired_dataset,
+    describe_pairing,
+)
 
 
 ALEXNET_URL = 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth'
@@ -118,28 +125,31 @@ def load_pretrained_alexnet(backbone, weights_path=''):
 
 
 class ResNetDeepCORAL(nn.Module):
-    """Deep CORAL with an ImageNet ResNet-50 image encoder."""
+    """Deep CORAL over JMDA's non-tensor VIS/IR feature concatenation."""
 
     def __init__(self, num_classes, multimodal=False):
         super().__init__()
         self.multimodal = bool(multimodal)
-        backbone = tv_models.resnet50(pretrained=True)
-        branch_dim = backbone.fc.in_features
-        backbone.fc = nn.Identity()
-        self.sharedNet = backbone
-        self.irNet = None
         if self.multimodal:
-            self.irNet = tv_models.resnet50(pretrained=True)
-            self.irNet.fc = nn.Identity()
-        feature_dim = branch_dim * (2 if self.multimodal else 1)
+            self.encoder = JmdaMultimodalEncoder()
+            self.sharedNet = self.encoder.vis_encoder
+            self.irNet = self.encoder.ir_encoder
+            feature_dim = self.encoder.out_features
+        else:
+            self.encoder = None
+            backbone = tv_models.resnet50(pretrained=True)
+            branch_dim = backbone.fc.in_features
+            backbone.fc = nn.Identity()
+            self.sharedNet = backbone
+            self.irNet = None
+            feature_dim = branch_dim
         self.fc = nn.Linear(feature_dim, num_classes)
         self.fc.weight.data.normal_(0, 0.005)
 
     def features(self, images):
         if not self.multimodal:
             return self.sharedNet(images)
-        vis, ir = split_modalities(images)
-        return torch.cat((self.sharedNet(vis), self.irNet(ir)), dim=1)
+        return self.encoder(images)
 
     def predict_components(self, images):
         return {'fused': self.fc(self.features(images))}
@@ -151,7 +161,7 @@ class ResNetDeepCORAL(nn.Module):
 def get_transforms(backbone='alexnet', enhanced_augmentation=False):
     # DeepCORAL/data_loader.py:get_office31_dataloader: Scale(227), ToTensor,
     # ImageNet Normalize. Scale is replaced by its current torchvision name.
-    crop_size = 224 if backbone == 'resnet50' else 227
+    crop_size = 224 if backbone in {'resnet50', 'jmda'} else 227
     train_ops = [transforms.Resize((256, 256))]
     if enhanced_augmentation:
         train_ops += [
@@ -228,7 +238,10 @@ def main():
                         help='source cross-entropy label smoothing; 0 preserves baseline')
     parser.add_argument('--alexnet-weights', type=str, default='',
                         help='离线 torchvision AlexNet ImageNet state_dict；为空则使用官方 URL/cache')
-    parser.add_argument('--backbone', choices=['alexnet', 'resnet50'], default='alexnet')
+    parser.add_argument('--backbone', choices=['alexnet', 'resnet50', 'jmda'], default='alexnet',
+                        help=('alexnet reproduces released Deep CORAL; resnet50 is the '
+                              'single-modal variant; jmda selects the non-tensor '
+                              'VIS ResNet-18 + IR U-Net encoder'))
     parser.add_argument('--enhanced-augmentation', action='store_true',
                         help='enable random crop, horizontal flip, and color jitter')
     parser.add_argument('--multimodal', action='store_true')
@@ -296,24 +309,37 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    src_loader = DataLoader(src_ds, batch_size=args.source_batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
+    src_loader = DataLoader(
+        src_ds,
+        batch_sampler=FullCoverageBatchSampler(
+            src_ds, args.source_batch_size, shuffle=True),
+        **loader_kwargs,
+    )
     src_eval_loader = DataLoader(src_eval_ds, batch_size=args.test_batch_size,
                                  shuffle=False, **eval_loader_kwargs)
-    tgt_loader = DataLoader(tgt_ds, batch_size=args.target_batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
+    tgt_loader = DataLoader(
+        tgt_ds,
+        batch_sampler=FullCoverageBatchSampler(
+            tgt_ds, args.target_batch_size, shuffle=True),
+        **loader_kwargs,
+    )
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
                                 shuffle=False, **eval_loader_kwargs)
 
-    if args.backbone == 'resnet50':
+    if args.backbone in {'resnet50', 'jmda'}:
+        if args.backbone == 'jmda' and not args.multimodal:
+            raise ValueError('--backbone jmda requires --multimodal')
+        if args.multimodal and args.backbone != 'jmda':
+            raise ValueError('--multimodal requires --backbone jmda')
         model = ResNetDeepCORAL(num_classes=num_classes,
                                 multimodal=args.multimodal).to(device)
-        print('DeepCORAL architecture: ImageNet ResNet-50 '
-              + ('dual VIS+IR feature concatenation'
-                 if args.multimodal else 'VIS branch'))
+        print('DeepCORAL architecture: '
+              + ('JMDA non-tensor encoder (VIS ResNet-18 + IR U-Net, '
+                 '512+512 direct concatenation)'
+                 if args.multimodal else 'ImageNet ResNet-50 VIS branch'))
     else:
         if args.multimodal:
-            raise ValueError('--multimodal requires --backbone resnet50')
+            raise ValueError('--multimodal requires --backbone jmda')
         model = DeepCORAL(num_classes=num_classes).to(device)
         load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
         print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
@@ -353,7 +379,9 @@ def main():
                                 modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
-    n_batches = min(len(src_loader), len(tgt_loader))
+    # Cover every labelled source sample in each epoch.  CORAL supports
+    # unequal source/target batch sizes, and the short target loader cycles.
+    n_batches = len(src_loader)
     if n_batches < 1:
         raise ValueError('DeepCORAL requires at least one full source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
@@ -367,6 +395,9 @@ def main():
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     print(f'DeepCORAL optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
+    print(f'DeepCORAL domain sampling: full source pass '
+          f'({len(src_loader)} batches/epoch); target loader '
+          f'({len(tgt_loader)} batches) cycles when exhausted')
     print(f'DeepCORAL LR schedule: {args.lr_scheduler}; '
           f'head multiplier={args.head_lr_mult}; min ratio={args.min_lr_ratio}')
     global_step = 0
@@ -381,10 +412,8 @@ def main():
         alignment_updates = max(planned_updates - warmup_updates, 1)
         alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
         _lambda = args.coral_max_weight * min(alignment_progress, 1.0)
-        # 原参考实现 main.py:29：train_steps = min(len(source), len(target))，
-        # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
-        tgt_iter = iter(tgt_loader)
+        tgt_iter = CyclingDataIterator(tgt_loader)
         batches_this_epoch = min(n_batches, planned_updates - global_step)
 
         for i in range(batches_this_epoch):

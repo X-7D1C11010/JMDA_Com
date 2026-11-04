@@ -13,12 +13,10 @@ param(
     [double]$CDANLearningRate = 0.001,
     [double]$MDDLearningRate = 0.004,
     [double]$MCCLearningRate = 0.005,
-    [double]$PDALearningRate = 0.003,
     [int]$DANNEpochs = 100,
     [int]$DeepCoralEpochs = 20,
     [int]$MDDEpochs = 20,
     [int]$MCCEpochs = 20,
-    [int]$PDAEpochs = 20,
     [double]$DANNDomainLossWeight = 1.0,
     [int]$DANNGrlMaxIterations = 0,
     [int]$DANNTargetEvalInterval = 0,
@@ -46,10 +44,8 @@ param(
     [int]$MCCIterationsPerEpoch = 1000,
     [double]$MCCTradeOff = 1.0,
     [int]$MCCTradeOffWarmupEpochs = 0,
+    [int]$MCCSourceWarmupEpochs = 5,
     [double]$MCCLabelSmoothing = 0.0,
-    [int]$PDAWarmupEpochs = 1,
-    [double]$PDAConfidenceThreshold = 0.9,
-    [int]$PDATargetEvalInterval = 0,
     [int]$NumWorkers = 2,
     [int]$EvalNumWorkers = 0,
     [int]$PrefetchFactor = 4,
@@ -83,12 +79,10 @@ if (-not $DataDir) {
     }
 }
 
-$needsResNet50 = ($IncludeMethods.Count -eq 0) -or
-    (@($IncludeMethods | Where-Object { $_ -ine 'PDA' }).Count -gt 0)
-$resNet50Weight = Join-Path $Repo 'pretrained_weights\torch\hub\checkpoints\resnet50-0676ba61.pth'
-if ($needsResNet50 -and -not (Test-Path -LiteralPath $resNet50Weight -PathType Leaf)) {
-    throw ("Missing ResNet-50 ImageNet weight: {0}. Run: & '{1}' tools\download_official_uda_weights.py" -f `
-           $resNet50Weight, $Python)
+$resNet18Weight = Join-Path $Repo 'pretrained_weights\torch\hub\checkpoints\resnet18-f37072fd.pth'
+if (-not (Test-Path -LiteralPath $resNet18Weight -PathType Leaf)) {
+    throw ("Missing JMDA VIS ResNet-18 ImageNet weight: {0}. Run: & '{1}' tools\download_official_uda_weights.py" -f `
+           $resNet18Weight, $Python)
 }
 
 $arguments = @{
@@ -104,12 +98,10 @@ $arguments = @{
     CDANLearningRate = $CDANLearningRate
     MDDLearningRate = $MDDLearningRate
     MCCLearningRate = $MCCLearningRate
-    PDALearningRate = $PDALearningRate
     DANNEpochs = $DANNEpochs
     DeepCoralEpochs = $DeepCoralEpochs
     MDDEpochs = $MDDEpochs
     MCCEpochs = $MCCEpochs
-    PDAEpochs = $PDAEpochs
     DANNDomainLossWeight = $DANNDomainLossWeight
     DANNGrlMaxIterations = $DANNGrlMaxIterations
     DANNTargetEvalInterval = $DANNTargetEvalInterval
@@ -135,15 +127,13 @@ $arguments = @{
     MCCIterationsPerEpoch = $MCCIterationsPerEpoch
     MCCTradeOff = $MCCTradeOff
     MCCTradeOffWarmupEpochs = $MCCTradeOffWarmupEpochs
+    MCCSourceWarmupEpochs = $MCCSourceWarmupEpochs
     MCCLabelSmoothing = $MCCLabelSmoothing
-    PDAWarmupEpochs = $PDAWarmupEpochs
-    PDAConfidenceThreshold = $PDAConfidenceThreshold
-    PDATargetEvalInterval = $PDATargetEvalInterval
     NumWorkers = $NumWorkers
     EvalNumWorkers = $EvalNumWorkers
     PrefetchFactor = $PrefetchFactor
     WorkerTimeoutSeconds = $WorkerTimeoutSeconds
-    ImageBackbone = 'ResNet50'
+    ImageBackbone = 'JMDA'
     ImageBatchSize = $ImageBatchSize
     EnhancedAugmentation = $true
     Multimodal = $true

@@ -18,8 +18,8 @@ Usage:
   * 对抗系数 α 恢复 main.py:100-101 的**逐迭代**调度：
     p = float(i + epoch·len_dataloader) / n_epoch / len_dataloader，
     α = 2/(1+exp(−10p)) − 1（原实现每个 epoch 只算一次且首轮即 p=1/epochs）；
-  * 每轮步数恢复 main.py:93 的 min(len(source), len(target))，不再对较短
-    一侧循环取样。
+  * 多模态协议使用 JMDA 的非张量异构编码器；本数据集适配完整遍历源域并
+    循环较短目标域，避免丢弃有标签源样本。
 """
 import os
 import sys
@@ -54,24 +54,33 @@ from data_loader_options import (
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
-from uda_multimodal import paired_dataset, split_modalities, describe_pairing
+from uda_multimodal import (
+    CyclingDataIterator,
+    JmdaMultimodalEncoder,
+    paired_dataset,
+    describe_pairing,
+)
 
 
 class ResNetDANN(nn.Module):
-    """High-resolution DANN variant with an ImageNet ResNet-50 encoder."""
+    """DANN over JMDA's non-tensor VIS/IR feature concatenation."""
 
     def __init__(self, num_classes, multimodal=False):
         super().__init__()
         self.multimodal = bool(multimodal)
-        backbone = models.resnet50(pretrained=True)
-        branch_dim = backbone.fc.in_features
-        backbone.fc = nn.Identity()
-        self.backbone = backbone
-        self.ir_backbone = None
         if self.multimodal:
-            self.ir_backbone = models.resnet50(pretrained=True)
-            self.ir_backbone.fc = nn.Identity()
-        feature_dim = branch_dim * (2 if self.multimodal else 1)
+            self.encoder = JmdaMultimodalEncoder()
+            self.backbone = self.encoder.vis_encoder
+            self.ir_backbone = self.encoder.ir_encoder
+            feature_dim = self.encoder.out_features
+        else:
+            self.encoder = None
+            backbone = models.resnet50(pretrained=True)
+            branch_dim = backbone.fc.in_features
+            backbone.fc = nn.Identity()
+            self.backbone = backbone
+            self.ir_backbone = None
+            feature_dim = branch_dim
         self.class_classifier = nn.Sequential(
             nn.Linear(feature_dim, 256), nn.ReLU(True), nn.Dropout(0.5),
             nn.Linear(256, num_classes), nn.LogSoftmax(dim=1),
@@ -83,8 +92,7 @@ class ResNetDANN(nn.Module):
 
     def forward(self, input_data, alpha):
         if self.multimodal:
-            vis, ir = split_modalities(input_data)
-            feature = torch.cat((self.backbone(vis), self.ir_backbone(ir)), dim=1)
+            feature = self.encoder(input_data)
         else:
             feature = self.backbone(input_data)
         reverse_feature = ReverseLayerF.apply(feature, alpha)
@@ -96,7 +104,7 @@ def get_transforms(backbone='cnn28', enhanced_augmentation=False):
     # The official network has a fixed 50*4*4 flattening layer and therefore
     # requires 28x28 inputs. Both weather domains are RGB, so the MNIST-M
     # normalization is applied consistently to source and target.
-    if backbone == 'resnet50':
+    if backbone in {'resnet50', 'jmda'}:
         train_ops = [transforms.Resize((256, 256))]
         if enhanced_augmentation:
             train_ops += [
@@ -180,8 +188,10 @@ def main():
     parser.add_argument('--target-eval-interval', type=int, default=0,
                         help='diagnostic target-val interval in epochs; 0 evaluates only the final model')
     parser.add_argument('--print-freq', type=int, default=10)
-    parser.add_argument('--backbone', choices=['cnn28', 'resnet50'], default='cnn28',
-                        help='cnn28 reproduces the released digit DANN; resnet50 is the high-resolution image variant')
+    parser.add_argument('--backbone', choices=['cnn28', 'resnet50', 'jmda'], default='cnn28',
+                        help=('cnn28 reproduces the released digit DANN; resnet50 is the '
+                              'single-modal image variant; jmda selects the non-tensor '
+                              'VIS ResNet-18 + IR U-Net encoder'))
     parser.add_argument('--enhanced-augmentation', action='store_true',
                         help='enable random crop, horizontal flip, and color jitter')
     parser.add_argument('--multimodal', action='store_true',
@@ -256,18 +266,24 @@ def main():
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, **eval_loader_kwargs)
 
-    if args.backbone == 'resnet50':
+    if args.backbone in {'resnet50', 'jmda'}:
+        if args.backbone == 'jmda' and not args.multimodal:
+            raise ValueError('--backbone jmda requires --multimodal')
+        if args.multimodal and args.backbone != 'jmda':
+            raise ValueError('--multimodal requires --backbone jmda')
         model = ResNetDANN(num_classes=num_classes,
                            multimodal=args.multimodal).to(device)
-        print('DANN architecture: ImageNet ResNet-50 '
-              + ('dual VIS+IR branches' if args.multimodal else 'VIS branch'))
+        print('DANN architecture: '
+              + ('JMDA non-tensor encoder (VIS ResNet-18 + IR U-Net, '
+                 '512+512 direct concatenation)'
+                 if args.multimodal else 'ImageNet ResNet-50 VIS branch'))
     else:
         if args.multimodal:
-            raise ValueError('--multimodal requires --backbone resnet50')
+            raise ValueError('--multimodal requires --backbone jmda')
         model = CNNModel(num_classes=num_classes).to(device)
         print('DANN architecture: official DANN/models/model.py CNNModel (28x28 input)')
     # 原参考实现 DANN/train/main.py:76 使用 Adam(lr=1e-3)（无 momentum/weight_decay）
-    if args.backbone == 'resnet50':
+    if args.backbone in {'resnet50', 'jmda'}:
         parameter_groups = [
             {'params': model.backbone.parameters(), 'lr': args.lr * 0.1},
             {'params': model.class_classifier.parameters(), 'lr': args.lr},
@@ -301,7 +317,9 @@ def main():
                                 modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
-    n_batches = min(len(src_loader), len(tgt_loader))
+    # One epoch means one complete source pass.  The shorter target loader is
+    # cycled as needed, so target size never truncates labelled source data.
+    n_batches = len(src_loader)
     if n_batches < 1:
         raise ValueError('DANN requires at least one source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
@@ -316,6 +334,8 @@ def main():
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     print(f'DANN optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
+    print(f'DANN domain sampling: full source pass ({len(src_loader)} batches/epoch); '
+          f'target loader ({len(tgt_loader)} batches) cycles when exhausted')
     print(f'DANN GRL ramp length: {grl_max_iterations} updates')
     print(f'DANN LR schedule: {args.lr_scheduler}; min ratio={args.min_lr_ratio}')
     global_step = 0
@@ -323,10 +343,8 @@ def main():
         if eff:
             eff.epoch_start(epoch)
         model.train()
-        # 原参考实现 main.py:93：len_dataloader = min(len(source), len(target))，
-        # 每轮新建迭代器、不循环取样。
         src_iter = iter(src_loader)
-        tgt_iter = iter(tgt_loader)
+        tgt_iter = CyclingDataIterator(tgt_loader)
         batches_this_epoch = min(n_batches, planned_updates - global_step)
 
         for i in range(batches_this_epoch):

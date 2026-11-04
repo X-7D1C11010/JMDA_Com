@@ -16,6 +16,9 @@ DEEPCORAL_EPOCHS="${DEEPCORAL_EPOCHS:-20}"
 DANN_ITERATIONS="${DANN_ITERATIONS:-0}"
 DEEPCORAL_ITERATIONS="${DEEPCORAL_ITERATIONS:-0}"
 CDAN_ITERATIONS="${CDAN_ITERATIONS:-2000}"
+DANN_TARGET_EVAL_INTERVAL="${DANN_TARGET_EVAL_INTERVAL:-1}"
+DEEPCORAL_TARGET_EVAL_INTERVAL="${DEEPCORAL_TARGET_EVAL_INTERVAL:-1}"
+CDAN_TEST_INTERVAL="${CDAN_TEST_INTERVAL:-100}"
 BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
 NUM_WORKERS="${UDA_NUM_WORKERS:-4}"
 PREFETCH_FACTOR="${UDA_PREFETCH_FACTOR:-4}"
@@ -43,6 +46,9 @@ Options:
   --dann-iterations N         Exact DANN updates; 0 uses epochs
   --deepcoral-iterations N    Exact DeepCORAL updates; 0 uses epochs
   --cdan-iterations N         CDAN optimizer updates (default 2000)
+  --dann-eval-interval N      DANN target-val interval in epochs (default 1)
+  --deepcoral-eval-interval N DeepCORAL target-val interval in epochs (default 1)
+  --cdan-test-interval N      CDAN target-val interval in updates (default 100)
   --targets "LIST"            Space/comma separated targets
   --seed N                    Random seed (default 42)
   --batch-size N              Per-domain image batch (default 16)
@@ -61,8 +67,10 @@ Options:
   --background                Start with nohup and print PID/log paths
   -h, --help                  Show this help
 
-The three methods use exact-paired VIS+IR input, ResNet-50, final-epoch-only
-target evaluation and no model checkpoint saving.
+The three methods use exact-paired VIS+IR input, JMDA's non-tensor VIS
+ResNet-18 + IR U-Net encoder with direct feature concatenation. The best
+target-validation result within the fixed budget is reported; checkpoints are
+not saved.
 EOF
 }
 
@@ -81,6 +89,9 @@ while [ "$#" -gt 0 ]; do
     --dann-iterations) need_value "$@"; DANN_ITERATIONS="$2"; shift 2 ;;
     --deepcoral-iterations) need_value "$@"; DEEPCORAL_ITERATIONS="$2"; shift 2 ;;
     --cdan-iterations) need_value "$@"; CDAN_ITERATIONS="$2"; shift 2 ;;
+    --dann-eval-interval) need_value "$@"; DANN_TARGET_EVAL_INTERVAL="$2"; shift 2 ;;
+    --deepcoral-eval-interval) need_value "$@"; DEEPCORAL_TARGET_EVAL_INTERVAL="$2"; shift 2 ;;
+    --cdan-test-interval) need_value "$@"; CDAN_TEST_INTERVAL="$2"; shift 2 ;;
     --targets) need_value "$@"; TARGET_TEXT="$2"; shift 2 ;;
     --seed) need_value "$@"; SEED="$2"; shift 2 ;;
     --batch-size) need_value "$@"; BATCH_SIZE="$2"; shift 2 ;;
@@ -123,6 +134,9 @@ nonnegative_number() {
 positive_integer DANN_EPOCHS "$DANN_EPOCHS"
 positive_integer DEEPCORAL_EPOCHS "$DEEPCORAL_EPOCHS"
 positive_integer CDAN_ITERATIONS "$CDAN_ITERATIONS"
+positive_integer DANN_TARGET_EVAL_INTERVAL "$DANN_TARGET_EVAL_INTERVAL"
+positive_integer DEEPCORAL_TARGET_EVAL_INTERVAL "$DEEPCORAL_TARGET_EVAL_INTERVAL"
+positive_integer CDAN_TEST_INTERVAL "$CDAN_TEST_INTERVAL"
 if ! [[ "$DANN_ITERATIONS" =~ ^[0-9]+$ ]]; then
   echo "DANN_ITERATIONS must be non-negative: $DANN_ITERATIONS" >&2; exit 2
 fi
@@ -185,9 +199,9 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -x "$PYTHON_BIN" ]; then
 fi
 
 export TORCH_HOME="${TORCH_HOME:-$HERE/pretrained_weights/torch}"
-RESNET50_WEIGHT="$TORCH_HOME/hub/checkpoints/resnet50-0676ba61.pth"
-if [ ! -f "$RESNET50_WEIGHT" ]; then
-  echo "Missing ResNet-50 weight: $RESNET50_WEIGHT" >&2
+RESNET18_WEIGHT="$TORCH_HOME/hub/checkpoints/resnet18-f37072fd.pth"
+if [ ! -f "$RESNET18_WEIGHT" ]; then
+  echo "Missing JMDA VIS ResNet-18 weight: $RESNET18_WEIGHT" >&2
   echo "Download it locally with tools/download_official_uda_weights.py and upload pretrained_weights." >&2
   exit 1
 fi
@@ -280,7 +294,8 @@ for target in "${TARGETS[@]}"; do
     "dann_${target}" "$DANN_EPOCHS" \
     "$PYTHON_BIN" "$HERE/DANN/train_dann.py" --target "$target" \
     --epochs "$DANN_EPOCHS" --max-iterations "$DANN_ITERATIONS" \
-    --backbone resnet50 --batch-size "$BATCH_SIZE" \
+    --target-eval-interval "$DANN_TARGET_EVAL_INTERVAL" \
+    --backbone jmda --batch-size "$BATCH_SIZE" \
     "${COMMON[@]}" || FAILURES=$((FAILURES + 1))
 done
 for target in "${TARGETS[@]}"; do
@@ -289,7 +304,8 @@ for target in "${TARGETS[@]}"; do
     "deepcoral_${target}" "$DEEPCORAL_EPOCHS" \
     "$PYTHON_BIN" "$HERE/DeepCORAL/train_deepcoral.py" --target "$target" \
     --epochs "$DEEPCORAL_EPOCHS" --max-iterations "$DEEPCORAL_ITERATIONS" \
-    --backbone resnet50 \
+    --target-eval-interval "$DEEPCORAL_TARGET_EVAL_INTERVAL" \
+    --backbone jmda \
     --source-batch-size "$BATCH_SIZE" --target-batch-size "$BATCH_SIZE" \
     --test-batch-size "$BATCH_SIZE" "${COMMON[@]}" || FAILURES=$((FAILURES + 1))
 done
@@ -298,7 +314,8 @@ for target in "${TARGETS[@]}"; do
   run_on_gpu "$tag" "$CDAN_MIN_FREE_MIB" "$RUN_ROOT/logs/${tag}.log" \
     "cdan_${target}" 0 \
     "$PYTHON_BIN" "$HERE/CDAN/train_cdan.py" --target "$target" \
-    --num-iterations "$CDAN_ITERATIONS" --backbone ResNet50 \
+    --num-iterations "$CDAN_ITERATIONS" --test-interval "$CDAN_TEST_INTERVAL" \
+    --backbone JMDA \
     --batch-size "$BATCH_SIZE" "${COMMON[@]}" || FAILURES=$((FAILURES + 1))
 done
 

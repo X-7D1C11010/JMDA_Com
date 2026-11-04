@@ -26,7 +26,7 @@ from vds2raw.dataset import VDS2RawDataset, audit_dataset, load_or_compute_stati
 from vds2raw.models import MCFTWithAIS
 
 
-DEFAULT_AIS_FEATURE_PROFILE = "continuous"
+DEFAULT_AIS_FEATURE_PROFILE = "full"
 
 
 def class_balanced_sampler(*datasets, seed):
@@ -79,8 +79,8 @@ def main():
         choices=("continuous", "full"),
         default=DEFAULT_AIS_FEATURE_PROFILE,
         help=(
-            "continuous (default) keeps heading/length/width and excludes "
-            "navigation-status label proxies; full restores all 13 AIS fields"
+            "full (default) matches JMDA with all 13 AIS fields and mask bits; "
+            "continuous is retained only as an explicit ablation"
         ),
     )
     parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
@@ -147,17 +147,17 @@ def main():
     print("Normalization:", statistics.to_dict())
 
     source = VDS2RawDataset(
-        data_root, "source_train", statistics, image_size=15, augment=args.augment
+        data_root, "source_train", statistics, image_size=96, augment=args.augment
     )
     target = VDS2RawDataset(
-        data_root, "target_train", statistics, image_size=15, augment=args.augment
+        data_root, "target_train", statistics, image_size=96, augment=args.augment
     )
     train_data = ConcatDataset((source, target))
     target_val = VDS2RawDataset(
-        data_root, "target_val", statistics, image_size=15, augment=False
+        data_root, "target_val", statistics, image_size=96, augment=False
     )
     target_test = VDS2RawDataset(
-        data_root, "target_test", statistics, image_size=15, augment=False
+        data_root, "target_test", statistics, image_size=96, augment=False
     )
     generator = torch.Generator().manual_seed(args.seed)
     train_sampler = None
@@ -236,11 +236,17 @@ def main():
         "diagnostic_partition": "target_val",
         "test_selection_bias": True,
         "modalities": ["RGB", "NIR", "AIS"],
+        "input_raster_size": [96, 96],
+        "mcft_token_grid_size": [15, 15],
+        "spatial_adapter": (
+            "native 96x96 RGB/NIR passes through the released separable "
+            "convolution stacks before adaptive pooling to 15x15"
+        ),
         "auxiliary_inputs": ["AIS_validity_mask"],
         "num_classes": 3,
         "adaptation_note": (
             "official two-image MCFT trunk plus regularized AIS late-fusion; "
-            "validity mask gates missing values and is not a modality/classifier feature"
+            "all 13 gated AIS values and 13 validity bits follow the JMDA input convention"
         ),
         "ais_feature_profile": args.ais_feature_profile,
         "ais_feature_names": (
@@ -253,7 +259,7 @@ def main():
             if args.ais_feature_profile == "continuous"
             else []
         ),
-        "ais_mask_as_classifier_feature": False,
+        "ais_mask_as_classifier_feature": True,
         "ais_dropout_probability": args.ais_dropout_probability,
         "augmentation": "paired horizontal and vertical flips" if args.augment else "none",
         "label_smoothing": args.label_smoothing,

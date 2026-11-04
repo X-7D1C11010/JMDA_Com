@@ -317,8 +317,7 @@ def main():
             lists.append(
                 list_dir / f'{target}_sda_10shot_seed42.txt'
             )
-            # CCSA consumes the fixed-shot list while d-SNE defaults to the
-            # complete labelled target-training list. Validate both cohorts.
+            # Also validate the complete labelled target-training cohort.
             lists.append(list_dir / f'{target}_train.txt')
         elif args.protocol in (
             'jmda_uda', 'jmda_oracle_shared_uda',

@@ -2,7 +2,7 @@ param(
     [string]$Target = 'backlight',
     [int]$Seed = 42,
     [int]$BatchSize = 16,
-    [string[]]$IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC', 'PDA'),
+    [string[]]$IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC'),
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
     [string]$DataDir = ''
@@ -17,7 +17,7 @@ $IncludeMethods = @(
         Where-Object { $_ }
 )
 $validTargets = @('backlight', 'rainy', 'foggy', 'dark')
-$validMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC', 'PDA')
+$validMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC')
 if ($Target -notin $validTargets) {
     throw "Unknown target '$Target'. Valid targets: $($validTargets -join ', ')"
 }
@@ -53,8 +53,6 @@ if (-not $OutDir) {
 # - MCC: the higher LR/transfer weight and shorter warmup regressed.  Restore
 #   the preceding recipe, extend its late useful region, and add source label
 #   smoothing because source CE reached near-zero by epoch two.
-# - PDA: threshold 0.90 improved ACC and peaked late.  Raise it only to 0.93
-#   and add two epochs so fewer, cleaner pseudo-label updates can mature.
 $env:JMDA_DETERMINISTIC = '1'
 $env:CUBLAS_WORKSPACE_CONFIG = ':4096:8'
 $arguments = @{
@@ -101,12 +99,8 @@ $arguments = @{
     MCCIterationsPerEpoch = 100
     MCCTradeOff = 0.15
     MCCTradeOffWarmupEpochs = 12
+    MCCSourceWarmupEpochs = 5
     MCCLabelSmoothing = 0.10
-    PDALearningRate = 0.0015
-    PDAEpochs = 24
-    PDAWarmupEpochs = 3
-    PDAConfidenceThreshold = 0.93
-    PDATargetEvalInterval = 1
     SkipBenchmark = $true
 }
 if ($DataDir) { $arguments.DataDir = $DataDir }
