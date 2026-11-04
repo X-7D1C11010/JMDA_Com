@@ -1,0 +1,445 @@
+{
+  "metadata": {
+    "method": "CCSA",
+    "implementation": "official fixed-pair CCSA objective/optimizer with shared-backbone RGB+NIR fusion and continuous-AIS residual adaptation",
+    "seed": 42,
+    "epochs": 80,
+    "source_initialization_epochs": 50,
+    "source_initialization_selected_epoch": 42,
+    "source_initialization_checkpoint_input": "",
+    "pretrained_backbone_checkpoint_input": "/home/lixiang/lx/JMDA_Com/pretrained_weights/ccsa_vgg16_imagenet1k_v1_backbone.pth",
+    "source_initialization_provenance": "uploaded ImageNet VGG-16 followed by source_train initialization",
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "target_samples_per_class": 0,
+    "target_label_mode": "all_available",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "source FC initialization, source CE, and pair semantics",
+    "target_label_usage": "target CE and pair semantics for every target_train sample",
+    "experiment_profile": "VDS2Raw fully supervised CCSA adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "multimodal_adapter": "official ImageNet RGB VGG-16 plus a lightweight NIR residual encoder; continuous AIS residual into the official 128-D embedding",
+    "ais_feature_profile": "continuous heading/length/width",
+    "ais_dropout_probability": 0.5,
+    "raw_dn_scaling": "fixed /255 with sparse high-DN clipping before ImageNet normalization",
+    "num_classes": 3,
+    "backbone": "ImageNet-pretrained VGG-16 convolutional layers",
+    "embedding": [
+      1024,
+      128
+    ],
+    "pair_protocol": "fixed exhaustive cross-domain table; all positives plus up to 3x unique negatives; two successive direction updates per batch",
+    "positive_pairs": 2974,
+    "negative_pairs": 7930,
+    "pairs_per_epoch": 10904,
+    "effective_batch_size": 256,
+    "micro_batch_size": 16,
+    "augmentation": "none; fixed resize256/center-crop224 preprocessing",
+    "normalization": "ImageNet",
+    "class_balanced_ce": true,
+    "class_weights": {
+      "source_train": [
+        1.8056730031967163,
+        0.7046529054641724,
+        0.48967406153678894
+      ],
+      "target_train": [
+        0.5493895411491394,
+        0.7658157348632812,
+        1.6847946643829346
+      ]
+    },
+    "optimizer": {
+      "name": "Adadelta",
+      "lr": 0.02,
+      "backbone_lr": 0.001,
+      "backbone_lr_multiplier": 0.05,
+      "source_lr": 0.5,
+      "rho": 0.95,
+      "eps": 1e-07
+    },
+    "scheduler": {
+      "name": "cosine multiplier preserving backbone/task LR ratio",
+      "eta_min": 0.0002,
+      "backbone_eta_min": 1e-05,
+      "t_max": 80,
+      "source_eta_min": 0.05,
+      "source_t_max": 50
+    },
+    "loss": {
+      "alpha": 0.25,
+      "margin": 1.0
+    },
+    "early_stopping": {
+      "monitor": "target_test ACC, macro-F1 tie-break",
+      "patience": 20,
+      "min_epochs": 30
+    },
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_ccsa_seed42_run_config.json"
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ce": 1.0961318509332065,
+      "lr": 0.5,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 2,
+      "ce": 1.0697772317919239,
+      "lr": 0.4995560138963611,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 3,
+      "ce": 1.0827911352289135,
+      "lr": 0.49822580779575754,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 4,
+      "ce": 0.9917388948900946,
+      "lr": 0.49601463141395497,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 5,
+      "ce": 0.9279138445854187,
+      "lr": 0.49293121125394196,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 6,
+      "ce": 0.894523092384996,
+      "lr": 0.48898771616640957,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 7,
+      "ce": 0.8534810748593561,
+      "lr": 0.48419970932485656,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 8,
+      "ce": 0.8359862524887611,
+      "lr": 0.4785860868048544,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 9,
+      "ce": 0.7539948615534552,
+      "lr": 0.4721690030098693,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 10,
+      "ce": 0.7155456029135605,
+      "lr": 0.4649737832379534,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 11,
+      "ce": 0.6549238994203764,
+      "lr": 0.45702882373436315,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 12,
+      "ce": 0.7937378842255165,
+      "lr": 0.44836547962455253,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 13,
+      "ce": 0.6664361111048994,
+      "lr": 0.4390179411698175,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 14,
+      "ce": 0.5056373641408723,
+      "lr": 0.4290230988339549,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 15,
+      "ce": 0.4598898610164379,
+      "lr": 0.4184203976934551,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 16,
+      "ce": 0.4963481755092226,
+      "lr": 0.40725168176580645,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 17,
+      "ce": 0.46491791051009607,
+      "lr": 0.39556102887027417,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 18,
+      "ce": 0.47023655011736115,
+      "lr": 0.3833945766728859,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 19,
+      "ce": 0.38602014142891455,
+      "lr": 0.3708003406021413,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 20,
+      "ce": 0.42519488108569176,
+      "lr": 0.35782802435405253,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 21,
+      "ce": 0.37984945753525046,
+      "lr": 0.3445288237343631,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 22,
+      "ce": 0.36618680995086145,
+      "lr": 0.33095522461209226,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 23,
+      "ce": 0.39699349115634786,
+      "lr": 0.317160795781788,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 24,
+      "ce": 0.34568757640904396,
+      "lr": 0.3031999775519685,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 25,
+      "ce": 0.3035215797095463,
+      "lr": 0.28912786689409553,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 26,
+      "ce": 0.2652580100914528,
+      "lr": 0.275,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 27,
+      "ce": 0.34429460763931274,
+      "lr": 0.2608721331059045,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 28,
+      "ce": 0.27430172727025787,
+      "lr": 0.24680002244803156,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 29,
+      "ce": 0.4478744864463806,
+      "lr": 0.23283920421821197,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 30,
+      "ce": 0.279263642841372,
+      "lr": 0.21904477538790768,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 31,
+      "ce": 0.25391990665731756,
+      "lr": 0.20547117626563693,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 32,
+      "ce": 0.3197356801608513,
+      "lr": 0.19217197564594757,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 33,
+      "ce": 0.28992716300076454,
+      "lr": 0.1791996593978587,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 34,
+      "ce": 0.2388447944460244,
+      "lr": 0.1666054233271141,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 35,
+      "ce": 0.21094384924348059,
+      "lr": 0.15443897112972577,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 36,
+      "ce": 0.1928647756576538,
+      "lr": 0.14274831823419362,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 37,
+      "ce": 0.25375385463623135,
+      "lr": 0.13157960230654486,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 38,
+      "ce": 0.18746472638228845,
+      "lr": 0.12097690116604509,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 39,
+      "ce": 0.21868352951674624,
+      "lr": 0.1109820588301825,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 40,
+      "ce": 0.241871345145949,
+      "lr": 0.10163452037544748,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 41,
+      "ce": 0.24368449531752487,
+      "lr": 0.09297117626563689,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 42,
+      "ce": 0.1534000907799807,
+      "lr": 0.08502621676204669,
+      "samples": 116,
+      "is_best_source_epoch": true
+    },
+    {
+      "epoch": 43,
+      "ce": 0.23362310487648535,
+      "lr": 0.07783099699013073,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 44,
+      "ce": 0.16472874222130612,
+      "lr": 0.07141391319514567,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 45,
+      "ce": 0.16195627815764527,
+      "lr": 0.06580029067514347,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 46,
+      "ce": 0.1567112685277544,
+      "lr": 0.06101228383359047,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 47,
+      "ce": 0.18754965477976307,
+      "lr": 0.057068788746058044,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 48,
+      "ce": 0.2114084943615157,
+      "lr": 0.053985368586045045,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 49,
+      "ce": 0.17833132450950556,
+      "lr": 0.05177419220424251,
+      "samples": 116,
+      "is_best_source_epoch": false
+    },
+    {
+      "epoch": 50,
+      "ce": 0.21206415367537532,
+      "lr": 0.050443986103638906,
+      "samples": 116,
+      "is_best_source_epoch": false
+    }
+  ]
+}
