@@ -140,6 +140,64 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn('SEED="${2:-42}"', heavy_launcher)
         self.assertIn('JMDA_GPU_CANDIDATES:-0,1', heavy_launcher)
 
+    def test_mdd_warmup_is_wired_through_local_and_server_launchers(self):
+        with open(os.path.join(ROOT, "MDD", "train_mdd.py"), encoding="utf-8") as f:
+            trainer = f.read()
+        self.assertIn("--trade-off-warmup-epochs", trainer)
+        self.assertIn("transfer_weight = args.trade_off * min", trainer)
+
+        with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
+                  encoding="utf-8-sig") as f:
+            local_launcher = f.read()
+        self.assertIn("[int]$MDDTradeOffWarmupEpochs = 0", local_launcher)
+        self.assertIn("'--trade-off-warmup-epochs'", local_launcher)
+
+        with open(os.path.join(ROOT, "scripts", "run_server.sh"),
+                  encoding="utf-8") as f:
+            server_launcher = f.read()
+        self.assertIn(
+            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS="${UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-0}"',
+            server_launcher,
+        )
+        self.assertIn(
+            '--trade-off-warmup-epochs "$UDA_MDD_TRADE_OFF_WARMUP_EPOCHS"',
+            server_launcher,
+        )
+
+    def test_latest_log_driven_recipes_are_pinned_in_launchers(self):
+        with open(os.path.join(ROOT, "scripts", "run_uda_tuned.ps1"),
+                  encoding="utf-8-sig") as f:
+            tuned = f.read()
+        for expected in (
+            "DANNEpochs = 18",
+            "DANNGrlMaxIterations = 1000",
+            "DANNTargetEvalInterval = 1",
+            "DeepCoralWarmupEpochs = 3",
+            "CdanIterations = 1200",
+            "CDANCoeffMaxIterations = 10000",
+            "CDANTestInterval = 100",
+            "PDAEpochs = 22",
+            "PDAConfidenceThreshold = 0.90",
+        ):
+            self.assertIn(expected, tuned)
+
+        with open(os.path.join(ROOT, "scripts", "run_server_mdd_mcc_background.sh"),
+                  encoding="utf-8") as f:
+            server_heavy = f.read()
+        for expected in (
+            'UDA_MDD_EPOCHS:-30',
+            'UDA_MDD_LR:-0.0025',
+            'UDA_MDD_ITERS_PER_EPOCH:-100',
+            'UDA_MDD_TRADE_OFF:-0.5',
+            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-10',
+            'UDA_MCC_EPOCHS:-22',
+            'UDA_MCC_LR:-0.0025',
+            'UDA_MCC_ITERS_PER_EPOCH:-100',
+            'UDA_MCC_TRADE_OFF:-0.2',
+            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-10',
+        ):
+            self.assertIn(expected, server_heavy)
+
     def test_local_split_launcher_uses_small_batch_and_forwards_it_to_pda(self):
         with open(os.path.join(ROOT, "scripts", "run_local_uda_four.ps1"),
                   encoding="utf-8-sig") as f:

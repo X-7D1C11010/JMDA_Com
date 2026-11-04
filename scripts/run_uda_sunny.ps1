@@ -62,6 +62,7 @@ param(
     [int]$CDANTestInterval = 500,
     [int]$MDDIterationsPerEpoch = 1000,
     [double]$MDDTradeOff = 1.0,
+    [int]$MDDTradeOffWarmupEpochs = 0,
     [int]$MCCIterationsPerEpoch = 1000,
     [double]$MCCTradeOff = 1.0,
     [int]$MCCTradeOffWarmupEpochs = 0,
@@ -197,7 +198,8 @@ if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
     $CDANAdLearningRateMultiplier -le 0 -or $CDANTradeOff -lt 0 -or
     $CDANCoeffMaxIterations -lt 0 -or $CDANCoeffAlpha -le 0 -or
     $CDANTestInterval -lt 1 -or $MDDIterationsPerEpoch -lt 1 -or
-    $MDDTradeOff -lt 0 -or $MCCIterationsPerEpoch -lt 1 -or
+    $MDDTradeOff -lt 0 -or $MDDTradeOffWarmupEpochs -lt 0 -or
+    $MCCIterationsPerEpoch -lt 1 -or
     $MCCTradeOff -lt 0 -or $MCCTradeOffWarmupEpochs -lt 0 -or
     $PDAWarmupEpochs -lt 0 -or $PDAConfidenceThreshold -le 0 -or
     $PDAConfidenceThreshold -ge 1 -or $PDATargetEvalInterval -lt 0) {
@@ -377,7 +379,9 @@ foreach ($method in $Methods.Keys) {
                 $cli += @('--iters-per-epoch', $MDDIterationsPerEpoch,
                           '--trade-off', ([Convert]::ToString(
                               $MDDTradeOff,
-                              [Globalization.CultureInfo]::InvariantCulture)))
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--trade-off-warmup-epochs',
+                          $MDDTradeOffWarmupEpochs)
             }
             if ($method -eq 'MCC') {
                 $cli += @('--iters-per-epoch', $MCCIterationsPerEpoch,

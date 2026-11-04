@@ -77,45 +77,56 @@ function Get-EnvPositiveDouble([string]$Name, [double]$Default) {
     return $parsed
 }
 
+function Get-EnvBool([string]$Name, [bool]$Default) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($value)) { return $Default }
+    switch ($value.Trim().ToLowerInvariant()) {
+        { $_ -in @('1', 'true', 'yes', 'on') } { return $true }
+        { $_ -in @('0', 'false', 'no', 'off') } { return $false }
+        default { throw "$Name must be a boolean (0/1 or true/false): $value" }
+    }
+}
+
 $CcsaEpochs = Get-EnvInt 'VDS2RAW_CCSA_EPOCHS' 80
 $DsneEpochs = Get-EnvInt 'VDS2RAW_DSNE_EPOCHS' 20
 $McftEpochs = Get-EnvInt 'VDS2RAW_MCFT_EPOCHS' 200
 $CcsaSourceEpochs = Get-EnvInt 'VDS2RAW_CCSA_SOURCE_EPOCHS' 50
-$DsneSourceEpochs = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_EPOCHS' 80
+$DsneSourceEpochs = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_EPOCHS' 100
 $CcsaBatch = Get-EnvInt 'VDS2RAW_CCSA_BATCH_SIZE' 256
 $CcsaSourceBatch = Get-EnvInt 'VDS2RAW_CCSA_SOURCE_BATCH_SIZE' 32
 $DsneBatch = Get-EnvInt 'VDS2RAW_DSNE_BATCH_SIZE' 32
 $DsneSourceBatch = Get-EnvInt 'VDS2RAW_DSNE_SOURCE_BATCH_SIZE' 16
 $McftBatch = Get-EnvInt 'VDS2RAW_MCFT_BATCH_SIZE' 32
-$CcsaLr = Get-EnvPositiveDouble 'VDS2RAW_CCSA_LR' 0.1
-$CcsaBackboneLrMultiplier = Get-EnvPositiveDouble 'VDS2RAW_CCSA_BACKBONE_LR_MULTIPLIER' 0.1
+$CcsaLr = Get-EnvPositiveDouble 'VDS2RAW_CCSA_LR' 0.02
+$CcsaBackboneLrMultiplier = Get-EnvPositiveDouble 'VDS2RAW_CCSA_BACKBONE_LR_MULTIPLIER' 0.05
 $CcsaSourceLr = Get-EnvPositiveDouble 'VDS2RAW_CCSA_SOURCE_LR' 0.5
 $CcsaLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_CCSA_LR_MIN_RATIO' 0.01
 $CcsaSourceLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_CCSA_SOURCE_LR_MIN_RATIO' 0.1
 $DsneLayers = Get-EnvInt 'VDS2RAW_DSNE_LAYERS' 101
 $DsneSourceWarmup = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_SOURCE_HEAD_WARMUP_EPOCHS' 10
-$DsneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LR' 0.0002
-$DsneAdaptBackboneLrMultiplier = Get-EnvPositiveDouble 'VDS2RAW_DSNE_ADAPTATION_BACKBONE_LR_MULTIPLIER' 0.1
-$DsneLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LR_MIN_RATIO' 0.05
-$DsneSourceHeadLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_HEAD_LR' 0.01
-$DsneSourceBackboneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_BACKBONE_LR' 0.001
+$DsneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LR' 0.0001
+$DsneAdaptBackboneLrMultiplier = Get-EnvPositiveDouble 'VDS2RAW_DSNE_ADAPTATION_BACKBONE_LR_MULTIPLIER' 0.05
+$DsneLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LR_MIN_RATIO' 0.1
+$DsneSourceHeadLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_HEAD_LR' 0.005
+$DsneSourceBackboneLr = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_BACKBONE_LR' 0.0005
 $DsneSourceLrMinRatio = Get-EnvPositiveDouble 'VDS2RAW_DSNE_SOURCE_LR_MIN_RATIO' 0.1
-$DsneWeightDecay = Get-EnvPositiveDouble 'VDS2RAW_DSNE_WEIGHT_DECAY' 0.0005
+$DsneWeightDecay = Get-EnvPositiveDouble 'VDS2RAW_DSNE_WEIGHT_DECAY' 0.0001
 $DsneAlpha = Get-EnvPositiveDouble 'VDS2RAW_DSNE_ALPHA' 0.2
-$DsneLabelSmoothing = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LABEL_SMOOTHING' 0.1
-$McftLr = Get-EnvPositiveDouble 'VDS2RAW_MCFT_LR' 0.0002
-$McftWeightDecay = Get-EnvPositiveDouble 'VDS2RAW_MCFT_WEIGHT_DECAY' 0.0005
-$McftStepSize = Get-EnvInt 'VDS2RAW_MCFT_STEP_SIZE' 15
-$McftGamma = Get-EnvPositiveDouble 'VDS2RAW_MCFT_GAMMA' 0.7
-$McftLabelSmoothing = Get-EnvPositiveDouble 'VDS2RAW_MCFT_LABEL_SMOOTHING' 0.15
-$McftItmWeight = Get-EnvPositiveDouble 'VDS2RAW_MCFT_ITM_WEIGHT' 0.1
-$McftAisDropout = Get-EnvPositiveDouble 'VDS2RAW_MCFT_AIS_DROPOUT_PROBABILITY' 0.6
-$CcsaEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_PATIENCE' 15
-$CcsaEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_MIN_EPOCHS' 20
-$DsneEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_PATIENCE' 8
-$DsneEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_MIN_EPOCHS' 15
-$McftEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE' 20
-$McftEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS' 40
+$DsneLabelSmoothing = Get-EnvPositiveDouble 'VDS2RAW_DSNE_LABEL_SMOOTHING' 0.05
+$McftLr = Get-EnvPositiveDouble 'VDS2RAW_MCFT_LR' 0.0003
+$McftWeightDecay = Get-EnvPositiveDouble 'VDS2RAW_MCFT_WEIGHT_DECAY' 0.0001
+$McftStepSize = Get-EnvInt 'VDS2RAW_MCFT_STEP_SIZE' 20
+$McftGamma = Get-EnvPositiveDouble 'VDS2RAW_MCFT_GAMMA' 0.85
+$McftLabelSmoothing = Get-EnvPositiveDouble 'VDS2RAW_MCFT_LABEL_SMOOTHING' 0.1
+$McftItmWeight = Get-EnvPositiveDouble 'VDS2RAW_MCFT_ITM_WEIGHT' 1.0
+$McftAisDropout = Get-EnvPositiveDouble 'VDS2RAW_MCFT_AIS_DROPOUT_PROBABILITY' 0.4
+$McftClassBalanced = Get-EnvBool 'VDS2RAW_MCFT_CLASS_BALANCED_TRAIN' $false
+$CcsaEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_PATIENCE' 20
+$CcsaEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_CCSA_EARLY_STOPPING_MIN_EPOCHS' 30
+$DsneEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_PATIENCE' 10
+$DsneEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_DSNE_EARLY_STOPPING_MIN_EPOCHS' 20
+$McftEarlyPatience = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE' 25
+$McftEarlyMinEpochs = Get-EnvNonNegativeInt 'VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS' 60
 $legacyTargetValue = [Environment]::GetEnvironmentVariable(
     'VDS2RAW_TARGET_SAMPLES_PER_CLASS'
 )
@@ -225,6 +236,7 @@ $config = [ordered]@{
     mcft_label_smoothing = $McftLabelSmoothing
     mcft_itm_weight = $McftItmWeight
     mcft_ais_dropout_probability = $McftAisDropout
+    mcft_class_balanced_train = $McftClassBalanced
     dsne_layers = $DsneLayers
     ccsa_pair_protocol = 'fixed exhaustive official pair table'
     ccsa_target_samples_per_class = $CcsaTargetPerClass
@@ -327,7 +339,7 @@ foreach ($seed in $Seeds) {
         '--label-smoothing', "$McftLabelSmoothing",
         '--loss-itm-weight', "$McftItmWeight",
         '--ais-dropout-probability', "$McftAisDropout",
-        '--class-balanced-train',
+        $(if ($McftClassBalanced) { '--class-balanced-train' } else { '--no-class-balanced-train' }),
         '--eval-frequency', "$McftEvalFrequency",
         '--early-stopping-patience', "$McftEarlyPatience",
         '--early-stopping-min-epochs', "$McftEarlyMinEpochs"

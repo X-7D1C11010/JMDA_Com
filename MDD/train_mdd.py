@@ -136,7 +136,15 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
 
         cls_loss = F.cross_entropy(y_s, labels_s)
         transfer_loss = -mdd(y_s, y_s_adv, y_t, y_t_adv)
-        loss = cls_loss + transfer_loss * args.trade_off
+        if args.trade_off_warmup_epochs > 0:
+            completed_updates = (epoch - 1) * args.iters_per_epoch + i + 1
+            warmup_updates = args.trade_off_warmup_epochs * args.iters_per_epoch
+            transfer_weight = args.trade_off * min(
+                1.0, completed_updates / warmup_updates
+            )
+        else:
+            transfer_weight = args.trade_off
+        loss = cls_loss + transfer_loss * transfer_weight
         classifier.step()
         loss.backward()
         optimizer.step()
@@ -149,7 +157,9 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
             learning_rates = lr_scheduler.get_last_lr()
             print(f'  Epoch [{epoch}/{args.epochs}] iter [{i + 1}/{args.iters_per_epoch}] '
                   f'loss={loss.item():.4f} cls={cls_loss.item():.4f} '
-                  f'mdd={transfer_loss.item():.4f} src_acc={acc.item():.2f} '
+                  f'mdd={transfer_loss.item():.4f} '
+                  f'transfer_weight={transfer_weight:.4f} '
+                  f'src_acc={acc.item():.2f} '
                   f'lr=[{min(learning_rates):.3e},{max(learning_rates):.3e}]')
 
 
@@ -167,6 +177,8 @@ def main():
     parser.add_argument('--wd', default=0.0005, type=float)
     parser.add_argument('--margin', type=float, default=4.)
     parser.add_argument('--trade-off', default=1., type=float)
+    parser.add_argument('--trade-off-warmup-epochs', default=0, type=int,
+                        help='linearly ramp MDD weight during the first N epochs')
     parser.add_argument('--bottleneck-dim', default=1024, type=int)
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
@@ -190,6 +202,8 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
+    if args.trade_off < 0 or args.trade_off_warmup_epochs < 0:
+        raise ValueError('invalid MDD trade-off/warmup setting')
     if args.early_stop_patience < 0:
         raise ValueError('--early-stop-patience must be >= 0')
     if args.early_stop_patience:

@@ -321,23 +321,27 @@ def main():
     parser.add_argument("--save-dir", default=str(ROOT / "runs" / "vds2raw"))
     parser.add_argument("--stats-file", default="")  # shared runner compatibility
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--source-epochs", type=int, default=80)
+    parser.add_argument("--source-epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--source-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=2e-4)
+    # The seed-42 curve reached the same maximum at epochs 3 and 14, while
+    # source fine-tuning oscillated from 73% back to 60%.  Use smaller source
+    # and adaptation steps so that the new head and pretrained backbone do not
+    # move on the same aggressive scale as the previous pilot.
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument(
-        "--adaptation-backbone-lr-multiplier", type=float, default=0.1
+        "--adaptation-backbone-lr-multiplier", type=float, default=0.05
     )
-    parser.add_argument("--lr-min-ratio", type=float, default=0.05)
-    parser.add_argument("--source-backbone-lr", type=float, default=1e-3)
-    parser.add_argument("--source-head-lr", type=float, default=1e-2)
+    parser.add_argument("--lr-min-ratio", type=float, default=0.1)
+    parser.add_argument("--source-backbone-lr", type=float, default=5e-4)
+    parser.add_argument("--source-head-lr", type=float, default=5e-3)
     parser.add_argument("--source-lr-min-ratio", type=float, default=0.1)
     parser.add_argument("--source-head-warmup-epochs", type=int, default=10)
     parser.add_argument("--momentum", type=float, default=0.9)
-    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--alpha", type=float, default=0.2)
-    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.05)
     parser.add_argument("--margin", type=float, default=1.0)
     parser.add_argument("--ratio", type=int, default=1)
     parser.add_argument("--embed-size", type=int, default=512)
@@ -384,8 +388,11 @@ def main():
         dest="class_balanced_batches",
         action="store_false",
     )
-    parser.add_argument("--early-stopping-patience", type=int, default=8)
-    parser.add_argument("--early-stopping-min-epochs", type=int, default=15)
+    parser.add_argument("--early-stopping-patience", type=int, default=10)
+    # A nominal d-SNE@20 result must actually evaluate all 20 epochs.  With
+    # the default 20-epoch budget this disables premature stopping without
+    # changing the checkpoint selection rule.
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=20)
     parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)

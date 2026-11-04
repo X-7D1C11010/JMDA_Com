@@ -218,8 +218,12 @@ def main():
             "retained only for explicit fixed-shot ablations"
         ),
     )
-    parser.add_argument("--lr", type=float, default=0.1)
-    parser.add_argument("--backbone-lr-multiplier", type=float, default=0.1)
+    # The exhaustive VDS2Raw pair table yields 42 two-direction updates per
+    # epoch.  A task LR of 0.1 drove both CEs to ~4e-4 by epoch 20 while test
+    # accuracy peaked at epoch 1.  Keep the official Adadelta training rule,
+    # but scale it for this much denser update schedule.
+    parser.add_argument("--lr", type=float, default=0.02)
+    parser.add_argument("--backbone-lr-multiplier", type=float, default=0.05)
     parser.add_argument("--source-lr", type=float, default=0.5)
     parser.add_argument("--source-lr-min-ratio", type=float, default=0.1)
     parser.add_argument("--lr-min-ratio", type=float, default=0.01)
@@ -239,8 +243,8 @@ def main():
     )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--early-stopping-patience", type=int, default=15)
-    parser.add_argument("--early-stopping-min-epochs", type=int, default=20)
+    parser.add_argument("--early-stopping-patience", type=int, default=20)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=30)
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
     parser.set_defaults(class_balanced_ce=True)

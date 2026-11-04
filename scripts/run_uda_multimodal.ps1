@@ -41,6 +41,7 @@ param(
     [int]$CDANTestInterval = 500,
     [int]$MDDIterationsPerEpoch = 1000,
     [double]$MDDTradeOff = 1.0,
+    [int]$MDDTradeOffWarmupEpochs = 0,
     [int]$MCCIterationsPerEpoch = 1000,
     [double]$MCCTradeOff = 1.0,
     [int]$MCCTradeOffWarmupEpochs = 0,
@@ -127,6 +128,7 @@ $arguments = @{
     CDANTestInterval = $CDANTestInterval
     MDDIterationsPerEpoch = $MDDIterationsPerEpoch
     MDDTradeOff = $MDDTradeOff
+    MDDTradeOffWarmupEpochs = $MDDTradeOffWarmupEpochs
     MCCIterationsPerEpoch = $MCCIterationsPerEpoch
     MCCTradeOff = $MCCTradeOff
     MCCTradeOffWarmupEpochs = $MCCTradeOffWarmupEpochs
