@@ -154,6 +154,7 @@ class ComplexityReport:
 
     # inference speed
     infer_samples_per_sec: Optional[float] = None
+    infer_latency_ms: Optional[float] = None
     infer_batch_size: Optional[int] = None
     infer_warmup_batches: int = 10
     infer_timed_batches: int = 50
@@ -359,6 +360,9 @@ class ComplexityTracker:
             self.report.infer_samples_per_sec = (
                 self.report.infer_total_samples / self.report.infer_total_sec
             )
+            self.report.infer_latency_ms = (
+                self.report.infer_total_sec / self.report.infer_total_samples * 1000.0
+            )
         self.report.infer_warmup_batches = warmup_batches
         self.report.infer_timed_batches = timed_batches
         self.report.peak_infer_mem_mb = max(self.report.peak_infer_mem_mb, peak_mb)
@@ -389,6 +393,11 @@ class ComplexityTracker:
             self.report.total_training_sec = sum(
                 e["elapsed_sec"] for e in self._epoch_timings
             )
+        # ensure latency field is populated if throughput is known
+        if (self.report.infer_latency_ms is None
+                and self.report.infer_samples_per_sec
+                and self.report.infer_samples_per_sec > 0):
+            self.report.infer_latency_ms = 1000.0 / self.report.infer_samples_per_sec
         _print(self._summary_line())
 
     def save(self, path: str) -> None:
