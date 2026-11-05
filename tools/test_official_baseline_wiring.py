@@ -235,16 +235,23 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8-sig") as f:
             tuned = f.read()
         for expected in (
+            "DANNLearningRate = 0.0005",
             "DANNEpochs = 24",
+            "DANNDomainLossWeight = 0.5",
             "DANNGrlMaxIterations = 3300",
             "DANNTargetEvalInterval = 1",
-            "DeepCoralWarmupEpochs = 2",
+            "DeepCoralWarmupEpochs = 0",
             "DeepCoralLabelSmoothing = 0.05",
             "DeepCoralVisualLearningRateMultiplier = 0.1",
             "DeepCoralInfraredLearningRateMultiplier = 1.0",
+            "DeepCoralMaxWeight = 0.3",
+            "DeepCoralHeadLearningRateMultiplier = 10.0",
             "CdanIterations = 1400",
-            "CDANSourceWarmupIterations = 200",
-            "CDANCoeffMaxIterations = 6000",
+            "CDANHeadLearningRateMultiplier = 3.0",
+            "CDANAdLearningRateMultiplier = 10.0",
+            "CDANTradeOff = 1.0",
+            "CDANSourceWarmupIterations = 0",
+            "CDANCoeffMaxIterations = 12000",
             "CDANTestInterval = 100",
             "MCCSourceWarmupEpochs = 2",
         ):
@@ -254,11 +261,11 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8") as f:
             server_heavy = f.read()
         for expected in (
-            'UDA_MDD_EPOCHS:-20',
+            'UDA_MDD_EPOCHS:-36',
             'UDA_MDD_LR:-0.0025',
             'UDA_MDD_ITERS_PER_EPOCH:-80',
-            'UDA_MDD_TRADE_OFF:-0.35',
-            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-10',
+            'UDA_MDD_TRADE_OFF:-0.45',
+            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-12',
             'UDA_MCC_EPOCHS:-14',
             'UDA_MCC_LR:-0.002',
             'UDA_MCC_ITERS_PER_EPOCH:-100',
@@ -327,6 +334,41 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         )
         self.assertIn('mdd_*|mcc_*|jmda_net_*|mcft_*) input_modalities="VIS+IR"', launcher)
 
+    def test_unified_server_launcher_runs_all_five_sequentially(self):
+        with open(os.path.join(
+                ROOT, "scripts", "run_server_all_uda_background.sh"),
+                encoding="utf-8") as handle:
+            unified = handle.read()
+        self.assertIn(
+            'export UDA_METHODS="DANN,DeepCORAL,CDAN,MDD,MCC"', unified)
+        self.assertIn(
+            'DANN -> DeepCORAL -> CDAN -> MDD -> MCC', unified)
+        self.assertIn('export JMDA_GPU_SCHEDULER=1', unified)
+        self.assertIn('exec bash "$HERE/scripts/run_server_background.sh" uda',
+                      unified)
+
+        with open(os.path.join(ROOT, "scripts", "run_server.sh"),
+                  encoding="utf-8") as handle:
+            server = handle.read()
+        order = [
+            server.index('if uda_method_enabled dann; then',
+                         server.index('elif [ "$PROTOCOL" = "uda" ]')),
+            server.index('if uda_method_enabled deepcoral; then',
+                         server.index('elif [ "$PROTOCOL" = "uda" ]')),
+            server.index('if uda_method_enabled cdan; then',
+                         server.index('elif [ "$PROTOCOL" = "uda" ]')),
+            server.index('if uda_method_enabled mdd; then',
+                         server.index('elif [ "$PROTOCOL" = "uda" ]')),
+            server.index('if uda_method_enabled mcc; then',
+                         server.index('elif [ "$PROTOCOL" = "uda" ]')),
+        ]
+        self.assertEqual(order, sorted(order))
+        self.assertIn('--domain-loss-weight "$UDA_DANN_DOMAIN_LOSS_WEIGHT"',
+                      server)
+        self.assertIn('--coral-max-weight "$UDA_DEEPCORAL_MAX_WEIGHT"',
+                      server)
+        self.assertIn('--ad-lr-mult "$UDA_CDAN_AD_LR_MULT"', server)
+
         for relative in ("MDD/train_mdd.py", "MCC/train_mcc.py"):
             with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
                 trainer = f.read()
@@ -334,6 +376,22 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             self.assertIn("Selected target val metrics:", trainer)
             self.assertIn("Last-epoch target val accuracy", trainer)
             self.assertNotIn("if epoch < args.epochs:", trainer)
+
+    def test_multimodal_baselines_share_jmda_data_and_finetuning_protocol(self):
+        for relative in (
+            "DANN/train_dann.py",
+            "DeepCORAL/train_deepcoral.py",
+            "CDAN/train_cdan.py",
+            "MDD/train_mdd.py",
+            "MCC/train_mcc.py",
+        ):
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
+                trainer = f.read()
+            self.assertIn("label_free_target_paired_dataset", trainer)
+            self.assertIn("jmda_train_transform", trainer)
+            self.assertIn("jmda_val_transform", trainer)
+            self.assertIn("configure_jmda_visual_finetuning", trainer)
+            self.assertIn("legacy train-mode BN", trainer)
 
 
 if __name__ == "__main__":

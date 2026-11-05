@@ -90,7 +90,14 @@ def assert_training_label_space(source_dataset, target_dataset, class_ids):
     """
     expected = set(range(len(class_ids)))
     source_labels = {label for _, label in source_dataset.samples}
-    target_labels = {label for _, label in target_dataset.samples}
+    if getattr(target_dataset, 'label_free', False):
+        target_labels = {
+            target_dataset.label_map[label]
+            for _, label in read_image_list(target_dataset.label_list_path)
+            if label in target_dataset.label_map
+        }
+    else:
+        target_labels = {label for _, label in target_dataset.samples}
     if source_labels != expected or target_labels != expected:
         raise ValueError(
             'source/target training label support mismatch after remapping: '

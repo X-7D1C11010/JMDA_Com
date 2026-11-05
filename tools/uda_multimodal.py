@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import math
+import os
 import random
 
 import numpy as np
@@ -86,6 +87,97 @@ class UdaPairedImageListDataset(torch.utils.data.Dataset):
                 f'ir={tuple(ir.shape)}, sample={vis_path!r}'
             )
         return torch.cat((vis, ir), dim=0), label
+
+
+class UdaLabelFreePairedDataset(torch.utils.data.Dataset):
+    """Exact VIS/IR target-training pairs without per-sample target labels.
+
+    JMDA's strict UDA path consumes ``*_train_pairs.tsv`` rather than the
+    labelled target list.  Returning a constant sentinel keeps the existing
+    baseline training-loop interface while proving that target truth cannot be
+    consumed by an adaptation loss accidentally.
+    """
+
+    label_free = True
+
+    def __init__(self, pair_list_path, transform, label_list_path, label_map,
+                 ir_transform=None):
+        self.pair_list_path = pair_list_path
+        self.label_list_path = label_list_path
+        self.transform = transform
+        self.ir_transform = ir_transform or transform
+        self.label_map = dict(label_map)
+        self.samples = []
+        self.paired_samples = []
+        self.skipped = 0
+        self.missing_ir = 0
+        with open(pair_list_path, 'r', encoding='utf-8') as handle:
+            for line_number, raw_line in enumerate(handle, 1):
+                fields = raw_line.rstrip('\r\n').split('\t')
+                if fields == ['']:
+                    continue
+                if len(fields) != 2 or not all(fields):
+                    raise ValueError(
+                        f'invalid label-free VIS/IR pair at '
+                        f'{pair_list_path}:{line_number}'
+                    )
+                vis_path, ir_path = map(remap_data_path, fields)
+                if (os.path.splitext(os.path.basename(vis_path))[0] !=
+                        os.path.splitext(os.path.basename(ir_path))[0]):
+                    raise ValueError(
+                        f'mismatched VIS/IR filename stems at '
+                        f'{pair_list_path}:{line_number}'
+                    )
+                self.samples.append((vis_path, -1))
+                self.paired_samples.append((vis_path, ir_path))
+        if not self.paired_samples:
+            raise ValueError(f'label-free target pair list is empty: {pair_list_path}')
+
+    def __len__(self):
+        return len(self.paired_samples)
+
+    def __getitem__(self, index):
+        vis_path, ir_path = self.paired_samples[index]
+        vis = Image.open(vis_path).convert('RGB')
+        ir = Image.open(ir_path).convert('L').convert('RGB')
+        start_state = UdaPairedImageListDataset._rng_state()
+        vis = self.transform(vis)
+        end_state = UdaPairedImageListDataset._rng_state()
+        UdaPairedImageListDataset._set_rng_state(start_state)
+        ir = self.ir_transform(ir)
+        UdaPairedImageListDataset._set_rng_state(end_state)
+        if vis.shape != ir.shape or vis.ndim != 3 or vis.shape[0] != 3:
+            raise ValueError(
+                f'VIS/IR transform shape mismatch: vis={tuple(vis.shape)}, '
+                f'ir={tuple(ir.shape)}, sample={vis_path!r}'
+            )
+        return torch.cat((vis, ir), dim=0), -1
+
+
+def jmda_train_transform():
+    """Exact paired-image augmentation used by JMDA's strict UDA loader."""
+    return transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.RandomCrop(224),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+
+def jmda_val_transform():
+    """Deterministic target validation transform used by JMDA."""
+    return transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
 
 
 def ir_transform_from_vis(vis_transform):
@@ -189,6 +281,45 @@ class JmdaTllibBackbone(JmdaMultimodalEncoder):
         return super().forward(images).unsqueeze(-1).unsqueeze(-1)
 
 
+def configure_jmda_visual_finetuning(encoder, mode='legacy_supervised'):
+    """Match JMDA's declared VIS fine-tuning policy.
+
+    The controlled JMDA UDA protocol uses the actual supervised-reference
+    behavior: freeze the ImageNet ResNet feature trunk and update only its
+    512-D projection.  ``layer2_4`` remains available for explicit ablations.
+    The random IR encoder is always trainable.
+    """
+    if mode not in {'legacy_supervised', 'layer2_4'}:
+        raise ValueError(f'unsupported JMDA VIS fine-tuning mode: {mode}')
+    if not hasattr(encoder, 'vis_encoder') or not hasattr(encoder, 'ir_encoder'):
+        raise TypeError('expected a JMDA multimodal encoder')
+    vis_encoder = encoder.vis_encoder
+    for parameter in vis_encoder.parameters():
+        parameter.requires_grad = False
+    if mode == 'layer2_4':
+        if not isinstance(vis_encoder.features, nn.Sequential) or len(vis_encoder.features) < 8:
+            raise ValueError('unexpected ResNet-18 feature layout')
+        for stage_index in (5, 6, 7):
+            for parameter in vis_encoder.features[stage_index].parameters():
+                parameter.requires_grad = True
+    for parameter in vis_encoder.proj.parameters():
+        parameter.requires_grad = True
+    for parameter in encoder.ir_encoder.parameters():
+        parameter.requires_grad = True
+    return {
+        'mode': mode,
+        'vis_trainable': sum(
+            parameter.numel() for parameter in vis_encoder.parameters()
+            if parameter.requires_grad
+        ),
+        'vis_total': sum(parameter.numel() for parameter in vis_encoder.parameters()),
+        'ir_trainable': sum(
+            parameter.numel() for parameter in encoder.ir_encoder.parameters()
+            if parameter.requires_grad
+        ),
+    }
+
+
 class CyclingDataIterator:
     """Cycle a shorter loader without truncating the longer domain loader."""
 
@@ -242,6 +373,21 @@ def paired_dataset(list_path, transform, label_map):
     )
 
 
+def label_free_target_paired_dataset(list_path, transform, label_map):
+    if not list_path.endswith('_train.txt'):
+        raise ValueError('label-free target dataset requires a *_train.txt path')
+    pair_list_path = list_path[:-len('_train.txt')] + '_train_pairs.tsv'
+    if not os.path.isfile(pair_list_path):
+        raise FileNotFoundError(f'missing label-free target pair list: {pair_list_path}')
+    return UdaLabelFreePairedDataset(
+        pair_list_path,
+        transform,
+        label_list_path=list_path,
+        label_map=label_map,
+        ir_transform=ir_transform_from_vis(transform),
+    )
+
+
 def describe_pairing(name, dataset):
     return (f'{name}: exact VIS/IR pairs={len(dataset)}, '
             f'dropped_label={dataset.skipped}, missing_ir={dataset.missing_ir}')
@@ -249,8 +395,10 @@ def describe_pairing(name, dataset):
 
 __all__ = [
     'CyclingDataIterator', 'FullCoverageBatchSampler',
+    'UdaLabelFreePairedDataset',
     'JmdaInfraredEncoder', 'JmdaMultimodalEncoder',
     'JmdaTllibBackbone', 'JmdaVisualEncoder', 'UdaPairedImageListDataset',
-    'describe_pairing', 'ir_transform_from_vis', 'paired_dataset',
-    'split_modalities',
+    'configure_jmda_visual_finetuning', 'describe_pairing',
+    'ir_transform_from_vis', 'jmda_train_transform', 'jmda_val_transform',
+    'label_free_target_paired_dataset', 'paired_dataset', 'split_modalities',
 ]

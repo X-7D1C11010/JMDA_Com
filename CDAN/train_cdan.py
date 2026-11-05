@@ -57,7 +57,15 @@ from uda_data import (
     format_dropped,
 )
 from data_loader_options import add_data_loader_args, data_loader_kwargs
-from uda_multimodal import JmdaMultimodalEncoder, paired_dataset, describe_pairing
+from uda_multimodal import (
+    JmdaMultimodalEncoder,
+    configure_jmda_visual_finetuning,
+    describe_pairing,
+    jmda_train_transform,
+    jmda_val_transform,
+    label_free_target_paired_dataset,
+    paired_dataset,
+)
 
 
 class DualResNetFc(nn.Module):
@@ -83,7 +91,7 @@ class DualResNetFc(nn.Module):
 
     def get_parameters(self):
         return [
-            {'params': self.encoder.vis_encoder.parameters(), 'lr_mult': 1, 'decay_mult': 2},
+            {'params': self.encoder.vis_encoder.parameters(), 'lr_mult': 0.1, 'decay_mult': 2},
             {'params': self.encoder.ir_encoder.parameters(), 'lr_mult': 1, 'decay_mult': 2},
             {'params': self.bottleneck.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
             {'params': self.fc.parameters(), 'lr_mult': self.head_lr_mult, 'decay_mult': 2},
@@ -103,7 +111,11 @@ def evaluate_10crop(model, list_path, label_map, device, num_classes,
     is mathematically identical and bounds the active worker pool to one view.
     """
     model.eval()
-    transform_list = prep.image_test_10crop(resize_size=256, crop_size=224)
+    # Current multimodal comparison follows JMDA's single deterministic
+    # Resize(224) validation view. Single-modal CDAN retains its official
+    # 10-crop evaluation protocol.
+    transform_list = ([jmda_val_transform()] if multimodal else
+                      prep.image_test_10crop(resize_size=256, crop_size=224))
     eval_loader_kwargs = {
         'num_workers': num_workers,
         'pin_memory': pin_memory,
@@ -235,6 +247,10 @@ def main():
         ])
     else:
         train_tf = prep.image_train(resize_size=256, crop_size=224)
+    if args.multimodal:
+        train_tf = jmda_train_transform()
+        print('Multimodal preprocessing: JMDA paired Resize(256) + '
+              'RandomCrop(224) + HFlip; validation Resize(224)')
 
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
     class_ids, label_map = uda_label_space(args.data_dir, args.target)
@@ -243,11 +259,15 @@ def main():
     tgt_train_list = os.path.join(args.data_dir, f'{args.target}_train.txt')
     tgt_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
 
-    dataset_factory = paired_dataset if args.multimodal else (
-        lambda path, transform, mapping: UdaImageListDataset(
-            path, transform=transform, label_map=mapping))
-    src_ds = dataset_factory(src_list, train_tf, label_map)
-    tgt_ds = dataset_factory(tgt_train_list, train_tf, label_map)
+    if args.multimodal:
+        src_ds = paired_dataset(src_list, train_tf, label_map)
+        tgt_ds = label_free_target_paired_dataset(
+            tgt_train_list, train_tf, label_map)
+    else:
+        src_ds = UdaImageListDataset(src_list, transform=train_tf,
+                                     label_map=label_map)
+        tgt_ds = UdaImageListDataset(tgt_train_list, transform=train_tf,
+                                     label_map=label_map)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
@@ -259,8 +279,10 @@ def main():
         print(describe_pairing('Target train', tgt_ds))
 
     loader_kwargs = data_loader_kwargs(args)
+    eval_protocol = ('JMDA deterministic single-view' if args.multimodal
+                     else 'official CDAN 10-crop')
     print(f'DataLoader settings: train={loader_kwargs}, '
-          f'10-crop workers/view={args.eval_num_workers}')
+          f'eval={eval_protocol}, workers/view={args.eval_num_workers}')
     src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
                             drop_last=True, **loader_kwargs)
     tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
@@ -271,6 +293,12 @@ def main():
             raise ValueError('--multimodal requires --backbone JMDA')
         model = DualResNetFc(num_classes,
                              head_lr_mult=args.head_lr_mult).to(device)
+        tuning = configure_jmda_visual_finetuning(
+            model.encoder, mode='legacy_supervised')
+        print('JMDA VIS fine-tuning: projection only; frozen ResNet '
+              'parameters with legacy train-mode BN; '
+              f'VIS trainable={tuning["vis_trainable"]:,}/'
+              f'{tuning["vis_total"]:,}; IR fully trainable')
         print('CDAN-MM encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
               '512+512 direct concatenation; CDAN bottleneck=256')
     else:
@@ -425,7 +453,7 @@ def main():
             if iter_num == args.num_iterations - 1:
                 final_acc = acc
             print(f'iter [{iter_num + 1}/{args.num_iterations}] '
-                  f'target val accuracy (10-crop): {acc:.4f}')
+                  f'target val accuracy ({eval_protocol}): {acc:.4f}')
             print(format_classification_metrics(val_metrics))
             improved = acc > best_acc + args.early_stop_min_delta
             tied_but_better_f1 = (

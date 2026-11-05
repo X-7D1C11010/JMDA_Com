@@ -37,19 +37,18 @@ if (-not $OutDir) {
 
 # Settings are deliberately method-specific and are based on the observed
 # backlight/seed42 curves, rather than copied from one benchmark recipe:
-# - DANN: the JMDA encoder reached 77.78% at epoch 9 but collapsed to 44.44%.
-#   Keep its useful early GRL trajectory, halve domain pressure, and stop before
-#   the high-alpha tail dominates source discrimination.
-# - DeepCORAL: the 10x head produced a second-epoch peak and 100% source fit.
-#   Slow the pretrained VIS branch most, train the random IR branch normally,
-#   and reduce the head multiplier while warming up CORAL for two epochs.
-# - CDAN: predictions were conditioned adversarially from update one and then
-#   degraded after update 900. Establish the classifier first, then use a much
-#   gentler discriminator and slower GRL ramp.
-# - MDD: its best point occurred while transfer weight was about 0.30. Cap the
-#   final weight near that region and remove the unhelpful late epochs.
-# - MCC: its best balanced result came during source-only warmup. Start MCC
-#   immediately after that point but limit it to a small, slowly ramped weight.
+# The recipe restarts from each method's verified historical best direction.
+# The shared trainer supplies JMDA's exact paired transform, label-free target
+# manifest, projection-only VIS fine-tuning, legacy train-mode VIS BN and a
+# full-rate random IR branch; those protocol changes are the only new common
+# structural variable in this round.
+# - DANN: retain the proven 5e-4 LR, 0.5 domain pressure and slow GRL direction.
+# - DeepCORAL: retain its 75.00% direction: immediate 0->0.3 CORAL ramp, 10x
+#   head, constant LR and 30 epochs.
+# - CDAN: retain its 69.44% direction: 3x classifier head, 10x discriminator,
+#   full transfer weight and a deliberately slow coefficient ramp.
+# - MDD: retain the 75.00% 36x80, weight-0.45/ramp-12 recipe.
+# - MCC: retain the 77.78% source-warmup-2 and weak, gradual MCC recipe.
 $env:JMDA_DETERMINISTIC = '1'
 $env:CUBLAS_WORKSPACE_CONFIG = ':4096:8'
 $arguments = @{
@@ -71,30 +70,30 @@ $arguments = @{
     DeepCoralLearningRate = 0.0005
     DeepCoralEpochs = 30
     DeepCoralMaxWeight = 0.3
-    DeepCoralWarmupEpochs = 2
+    DeepCoralWarmupEpochs = 0
     DeepCoralWeightDecay = 0.0005
     DeepCoralLabelSmoothing = 0.05
     DeepCoralTargetEvalInterval = 1
-    DeepCoralHeadLearningRateMultiplier = 3.0
+    DeepCoralHeadLearningRateMultiplier = 10.0
     DeepCoralVisualLearningRateMultiplier = 0.1
     DeepCoralInfraredLearningRateMultiplier = 1.0
-    DeepCoralLearningRateScheduler = 'cosine'
+    DeepCoralLearningRateScheduler = 'constant'
     DeepCoralMinimumLearningRateRatio = 0.1
     CDANLearningRate = 0.0005
     CdanIterations = 1400
     CDANHeadLearningRateMultiplier = 3.0
-    CDANAdLearningRateMultiplier = 3.0
-    CDANTradeOff = 0.3
-    CDANSourceWarmupIterations = 200
+    CDANAdLearningRateMultiplier = 10.0
+    CDANTradeOff = 1.0
+    CDANSourceWarmupIterations = 0
     CDANLabelSmoothing = 0.05
-    CDANCoeffMaxIterations = 6000
+    CDANCoeffMaxIterations = 12000
     CDANCoeffAlpha = 10.0
     CDANTestInterval = 100
     MDDLearningRate = 0.0025
-    MDDEpochs = 20
+    MDDEpochs = 36
     MDDIterationsPerEpoch = 80
-    MDDTradeOff = 0.35
-    MDDTradeOffWarmupEpochs = 10
+    MDDTradeOff = 0.45
+    MDDTradeOffWarmupEpochs = 12
     MCCLearningRate = 0.002
     MCCEpochs = 14
     MCCIterationsPerEpoch = 100

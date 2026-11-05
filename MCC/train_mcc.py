@@ -64,7 +64,15 @@ from data_loader_options import (
     data_loader_kwargs,
     evaluation_loader_kwargs,
 )
-from uda_multimodal import JmdaTllibBackbone, paired_dataset, describe_pairing
+from uda_multimodal import (
+    JmdaTllibBackbone,
+    configure_jmda_visual_finetuning,
+    describe_pairing,
+    jmda_train_transform,
+    jmda_val_transform,
+    label_free_target_paired_dataset,
+    paired_dataset,
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -236,17 +244,25 @@ def main():
     print(args)
 
     train_tf, val_tf = get_train_transform(args.enhanced_augmentation), get_val_transform()
+    if args.multimodal:
+        train_tf, val_tf = jmda_train_transform(), jmda_val_transform()
+        print('Multimodal preprocessing: JMDA paired Resize(256) + '
+              'RandomCrop(224) + HFlip; validation Resize(224)')
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
     class_ids, label_map = uda_label_space(args.data_dir, args.target)
     num_classes = len(class_ids)
-    dataset_factory = paired_dataset if args.multimodal else (
-        lambda path, transform, mapping: UdaImageListDataset(path, transform, mapping))
-    src_ds = dataset_factory(os.path.join(args.data_dir, 'sunny_train.txt'),
-                             train_tf, label_map)
-    tgt_ds = dataset_factory(os.path.join(args.data_dir, f'{args.target}_train.txt'),
-                             train_tf, label_map)
-    tgt_val_ds = dataset_factory(os.path.join(args.data_dir, f'{args.target}_val.txt'),
-                                 val_tf, label_map)
+    src_list = os.path.join(args.data_dir, 'sunny_train.txt')
+    tgt_train_list = os.path.join(args.data_dir, f'{args.target}_train.txt')
+    tgt_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
+    if args.multimodal:
+        src_ds = paired_dataset(src_list, train_tf, label_map)
+        tgt_ds = label_free_target_paired_dataset(
+            tgt_train_list, train_tf, label_map)
+        tgt_val_ds = paired_dataset(tgt_val_list, val_tf, label_map)
+    else:
+        src_ds = UdaImageListDataset(src_list, train_tf, label_map)
+        tgt_ds = UdaImageListDataset(tgt_train_list, train_tf, label_map)
+        tgt_val_ds = UdaImageListDataset(tgt_val_list, val_tf, label_map)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
     print(format_class_space(class_ids, num_classes))
     print(f'Source train: {len(src_ds)}, target train: {len(tgt_ds)}, target val: {len(tgt_val_ds)}')
@@ -272,8 +288,14 @@ def main():
         if args.backbone != 'jmda':
             raise ValueError('--multimodal requires --backbone jmda')
         backbone = JmdaTllibBackbone()
+        tuning = configure_jmda_visual_finetuning(
+            backbone, mode='legacy_supervised')
         print('MCC encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
               '512+512 direct concatenation')
+        print('JMDA VIS fine-tuning: projection only; frozen ResNet '
+              'parameters with legacy train-mode BN; '
+              f'VIS trainable={tuning["vis_trainable"]:,}/'
+              f'{tuning["vis_total"]:,}; IR fully trainable')
     else:
         if args.backbone == 'jmda':
             raise ValueError('--backbone jmda requires --multimodal')
@@ -284,7 +306,16 @@ def main():
           f'MCC ramp={args.trade_off_warmup_epochs} epochs')
     classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim).to(device)
     mcc = MinimumClassConfusionLoss(temperature=args.temperature)
-    optimizer = SGD(classifier.get_parameters(), args.lr, momentum=args.momentum,
+    if args.multimodal:
+        parameter_groups = [
+            {'params': backbone.vis_encoder.parameters(), 'lr': 0.1},
+            {'params': backbone.ir_encoder.parameters(), 'lr': 1.0},
+            {'params': classifier.bottleneck.parameters(), 'lr': 1.0},
+            {'params': classifier.head.parameters(), 'lr': 1.0},
+        ]
+    else:
+        parameter_groups = classifier.get_parameters()
+    optimizer = SGD(parameter_groups, args.lr, momentum=args.momentum,
                     weight_decay=args.wd, nesterov=True)
     lr_scheduler = LambdaLR(optimizer, lambda x: args.lr * (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
 

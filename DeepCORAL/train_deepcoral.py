@@ -69,6 +69,10 @@ from uda_multimodal import (
     CyclingDataIterator,
     FullCoverageBatchSampler,
     JmdaMultimodalEncoder,
+    configure_jmda_visual_finetuning,
+    jmda_train_transform,
+    jmda_val_transform,
+    label_free_target_paired_dataset,
     paired_dataset,
     describe_pairing,
 )
@@ -284,6 +288,10 @@ def main():
             not 0 <= args.label_smoothing < 1):
         raise ValueError('invalid CORAL weight/eval interval/head LR/scheduler setting')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
+    if args.multimodal:
+        train_tf, val_tf = jmda_train_transform(), jmda_val_transform()
+        print('Multimodal preprocessing: JMDA paired Resize(256) + '
+              'RandomCrop(224) + HFlip; validation Resize(224)')
 
     # 标签空间以目标域为准：只保留目标域出现的类别，并把标签压到 0..|T|-1。
     class_ids, label_map = uda_label_space(args.data_dir, args.target)
@@ -292,13 +300,21 @@ def main():
     tgt_train_list = os.path.join(args.data_dir, f'{args.target}_train.txt')
     tgt_val_list = os.path.join(args.data_dir, f'{args.target}_val.txt')
 
-    dataset_factory = paired_dataset if args.multimodal else (
-        lambda path, transform, mapping: UdaImageListDataset(
-            path, transform=transform, label_map=mapping))
-    src_ds = dataset_factory(src_list, train_tf, label_map)
-    src_eval_ds = dataset_factory(src_list, val_tf, label_map)
-    tgt_ds = dataset_factory(tgt_train_list, train_tf, label_map)
-    tgt_val_ds = dataset_factory(tgt_val_list, val_tf, label_map)
+    if args.multimodal:
+        src_ds = paired_dataset(src_list, train_tf, label_map)
+        src_eval_ds = paired_dataset(src_list, val_tf, label_map)
+        tgt_ds = label_free_target_paired_dataset(
+            tgt_train_list, train_tf, label_map)
+        tgt_val_ds = paired_dataset(tgt_val_list, val_tf, label_map)
+    else:
+        src_ds = UdaImageListDataset(src_list, transform=train_tf,
+                                     label_map=label_map)
+        src_eval_ds = UdaImageListDataset(src_list, transform=val_tf,
+                                          label_map=label_map)
+        tgt_ds = UdaImageListDataset(tgt_train_list, transform=train_tf,
+                                     label_map=label_map)
+        tgt_val_ds = UdaImageListDataset(tgt_val_list, transform=val_tf,
+                                         label_map=label_map)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
@@ -338,6 +354,13 @@ def main():
             raise ValueError('--multimodal requires --backbone jmda')
         model = ResNetDeepCORAL(num_classes=num_classes,
                                 multimodal=args.multimodal).to(device)
+        if args.multimodal:
+            tuning = configure_jmda_visual_finetuning(
+                model.encoder, mode='legacy_supervised')
+            print('JMDA VIS fine-tuning: projection only; frozen ResNet '
+                  'parameters with legacy train-mode BN; '
+                  f'VIS trainable={tuning["vis_trainable"]:,}/'
+                  f'{tuning["vis_total"]:,}; IR fully trainable')
         print('DeepCORAL architecture: '
               + ('JMDA non-tensor encoder (VIS ResNet-18 + IR U-Net, '
                  '512+512 direct concatenation)'
