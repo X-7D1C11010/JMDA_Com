@@ -26,8 +26,7 @@ MCFT_EARLY_PATIENCE="${VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE:-25}"
 MCFT_EARLY_MIN_EPOCHS="${VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS:-60}"
 
 TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"
-TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-9999}"
-TIR_SHOTS="${VDS2RAW_TIR_SHOTS_PER_CLASS:-5}"
+TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"
 TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0002}"
 TIR_PROMPT_LR="${VDS2RAW_TIR_PROMPT_LR:-0.002}"
 TIR_ADAPTER_LR="${VDS2RAW_TIR_ADAPTER_LR:-0.001}"
@@ -79,7 +78,6 @@ ARTIFACT_DIR="$RUN_DIR/artifacts"
 LOG_DIR="$RUN_DIR/logs"
 SUMMARY_DIR="$RUN_DIR/summary"
 STATS_FILE="$RUN_DIR/normalization_stats.json"
-TIR_STATS_FILE="$RUN_DIR/tir_target_normalization_stats.json"
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SUMMARY_DIR"
 
 echo "Run directory: $RUN_DIR"
@@ -128,7 +126,7 @@ for seed in "${SEEDS[@]}"; do
         run_one "tir_seed$seed" "$TIR_MIN_FREE_MIB" \
           "$PYTHON_BIN" "$HERE/vds2raw/train_tir.py" \
           --epochs "$TIR_EPOCHS" --batch-size "$TIR_BATCH" \
-          --shots-per-class "$TIR_SHOTS" --eval-frequency "$TIR_EPOCHS" \
+          --eval-frequency 1 \
           --clip-checkpoint "$TIR_CLIP_CHECKPOINT" \
           --lora-lr "$TIR_LORA_LR" --prompt-lr "$TIR_PROMPT_LR" \
           --adapter-lr "$TIR_ADAPTER_LR" \
@@ -136,7 +134,7 @@ for seed in "${SEEDS[@]}"; do
           --weight-decay "$TIR_TASK_WEIGHT_DECAY" \
           --early-stopping-patience "$TIR_EARLY_PATIENCE" \
           --early-stopping-min-epochs "$TIR_EARLY_MIN_EPOCHS" \
-          --stats-file "$TIR_STATS_FILE" \
+          --stats-file "$STATS_FILE" \
           "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
         ;;
     esac

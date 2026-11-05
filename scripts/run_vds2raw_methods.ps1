@@ -41,8 +41,7 @@ function Env-OrDefault([string]$Name, [string]$Default) {
 $McftEpochs = [int](Env-OrDefault 'VDS2RAW_MCFT_EPOCHS' '200')
 $McftBatch = [int](Env-OrDefault 'VDS2RAW_MCFT_BATCH_SIZE' '32')
 $TirEpochs = [int](Env-OrDefault 'VDS2RAW_TIR_EPOCHS' '100')
-$TirBatch = [int](Env-OrDefault 'VDS2RAW_TIR_BATCH_SIZE' '9999')
-$TirShots = [int](Env-OrDefault 'VDS2RAW_TIR_SHOTS_PER_CLASS' '5')
+$TirBatch = [int](Env-OrDefault 'VDS2RAW_TIR_BATCH_SIZE' '32')
 $ClipCheckpoint = Env-OrDefault 'VDS2RAW_TIR_CLIP_CHECKPOINT' `
     (Join-Path $RepoRoot 'pretrained_weights\clip\ViT-B-16.pt')
 if ('tir' -in $MethodOrder -and -not (Test-Path -LiteralPath $ClipCheckpoint -PathType Leaf)) {
@@ -58,7 +57,6 @@ $ArtifactDir = Join-Path $RunDir 'artifacts'
 $LogDir = Join-Path $RunDir 'logs'
 $SummaryDir = Join-Path $RunDir 'summary'
 $StatsFile = Join-Path $RunDir 'normalization_stats.json'
-$TirStatsFile = Join-Path $RunDir 'tir_target_normalization_stats.json'
 New-Item -ItemType Directory -Force -Path $ArtifactDir, $LogDir, $SummaryDir | Out-Null
 Write-Host "Run directory: $RunDir"
 Write-Host "Method order: $($MethodOrder -join ' ')"
@@ -105,7 +103,7 @@ foreach ($seed in $Seeds) {
                 $arguments = @(
                     (Join-Path $RepoRoot 'vds2raw\train_tir.py'),
                     '--epochs', "$TirEpochs", '--batch-size', "$TirBatch",
-                    '--shots-per-class', "$TirShots", '--eval-frequency', "$TirEpochs",
+                    '--eval-frequency', '1',
                     '--clip-checkpoint', $ClipCheckpoint,
                     '--lora-lr', (Env-OrDefault 'VDS2RAW_TIR_LORA_LR' '0.0002'),
                     '--prompt-lr', (Env-OrDefault 'VDS2RAW_TIR_PROMPT_LR' '0.002'),
@@ -114,7 +112,7 @@ foreach ($seed in $Seeds) {
                     '--weight-decay', (Env-OrDefault 'VDS2RAW_TIR_TASK_WEIGHT_DECAY' '0.0005'),
                     '--early-stopping-patience', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_PATIENCE' '0'),
                     '--early-stopping-min-epochs', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS' '0'),
-                    '--stats-file', $TirStatsFile
+                    '--stats-file', $StatsFile
                 ) + $common + $smokeArgs
                 Invoke-Method -Tag "tir_seed$seed" -Arguments $arguments
             }

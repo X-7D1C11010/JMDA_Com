@@ -172,6 +172,56 @@ def load_selected_checkpoint(path, model, device):
     return payload
 
 
+def capture_selected_state(
+    model,
+    epoch,
+    selection_metrics,
+    *,
+    target_val_metrics=None,
+    target_test_metrics=None,
+):
+    """Keep only mutable model state in host memory, without writing a model file."""
+    parameters = {
+        name: parameter.detach().cpu().clone()
+        for name, parameter in model.named_parameters()
+        if parameter.requires_grad
+    }
+    buffers = {
+        name: buffer.detach().cpu().clone()
+        for name, buffer in model.named_buffers()
+    }
+    return {
+        "parameter_state": parameters,
+        "buffer_state": buffers,
+        "selected_epoch": int(epoch),
+        "selection_metrics": dict(selection_metrics),
+        "target_val_metrics": dict(target_val_metrics or selection_metrics),
+        "target_test_metrics": dict(target_test_metrics or selection_metrics),
+    }
+
+
+def restore_selected_state(model, snapshot):
+    """Restore a snapshot produced by :func:`capture_selected_state`."""
+    if snapshot is None:
+        raise ValueError("selected model snapshot is missing")
+    parameters = dict(model.named_parameters())
+    buffers = dict(model.named_buffers())
+    with torch.no_grad():
+        for name, value in snapshot["parameter_state"].items():
+            if name not in parameters:
+                raise RuntimeError(f"selected parameter no longer exists: {name}")
+            parameters[name].copy_(
+                value.to(device=parameters[name].device, dtype=parameters[name].dtype)
+            )
+        for name, value in snapshot["buffer_state"].items():
+            if name not in buffers:
+                raise RuntimeError(f"selected buffer no longer exists: {name}")
+            buffers[name].copy_(
+                value.to(device=buffers[name].device, dtype=buffers[name].dtype)
+            )
+    return snapshot
+
+
 def _atomic_json(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -477,11 +527,13 @@ __all__ = [
     "NUM_CLASSES",
     "better_metrics",
     "build_run_provenance",
+    "capture_selected_state",
     "evaluate_multimodal",
     "evaluate_inputs",
     "evaluate_rgb",
     "load_selected_checkpoint",
     "metric_line",
+    "restore_selected_state",
     "save_checkpoint",
     "save_experiment_results",
     "save_prediction_artifacts",

@@ -113,6 +113,34 @@ def partition_files(root, partition):
     return files
 
 
+def target_present_class_ids(root, partition="target_train"):
+    """Return class IDs that have at least one sample in the target partition."""
+    if not str(partition).startswith("target_"):
+        raise ValueError(f"expected a target partition, got {partition!r}")
+    present = {
+        CLASS_TO_ID[path.parent.name]
+        for path in partition_files(root, partition)
+    }
+    if not present:
+        raise ValueError(f"target partition {partition!r} has no samples")
+    return tuple(sorted(present))
+
+
+def _filter_paths_by_class_ids(paths, allowed_class_ids):
+    if allowed_class_ids is None:
+        return list(paths)
+    allowed = {int(class_id) for class_id in allowed_class_ids}
+    unknown = allowed.difference(range(len(CLASS_NAMES)))
+    if unknown:
+        raise ValueError(f"unknown allowed class IDs: {sorted(unknown)}")
+    filtered = [
+        path for path in paths if CLASS_TO_ID[path.parent.name] in allowed
+    ]
+    if not filtered:
+        raise ValueError(f"class filter {sorted(allowed)} removed every sample")
+    return filtered
+
+
 def compute_image_statistics(root, fit_partitions=TRAIN_PARTITIONS):
     """Fit RGB/NIR channel statistics using only the requested train data."""
     fit_partitions = tuple(fit_partitions)
@@ -299,13 +327,28 @@ class VDS2RawDataset(Dataset):
     loader boundary. The four validity bits are returned only for gating.
     """
 
-    def __init__(self, root, partition, statistics, image_size=None, augment=False):
+    def __init__(
+        self,
+        root,
+        partition,
+        statistics,
+        image_size=None,
+        augment=False,
+        allowed_class_ids=None,
+    ):
         self.root = Path(root).expanduser().resolve()
         self.partition = partition
         self.statistics = statistics
         self.image_size = image_size
         self.augment = augment
-        self.paths = partition_files(self.root, partition)
+        self.allowed_class_ids = (
+            None
+            if allowed_class_ids is None
+            else tuple(sorted({int(value) for value in allowed_class_ids}))
+        )
+        self.paths = _filter_paths_by_class_ids(
+            partition_files(self.root, partition), self.allowed_class_ids
+        )
         self.samples = [
             (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
         ]
@@ -383,7 +426,15 @@ class VDS2RawTIRDataset(Dataset):
     CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
     CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
-    def __init__(self, root, partition, statistics, augment=False, image_size=224):
+    def __init__(
+        self,
+        root,
+        partition,
+        statistics,
+        augment=False,
+        image_size=224,
+        allowed_class_ids=None,
+    ):
         self.root = Path(root).expanduser().resolve()
         self.partition = partition
         self.statistics = statistics
@@ -391,7 +442,14 @@ class VDS2RawTIRDataset(Dataset):
         self.image_size = int(image_size)
         if self.image_size != 224:
             raise ValueError("official CLIP ViT-B/16 requires image_size=224")
-        self.paths = partition_files(self.root, partition)
+        self.allowed_class_ids = (
+            None
+            if allowed_class_ids is None
+            else tuple(sorted({int(value) for value in allowed_class_ids}))
+        )
+        self.paths = _filter_paths_by_class_ids(
+            partition_files(self.root, partition), self.allowed_class_ids
+        )
         self.samples = [
             (str(path), CLASS_TO_ID[path.parent.name]) for path in self.paths
         ]
@@ -483,4 +541,5 @@ __all__ = [
     "compute_image_statistics",
     "load_or_compute_statistics",
     "partition_files",
+    "target_present_class_ids",
 ]

@@ -14,10 +14,10 @@ sys.path.insert(0, str(ROOT))
 from tools.reproducibility import seed_everything
 from vds2raw.common import (
     better_metrics,
+    capture_selected_state,
     evaluate_multimodal,
-    load_selected_checkpoint,
     metric_line,
-    save_checkpoint,
+    restore_selected_state,
     save_experiment_results,
     save_prediction_artifacts,
     save_run_config,
@@ -28,6 +28,7 @@ from vds2raw.dataset import (
     VDS2RawDataset,
     audit_dataset,
     load_or_compute_statistics,
+    target_present_class_ids,
 )
 from vds2raw.models import MCFTWithAIS
 
@@ -152,18 +153,47 @@ def main():
     statistics = load_or_compute_statistics(data_root, stats_file)
     print("Normalization:", statistics.to_dict())
 
+    active_class_ids = target_present_class_ids(data_root, "target_train")
     source = VDS2RawDataset(
-        data_root, "source_train", statistics, image_size=96, augment=args.augment
+        data_root,
+        "source_train",
+        statistics,
+        image_size=96,
+        augment=args.augment,
+        allowed_class_ids=active_class_ids,
     )
     target = VDS2RawDataset(
-        data_root, "target_train", statistics, image_size=96, augment=args.augment
+        data_root,
+        "target_train",
+        statistics,
+        image_size=96,
+        augment=args.augment,
+        allowed_class_ids=active_class_ids,
     )
+    source_class_ids = {int(label) for _, label in source.samples}
+    target_class_ids = {int(label) for _, label in target.samples}
+    if source_class_ids != target_class_ids or target_class_ids != set(active_class_ids):
+        raise RuntimeError(
+            "source/target training classes do not match after target-driven "
+            f"filtering: source={sorted(source_class_ids)}, "
+            f"target={sorted(target_class_ids)}"
+        )
     train_data = ConcatDataset((source, target))
     target_val = VDS2RawDataset(
-        data_root, "target_val", statistics, image_size=96, augment=False
+        data_root,
+        "target_val",
+        statistics,
+        image_size=96,
+        augment=False,
+        allowed_class_ids=active_class_ids,
     )
     target_test = VDS2RawDataset(
-        data_root, "target_test", statistics, image_size=96, augment=False
+        data_root,
+        "target_test",
+        statistics,
+        image_size=96,
+        augment=False,
+        allowed_class_ids=active_class_ids,
     )
     generator = torch.Generator().manual_seed(args.seed)
     train_sampler = None
@@ -219,7 +249,6 @@ def main():
         optimizer, step_size=args.step_size, gamma=args.gamma
     )
     stem = f"vds2raw_mcft3_seed{args.seed}"
-    checkpoint = save_dir / f"{stem}_best.pth"
     metadata = {
         "method": "MCFT-RGB-NIR-AIS",
         "seed": args.seed,
@@ -234,6 +263,8 @@ def main():
         ),
         "source_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
         "target_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+        "active_class_ids_from_target_train": list(active_class_ids),
+        "source_target_class_sets_equal": True,
         "class_balanced_training_sampler": args.class_balanced_train,
         "original_train_class_counts": train_class_counts,
         "sampler_domain_class_counts": sampler_domain_class_counts,
@@ -241,6 +272,7 @@ def main():
         "selection_partition": "target_test",
         "diagnostic_partition": "target_val",
         "test_selection_bias": True,
+        "checkpoint_policy": "in-memory best state; no model files retained",
         "modalities": ["RGB", "NIR", "AIS"],
         "input_raster_size": [96, 96],
         "mcft_token_grid_size": [15, 15],
@@ -289,6 +321,7 @@ def main():
     metadata["run_config"] = str(run_config.resolve())
     val_history, test_history, train_history = [], [], []
     best_test_metrics = None
+    selected = None
     evaluations_without_improvement = 0
     stopped_early = False
     completed_epoch = 0
@@ -369,12 +402,10 @@ def main():
             print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_test", test_metrics))
             if better_metrics(test_metrics, best_test_metrics):
                 best_test_metrics = dict(test_metrics)
-                save_checkpoint(
-                    checkpoint,
+                selected = capture_selected_state(
                     model,
                     epoch,
                     test_metrics,
-                    metadata,
                     target_val_metrics=val_metrics,
                     target_test_metrics=test_metrics,
                 )
@@ -396,17 +427,7 @@ def main():
 
     metadata["completed_epochs"] = completed_epoch
     metadata["stopped_early"] = stopped_early
-    last_checkpoint = save_dir / f"{stem}_last.pth"
-    save_checkpoint(
-        last_checkpoint,
-        model,
-        test_history[-1][0],
-        test_history[-1][1],
-        metadata,
-        target_val_metrics=val_history[-1][1],
-        target_test_metrics=test_history[-1][1],
-    )
-    selected = load_selected_checkpoint(checkpoint, model, device)
+    restore_selected_state(model, selected)
     selected_val, val_predictions = evaluate_multimodal(
         model, val_loader, device, return_predictions=True
     )

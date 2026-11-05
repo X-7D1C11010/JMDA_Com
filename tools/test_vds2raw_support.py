@@ -9,16 +9,17 @@ from torch import nn
 
 from MCFT.mcft_model import MViT
 from TIR.vds2raw_adapter import TokenImportanceRecalibration
+from vds2raw.common import capture_selected_state, restore_selected_state
 from vds2raw.dataset import (
     CLASS_NAMES,
     PARTITIONS,
     VDS2RawDataset,
     VDS2RawTIRDataset,
     compute_image_statistics,
+    target_present_class_ids,
 )
 from vds2raw.models import MCFTWithAIS
 from vds2raw.train_mcft import class_balanced_sampler
-from vds2raw.train_tir import select_support_indices
 
 
 def write_sample(path, rgb_value, nir_value, label):
@@ -94,6 +95,31 @@ class VDS2RawDatasetTests(_FixtureMixin, unittest.TestCase):
             self.assertEqual(tir_item["ais_mask"].shape, (4,))
             torch.testing.assert_close(tir_item["ais"], torch.arange(4).float())
 
+    def test_source_loading_is_driven_by_target_present_classes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_fixture(root)
+            write_sample(
+                root / "samples/source_train/Fishing/source_match.npz", 2, 12, 1
+            )
+            statistics = compute_image_statistics(root)
+            active = target_present_class_ids(root)
+            source = VDS2RawDataset(
+                root,
+                "source_train",
+                statistics,
+                allowed_class_ids=active,
+            )
+            target = VDS2RawDataset(
+                root,
+                "target_train",
+                statistics,
+                allowed_class_ids=active,
+            )
+            self.assertEqual(active, (1,))
+            self.assertEqual({label for _, label in source.samples}, {1})
+            self.assertEqual({label for _, label in target.samples}, {1})
+
 
 class MCFTAdapterTests(unittest.TestCase):
     def test_native_96_raster_is_convolved_before_15_grid_pooling(self):
@@ -146,6 +172,20 @@ class MCFTAdapterTests(unittest.TestCase):
         torch.testing.assert_close(actual, expected)
         self.assertEqual(model.ais_feature_profile, "continuous")
         self.assertEqual(model.ais_encoder[0].normalized_shape, (4,))
+
+    def test_best_state_is_restored_without_a_model_file(self):
+        model = nn.Linear(2, 2)
+        original = model.weight.detach().clone()
+        snapshot = capture_selected_state(
+            model,
+            3,
+            {"accuracy": 0.5},
+        )
+        with torch.no_grad():
+            model.weight.add_(10.0)
+        restore_selected_state(model, snapshot)
+        torch.testing.assert_close(model.weight, original)
+        self.assertEqual(snapshot["selected_epoch"], 3)
 
 
 class TIRCoreTests(unittest.TestCase):
@@ -211,15 +251,6 @@ class _LabelOnlyDataset:
         ]
 
 
-class _ThreeClassSupportDataset:
-    def __init__(self, count_per_class=8):
-        self.samples = [
-            (f"class_{label}_sample_{index}.npz", label)
-            for label in range(3)
-            for index in range(count_per_class)
-        ]
-
-
 class LauncherAndSamplingTests(unittest.TestCase):
     def test_mcft_sampler_balances_domain_and_class_groups(self):
         source = _LabelOnlyDataset([0, 0, 0, 1, 2])
@@ -227,17 +258,6 @@ class LauncherAndSamplingTests(unittest.TestCase):
         sampler, counts = class_balanced_sampler(source, target, seed=42)
         self.assertEqual(counts, [{0: 3, 1: 1, 2: 1}, {0: 2, 1: 2, 2: 1}])
         self.assertEqual(len(sampler.weights), 10)
-
-    def test_tir_selects_exactly_five_target_supports_per_class(self):
-        dataset = _ThreeClassSupportDataset()
-        selected = select_support_indices(dataset, shots_per_class=5, seed=42)
-        labels = [dataset.samples[index][1] for index in selected]
-        self.assertEqual(len(selected), 15)
-        self.assertEqual([labels.count(label) for label in range(3)], [5, 5, 5])
-        self.assertEqual(
-            selected,
-            select_support_indices(dataset, shots_per_class=5, seed=42),
-        )
 
     def test_launchers_only_offer_mcft_and_tir(self):
         root = Path(__file__).resolve().parents[1]
@@ -253,13 +273,14 @@ class LauncherAndSamplingTests(unittest.TestCase):
         linux = (root / "scripts/run_vds2raw_methods.sh").read_text(encoding="utf-8")
         self.assertIn('METHOD_ORDER:-mcft3 tir', linux)
         self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"', linux)
-        self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-9999}"', linux)
-        self.assertIn('TIR_SHOTS="${VDS2RAW_TIR_SHOTS_PER_CLASS:-5}"', linux)
+        self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"', linux)
+        self.assertIn('--eval-frequency 1', linux)
         self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
-        self.assertIn('TIR_STATS_FILE="$RUN_DIR/tir_target_normalization_stats.json"', linux)
         tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
         self.assertIn("parser.set_defaults(augment=False)", tir_train)
-        self.assertIn('fit_partitions=("target_train",)', tir_train)
+        self.assertIn("train_data = ConcatDataset((source, target))", tir_train)
+        self.assertIn('"target_label_budget": "all available target_train labels"', tir_train)
+        self.assertNotIn("save_checkpoint(", tir_train)
 
 
 if __name__ == "__main__":

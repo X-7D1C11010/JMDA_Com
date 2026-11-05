@@ -4,16 +4,19 @@
 
 - 类别：Cargo、Fishing、Sailing & Pleasure。
 - `source_train`：116；`target_train`：94；`target_val`：28；`target_test`：33。
-- MCFT 按项目的全监督协议使用 `source_train + target_train`；TIR 按官方
-  source-free few-shot 语义只使用 `target_train` 中每类 K 个带标签 support，禁止把
-  source 数据拼入 TIR 训练。二者研究问题不同，不能再声称监督预算相同。
-- MCFT 的归一化统计由两个训练分区拟合；TIR 的统计只由 `target_train` 拟合，避免
-  source-free 适配阶段读取 source 数据。审计要求所有分区间 scene/MMSI 无交集。
-- MCFT 沿用项目约定，每轮评估并按 `target_test` 峰值保存，因此存在明确的
-  test-selection bias。TIR 官方默认只在 100 epoch 适配结束后评估和保存最终模型，
-  不以中途 `target_test` 选模，也不开启早停。
-- 每次运行保存 ACC、macro Precision/Recall/F1、最佳 epoch、最佳/最后检查点、
-  完整逐轮训练与验证/测试曲线、逐样本预测和混淆矩阵。
+- 为保证对比监督预算一致，MCFT 与 TIR 都使用全部 `source_train + target_train`
+  真实标签。TIR 因此是公平对比适配，不再宣称遵循论文的 source-free few-shot
+  数据预算；其 TIR、CoOp、LoRA 核心和优化器超参数仍来自官方实现。
+- 两种方法先读取 `target_train` 中实际有数据的类别，再用该集合过滤
+  `source_train`；加载后强制检查 source/target 类别集合完全相同，否则立即报错。
+- 两种方法的归一化统计均只由匹配类别后的训练分区拟合；审计要求所有分区间
+  scene/MMSI 无交集。
+- 两种方法每轮同时评估 `target_val` 与 `target_test`，以 `target_test` ACC 最高、
+  macro-F1 并列判优的 epoch 作为本次 seed 的最终结果。该约定存在明确的
+  test-selection bias，不能作为无偏测试估计。
+- 每次运行保存 ACC、macro Precision/Recall/F1、最佳 epoch、完整逐轮训练与
+  验证/测试曲线、逐样本预测和混淆矩阵。最佳模型状态只在内存中保留到最终评估，
+  不写入 `.pth`；训练结束后不会残留模型文件。
 
 ## MCFT-RGB-NIR-AIS
 
@@ -45,26 +48,25 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 `TIR/` 保存该提交的官方 CLIP、LoRA、prompt 与 TIR 主体；出处和授权状态见
 `TIR/UPSTREAM.md`。固定提交未提供 LICENSE，因此不要在未取得作者许可时再分发。
 
-官方实验是 CLIP ViT-B/16 上的 source-free、5-way 1/5-shot 目标域微调。VDS2Raw
-适配保留视觉 block 8/10 的 TIR、CoOp prompt 与 LoRA，并按数据集类别数改为
-3-way 5-shot：每个 seed 从 `target_train` 每类确定性抽取 5 个 support，共 15 个样本；
-不加载 `source_train` 训练样本或标签。多模态与数据加载部分是项目适配：
+官方实验是 CLIP ViT-B/16 上的 source-free、5-way 1/5-shot 目标域微调。为满足本项目
+的公平监督预算，VDS2Raw 适配使用匹配类别后的全部 source/target 训练样本（当前为
+116+94=210），不再抽取每类5个 support。该数据预算是明确的项目偏离；视觉 block
+8/10 的 TIR、CoOp prompt、LoRA 和官方学习率仍保留。多模态与数据加载部分是项目适配：
 
-- RGB：原始 uint16 DN 先按 `target_train` 通道范围映射到 `[0,1]`，再使用官方 CLIP
+- RGB：原始 uint16 DN 先按训练分区通道范围映射到 `[0,1]`，再使用官方 CLIP
   224×224 归一化与 ViT-B/16；禁止用 `/255` 后截断高位遥感信号；
-- NIR：`target_train` 统计 z-score 后，通过零初始化门控残差注入 RGB；
+- NIR：训练分区统计 z-score 后，通过零初始化门控残差注入 RGB；
 - AIS：只使用与 MCFT 相同的 4 个基础字段，mask 仅作缺失值门控；
 - 三分类仍逐字采用官方 `TIR/clip/model.py::TIR.forward` 的线性权重
   `1 - beta * (Sum - 3)`；官方源码明确把该分支标为 fewer classes/paper setting；
 - CLIP 权重必须精确匹配全部键和形状，任何缺失、额外或 shape 不匹配都会报错，
   禁止静默漏载。
 
-默认正式配置沿用官方核心超参数：100 epoch、完整 support set batch（配置值
-`9999`，在 3-way 5-shot 下有效 batch 为 15，故每 epoch 恰好一次更新）、top-k ratio
+默认正式配置为100 epoch、batch size 32、每轮评估；沿用官方核心超参数 top-k ratio
 0.3、temperature weight 0.5、视觉与文本双编码器 LoRA、rank 16 / alpha 8 /
 dropout 0.25、LoRA AdamW lr `2e-4`、CoOp SGD lr `2e-3`、adapter SGD lr `1e-3`、
-5-shot logit scale 4。官方 README 主命令不启用增强，因此默认 `--no-augment`；
-`--augment` 只作为显式额外实验。正式默认 100 epoch 后一次评估、无早停。
+logit scale 4。官方 README 主命令不启用增强，因此默认 `--no-augment`；
+`--augment` 只作为显式额外实验。正式默认每轮评估、取峰值、无早停。
 VDS2Raw 的 NIR/AIS 分支及固定三分类测试划分不是论文原生设置，必须作为适配披露。
 所有官方协议差异均写入结果元数据。
 
@@ -112,10 +114,9 @@ $env:VDS2RAW_DATA_ROOT = 'D:\Downloads\VDS2Raw\threeclass_ready'
 
 每次运行写入 `runs/vds2raw/<run-id>/`：
 
-- `dataset_audit.json`、MCFT 的 `normalization_stats.json`、TIR 的
-  `tir_target_normalization_stats.json`；
+- `dataset_audit.json`、共享的 `normalization_stats.json`；
 - `logs/<method>_seed<seed>.log`；
-- `artifacts/*_best.pth`、`*_last.pth`、逐轮 CSV/JSON、预测与混淆矩阵；
+- `artifacts/` 中的逐轮 CSV/JSON、预测与混淆矩阵；默认不生成或保留 `.pth`；
 - `summary/runs.csv`、`summary/summary.csv`（多 seed 时包含均值和总体标准差）。
 
 历史 CCSA 和 d-SNE 已从当前实验入口移除。包含其他方法的混合历史汇总/总启动日志
