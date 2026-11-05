@@ -7,6 +7,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${1:-backlight}"
 SEED="${2:-42}"
+export JMDA_CLASS_NAMES_FILE="/home/lixiang/lx/JMDA_Com/class.txt"
 export UDA_METHODS="MDD,MCC"
 export JMDA_TARGETS="$TARGET"
 export JMDA_SEED="$SEED"
