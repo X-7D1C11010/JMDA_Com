@@ -20,7 +20,7 @@ $Seeds = if ($env:VDS2RAW_SEEDS) { $env:VDS2RAW_SEEDS -split '\s+' } else { @('4
 $MethodOrder = if ($env:VDS2RAW_METHOD_ORDER) {
     $env:VDS2RAW_METHOD_ORDER -split '\s+'
 } else {
-    @('mcft3', 'tir')
+    @('tir')
 }
 if ($MethodOrder.Count -lt 1 -or $MethodOrder.Count -gt 2) {
     throw 'VDS2RAW_METHOD_ORDER must contain one or two methods: mcft3 tir.'
@@ -106,18 +106,19 @@ foreach ($seed in $Seeds) {
                     '--epochs', "$TirEpochs", '--batch-size', "$TirBatch",
                     '--eval-frequency', '1',
                     '--clip-checkpoint', $ClipCheckpoint,
-                    '--lora-lr', (Env-OrDefault 'VDS2RAW_TIR_LORA_LR' '0.0001'),
-                    '--prompt-lr', (Env-OrDefault 'VDS2RAW_TIR_PROMPT_LR' '0.001'),
-                    '--adapter-lr', (Env-OrDefault 'VDS2RAW_TIR_ADAPTER_LR' '0.0005'),
-                    '--lora-weight-decay', (Env-OrDefault 'VDS2RAW_TIR_LORA_WEIGHT_DECAY' '0.02'),
-                    '--weight-decay', (Env-OrDefault 'VDS2RAW_TIR_TASK_WEIGHT_DECAY' '0.001'),
-                    '--lora-rank', (Env-OrDefault 'VDS2RAW_TIR_LORA_RANK' '8'),
-                    '--lora-alpha', (Env-OrDefault 'VDS2RAW_TIR_LORA_ALPHA' '4'),
-                    '--lora-dropout', (Env-OrDefault 'VDS2RAW_TIR_LORA_DROPOUT' '0.4'),
-                    '--label-smoothing', (Env-OrDefault 'VDS2RAW_TIR_LABEL_SMOOTHING' '0.1'),
-                    '--scheduler', 'cosine',
+                    '--lora-lr', (Env-OrDefault 'VDS2RAW_TIR_LORA_LR' '0.0002'),
+                    '--prompt-lr', (Env-OrDefault 'VDS2RAW_TIR_PROMPT_LR' '0.002'),
+                    '--adapter-lr', (Env-OrDefault 'VDS2RAW_TIR_ADAPTER_LR' '0.001'),
+                    '--lora-weight-decay', (Env-OrDefault 'VDS2RAW_TIR_LORA_WEIGHT_DECAY' '0.01'),
+                    '--weight-decay', (Env-OrDefault 'VDS2RAW_TIR_TASK_WEIGHT_DECAY' '0.0005'),
+                    '--lora-rank', (Env-OrDefault 'VDS2RAW_TIR_LORA_RANK' '16'),
+                    '--lora-alpha', (Env-OrDefault 'VDS2RAW_TIR_LORA_ALPHA' '8'),
+                    '--lora-dropout', (Env-OrDefault 'VDS2RAW_TIR_LORA_DROPOUT' '0.25'),
+                    '--label-smoothing', (Env-OrDefault 'VDS2RAW_TIR_LABEL_SMOOTHING' '0.0'),
+                    '--scheduler', 'none',
                     '--min-lr-ratio', (Env-OrDefault 'VDS2RAW_TIR_MIN_LR_RATIO' '0.1'),
                     '--augment',
+                    '--domain-class-balanced-train', '--accumulate-full-epoch',
                     '--early-stopping-patience', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_PATIENCE' '0'),
                     '--early-stopping-min-epochs', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS' '0'),
                     '--stats-file', $StatsFile

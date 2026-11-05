@@ -59,17 +59,20 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
   CLIP 224×224 归一化；避免按全局最大值缩放导致主体图像整体过暗；
 - NIR：训练分区统计 z-score 后，通过零初始化门控残差注入 RGB；
 - AIS：只使用与 MCFT 相同的 4 个基础字段，mask 仅作缺失值门控；
-- 三分类仍逐字采用官方 `TIR/clip/model.py::TIR.forward` 的线性权重
-  `1 - beta * (Sum - 3)`；官方源码明确把该分支标为 fewer classes/paper setting；
+- TIR 发布代码中的 `1 - beta * (Sum - 3)` 以5-way的 `Sum=3` 为中点；直接用于三分类
+  时所有权重均不小于1，无法抑制 `Sum=K` attention-sink token。三分类因此采用论文
+  附录明确提出的通用 K-way 简化规则：`Sum=K` 权重0、`Sum=1` 权重2，其余权重1；
 - CLIP 权重必须精确匹配全部键和形状，任何缺失、额外或 shape 不匹配都会报错，
   禁止静默漏载。
 
-默认正式配置为100 epoch、batch size 32、每轮评估。针对当前210样本在约第30轮即
-训练集100%的现象，保留 top-k ratio 0.3、temperature weight 0.5 及视觉/文本双编码器
-LoRA，但将容量与更新幅度调为 rank 8 / alpha 4 / dropout 0.4、LoRA AdamW lr `1e-4`、
-CoOp SGD lr `1e-3`、adapter SGD lr `5e-4`，加入 label smoothing 0.1、cosine衰减至
-初始学习率的0.1，并默认开启RGB/NIR同步的轻裁剪与水平/垂直翻转。正式默认每轮评估、
-取峰值、无早停。
+默认正式配置为100 epoch、显存微批 batch size 32、每轮评估。官方代码对每个 episode
+的完整 support set 每轮只更新一次；因此32仅用于梯度累积，210个训练样本完成后才执行
+一次 optimizer step，避免旧实现每轮7次更新造成的700步过拟合。采样对 source/target ×
+三类别六个单元等权，以消除自然拼接中类别与域的强相关。LoRA/CoOp 参数恢复官方配置：
+rank 16 / alpha 8 / dropout 0.25、LoRA AdamW lr `2e-4`、CoOp SGD lr `2e-3`、adapter
+SGD lr `1e-3`、无 label smoothing、常数学习率；默认开启RGB/NIR同步的轻裁剪与水平/
+垂直翻转。逐轮记录额外保存 TIR sink/discriminative token 比例、NIR/AIS 门控尺度与实际
+optimizer step 数。正式默认每轮评估、取峰值、无早停。
 VDS2Raw 的 NIR/AIS 分支及固定三分类测试划分不是论文原生设置，必须作为适配披露。
 所有官方协议差异均写入结果元数据。
 
@@ -82,7 +85,7 @@ python tools/download_tir_clip.py
 
 ## 启动
 
-服务器正式运行（默认依次运行 MCFT、TIR）：
+服务器正式运行（当前默认只运行仍需优化的 TIR；如需复跑 MCFT 可显式设置方法顺序）：
 
 ```bash
 cd /home/lixiang/lx/JMDA_Com

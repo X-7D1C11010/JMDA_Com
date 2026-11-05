@@ -21,6 +21,10 @@ from vds2raw.dataset import (
 )
 from vds2raw.models import MCFTWithAIS
 from vds2raw.train_mcft import class_balanced_sampler
+from vds2raw.train_tir import (
+    domain_class_balanced_sampler,
+    normalize_accumulated_gradients,
+)
 
 
 def write_sample(path, rgb_value, nir_value, label):
@@ -228,7 +232,7 @@ class TIRCoreTests(unittest.TestCase):
             }
         )
 
-    def test_three_way_rule_matches_official_linear_fewer_class_branch(self):
+    def test_three_way_rule_uses_paper_generalized_extremes(self):
         tokens = torch.tensor(
             [
                 [[0.0, 0.0, 0.0]],
@@ -249,11 +253,11 @@ class TIRCoreTests(unittest.TestCase):
         )
         self.assertEqual(
             runtime.aux_container["tir_weight_rule"],
-            "official_linear_fewer_classes",
+            "paper_simplified_kway_extremes",
         )
         self.assertEqual(output.shape, tokens.shape)
 
-    def test_three_way_all_class_token_uses_official_sum_three_weight(self):
+    def test_three_way_all_class_token_is_suppressed(self):
         tokens = torch.tensor(
             [
                 [[0.0, 0.0, 0.0]],
@@ -270,7 +274,29 @@ class TIRCoreTests(unittest.TestCase):
         )
         torch.testing.assert_close(
             runtime.aux_container["tir_last_weights"],
-            torch.tensor([[1.0, 1.0, 1.0, 1.0]]),
+            torch.tensor([[0.0, 1.0, 1.0, 1.0]]),
+        )
+
+    def test_five_way_rule_stays_identical_to_released_linear_rule(self):
+        tokens = torch.tensor(
+            [
+                [[0.0, 0.0, 0.0]],
+                [[1.0, 0.0, 0.0]],
+                [[0.0, 1.0, 0.0]],
+            ]
+        )
+        text = torch.tensor([[1.0, 0.0, 0.0]] * 5)
+        runtime = self.runtime()
+        TokenImportanceRecalibration()(
+            tokens, text, topk_ratio=0.5, temper_weight=0.5, params=runtime
+        )
+        torch.testing.assert_close(
+            runtime.aux_container["tir_last_weights"],
+            torch.tensor([[0.0, 1.0]]),
+        )
+        self.assertEqual(
+            runtime.aux_container["tir_weight_rule"],
+            "official_linear_5way",
         )
 
 
@@ -289,6 +315,19 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertEqual(counts, [{0: 3, 1: 1, 2: 1}, {0: 2, 1: 2, 2: 1}])
         self.assertEqual(len(sampler.weights), 10)
 
+    def test_tir_sampler_balances_domain_and_class_groups(self):
+        source = _LabelOnlyDataset([0, 0, 0, 1, 2])
+        target = _LabelOnlyDataset([0, 0, 1, 1, 2])
+        sampler, counts = domain_class_balanced_sampler(source, target, seed=42)
+        self.assertEqual(counts, [{0: 3, 1: 1, 2: 1}, {0: 2, 1: 2, 2: 1}])
+        self.assertEqual(len(sampler.weights), 10)
+
+    def test_tir_full_epoch_gradient_normalization(self):
+        parameter = nn.Parameter(torch.tensor([1.0, 2.0]))
+        parameter.grad = torch.tensor([6.0, 10.0])
+        normalize_accumulated_gradients({"group": [parameter]}, denominator=2)
+        torch.testing.assert_close(parameter.grad, torch.tensor([3.0, 5.0]))
+
     def test_launchers_only_offer_mcft_and_tir(self):
         root = Path(__file__).resolve().parents[1]
         for relative in (
@@ -301,16 +340,19 @@ class LauncherAndSamplingTests(unittest.TestCase):
             self.assertNotIn("train_ccsa", source.lower())
             self.assertNotIn("train_dsne", source.lower())
         linux = (root / "scripts/run_vds2raw_methods.sh").read_text(encoding="utf-8")
-        self.assertIn('METHOD_ORDER:-mcft3 tir', linux)
+        self.assertIn('METHOD_ORDER:-tir', linux)
         self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"', linux)
         self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"', linux)
         self.assertIn('--eval-frequency 1', linux)
-        self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0001}"', linux)
-        self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-8}"', linux)
-        self.assertIn('--scheduler cosine', linux)
+        self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0002}"', linux)
+        self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-16}"', linux)
+        self.assertIn('--scheduler none', linux)
+        self.assertIn('--domain-class-balanced-train', linux)
+        self.assertIn('--accumulate-full-epoch', linux)
         self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
         tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
-        self.assertIn("parser.set_defaults(augment=True)", tir_train)
+        self.assertIn("domain_class_balanced_train=True", tir_train)
+        self.assertIn("accumulate_full_epoch=True", tir_train)
         self.assertIn("train_data = ConcatDataset((source, target))", tir_train)
         self.assertIn('"target_label_budget": "all available target_train labels"', tir_train)
         self.assertNotIn("save_checkpoint(", tir_train)

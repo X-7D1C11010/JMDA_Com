@@ -9,9 +9,11 @@ here:
 * only proxy-safe AIS heading, length and width values are encoded by a
   regularised late-fusion residual; validity bits gate missing values but are
   not classifier inputs.
-* the released TIR linear rule ``1 - beta * (Sum - 3)`` is used unchanged.
-  The upstream source explicitly marks that rule as the paper setting for
-  fewer classes, which is the relevant branch for three-class VDS2Raw.
+* the paper's simplified K-way rule is used for three-class VDS2Raw: suppress
+  tokens selected by every class (``Sum=K``), enhance class-specific tokens
+  (``Sum=1``), and leave the remaining tokens unchanged. The released linear
+  rule is centred on the paper's 5-way setting and cannot suppress any token
+  when copied literally to a three-class task.
 
 These adaptations preserve the TIR mechanism but are not claimed to be the
 paper's original single-image, source-free 5-way protocol.
@@ -128,20 +130,40 @@ class TokenImportanceRecalibration(nn.Module):
         binary.scatter_(2, topk_indices, 1)
         sum_scores = binary.sum(dim=1)
 
-        # Exact device-safe equivalent of TIR/clip/model.py::TIR.forward.
-        # The upstream comment identifies this as the paper rule for fewer
-        # classes.  In particular, do not replace it with the separate
-        # "more classes" simplified ablation left commented out upstream.
-        weights = torch.where(
-            sum_scores.eq(0),
-            torch.ones_like(sum_scores),
-            1.0 - temper_weight * (sum_scores - 3.0),
-        )
-        rule = "official_linear_fewer_classes"
+        class_count = int(text_features.shape[0])
+        if class_count == 5:
+            # Exact device-safe equivalent of the released 5-way rule.
+            weights = torch.where(
+                sum_scores.eq(0),
+                torch.ones_like(sum_scores),
+                1.0 - temper_weight * (sum_scores - 3.0),
+            )
+            rule = "official_linear_5way"
+        else:
+            # The paper appendix explicitly generalises TIR to K-way tasks by
+            # assigning Sum=K weight 0 and Sum=1 a weight greater than 1.
+            weights = torch.ones_like(sum_scores)
+            weights = torch.where(sum_scores.eq(1), weights.new_tensor(2.0), weights)
+            weights = torch.where(
+                sum_scores.eq(class_count), weights.new_tensor(0.0), weights
+            )
+            rule = "paper_simplified_kway_extremes"
         if params is not None:
             params.aux_container["tir_last_sum_scores"] = sum_scores.detach()
             params.aux_container["tir_last_weights"] = weights.detach()
             params.aux_container["tir_weight_rule"] = rule
+            params.aux_container.setdefault("tir_stats", []).append(
+                {
+                    "class_count": class_count,
+                    "tokens": int(sum_scores.numel()),
+                    # Keep these as detached device scalars. Converting with
+                    # .item() inside forward would add a GPU synchronization
+                    # to every inference/complexity measurement.
+                    "discriminative": sum_scores.eq(1).sum().detach(),
+                    "sink": sum_scores.eq(class_count).sum().detach(),
+                    "suppressed": weights.eq(0).sum().detach(),
+                }
+            )
         recalibrated = patches * weights.unsqueeze(-1)
         return torch.cat((cls_token, recalibrated), dim=1).permute(1, 0, 2)
 
@@ -309,6 +331,7 @@ class TIRVDS2Raw(nn.Module):
         nir_residual = self.nir_adapter(nir)
         fused_image = rgb + torch.tanh(self.nir_scale) * nir_residual
         image_features = self.clip_model.visual(fused_image, params=params).float()
+        self.last_tir_stats = tuple(params.aux_container.get("tir_stats", ()))
         image_features = F.normalize(image_features, dim=-1)
         text_features = F.normalize(text_features, dim=-1)
         logits = self.fixed_logit_scale * image_features @ text_features.t()

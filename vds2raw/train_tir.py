@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -57,6 +57,41 @@ def build_model(args):
     )
 
 
+def domain_class_balanced_sampler(*datasets, seed):
+    """Give every source/target class cell equal expected sampling mass."""
+
+    weights = []
+    counts_by_domain = []
+    for dataset in datasets:
+        labels = [int(label) for _, label in dataset.samples]
+        counts = {label: labels.count(label) for label in sorted(set(labels))}
+        if len(counts) != len(DEFAULT_CLASS_NAMES) or any(
+            count <= 0 for count in counts.values()
+        ):
+            raise ValueError(
+                "expected every active class in every training domain; "
+                f"counts={counts}"
+            )
+        counts_by_domain.append(counts)
+        weights.extend(1.0 / counts[label] for label in labels)
+    generator = torch.Generator().manual_seed(int(seed))
+    return WeightedRandomSampler(
+        weights,
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    ), counts_by_domain
+
+
+def normalize_accumulated_gradients(parameter_groups, denominator):
+    if denominator <= 0:
+        raise ValueError("gradient denominator must be positive")
+    for parameters in parameter_groups.values():
+        for parameter in parameters:
+            if parameter.grad is not None:
+                parameter.grad.div_(float(denominator))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Official TIR core with RGB+NIR+AIS VDS2Raw adapters"
@@ -82,17 +117,17 @@ def main():
         default=1,
         help="Evaluate target_val and target_test every epoch and select the peak.",
     )
-    parser.add_argument("--lora-lr", type=float, default=1e-4)
-    parser.add_argument("--prompt-lr", type=float, default=1e-3)
-    parser.add_argument("--adapter-lr", type=float, default=5e-4)
-    parser.add_argument("--lora-weight-decay", type=float, default=2e-2)
-    parser.add_argument("--weight-decay", type=float, default=1e-3)
+    parser.add_argument("--lora-lr", type=float, default=2e-4)
+    parser.add_argument("--prompt-lr", type=float, default=2e-3)
+    parser.add_argument("--adapter-lr", type=float, default=1e-3)
+    parser.add_argument("--lora-weight-decay", type=float, default=1e-2)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--topk-ratio", type=float, default=0.3)
     parser.add_argument("--temper-rate", type=float, default=0.5)
     parser.add_argument("--text-layer", type=int, default=10)
-    parser.add_argument("--lora-rank", type=int, default=8)
-    parser.add_argument("--lora-alpha", type=int, default=4)
-    parser.add_argument("--lora-dropout", type=float, default=0.4)
+    parser.add_argument("--lora-rank", type=int, default=16)
+    parser.add_argument("--lora-alpha", type=int, default=8)
+    parser.add_argument("--lora-dropout", type=float, default=0.25)
     parser.add_argument(
         "--lora-encoder", choices=("vision", "text", "both"), default="both"
     )
@@ -104,9 +139,9 @@ def main():
         default=4.0,
         help="Fixed TIR logit scale; 4 is the released 5-shot value.",
     )
-    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument(
-        "--scheduler", choices=("none", "cosine"), default="cosine"
+        "--scheduler", choices=("none", "cosine"), default="none"
     )
     parser.add_argument("--min-lr-ratio", type=float, default=0.1)
     parser.add_argument("--early-stopping-patience", type=int, default=0)
@@ -116,8 +151,37 @@ def main():
     parser.add_argument("--augment", dest="augment", action="store_true")
     parser.add_argument("--no-augment", dest="augment", action="store_false")
     parser.add_argument("--max-train-batches", type=int, default=0)
+    parser.add_argument(
+        "--domain-class-balanced-train",
+        dest="domain_class_balanced_train",
+        action="store_true",
+        help="Balance each source/target class cell as in episodic training.",
+    )
+    parser.add_argument(
+        "--natural-train-sampling",
+        dest="domain_class_balanced_train",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--accumulate-full-epoch",
+        dest="accumulate_full_epoch",
+        action="store_true",
+        help=(
+            "Use batch-size as a memory microbatch and take one optimizer "
+            "step per epoch, matching the official full-support update."
+        ),
+    )
+    parser.add_argument(
+        "--minibatch-updates",
+        dest="accumulate_full_epoch",
+        action="store_false",
+    )
     parser.add_argument("--skip-audit", action="store_true")
-    parser.set_defaults(augment=True)
+    parser.set_defaults(
+        augment=True,
+        domain_class_balanced_train=True,
+        accumulate_full_epoch=True,
+    )
     args = parser.parse_args()
 
     if args.epochs <= 0 or args.batch_size <= 0 or args.eval_frequency <= 0:
@@ -188,10 +252,17 @@ def main():
         allowed_class_ids=active_class_ids,
     )
     generator = torch.Generator().manual_seed(args.seed)
+    train_sampler = None
+    counts_by_domain = None
+    if args.domain_class_balanced_train:
+        train_sampler, counts_by_domain = domain_class_balanced_sampler(
+            source, target, seed=args.seed
+        )
     train_loader = DataLoader(
         train_data,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=args.num_workers,
         drop_last=False,
         generator=generator,
@@ -262,7 +333,13 @@ def main():
         "target_label_budget": "all available target_train labels",
         "active_class_ids_from_target_train": list(active_class_ids),
         "source_target_class_sets_equal": True,
-        "training_update_semantics": "minibatch updates over full source+target training set",
+        "training_update_semantics": (
+            "one accumulated full-epoch update over source+target training data"
+            if args.accumulate_full_epoch
+            else "minibatch updates over full source+target training data"
+        ),
+        "domain_class_balanced_training": args.domain_class_balanced_train,
+        "domain_class_counts": counts_by_domain,
         "normalization_fit_partitions": ["source_train", "target_train"],
         "selection_partition": "target_test",
         "diagnostic_partition": "target_val",
@@ -286,7 +363,7 @@ def main():
             "topk_ratio": args.topk_ratio,
             "temper_rate": args.temper_rate,
             "visual_blocks": [8, 10],
-            "weight_rule": "official_linear_fewer_classes",
+            "weight_rule": "paper_simplified_kway_extremes",
         },
         "lora": {
             "encoder": args.lora_encoder,
@@ -309,6 +386,11 @@ def main():
         "normalization": statistics.to_dict(),
         "configured_batch_size": args.batch_size,
         "effective_batch_size": min(args.batch_size, len(train_data)),
+        "optimizer_effective_batch_size": (
+            len(train_data)
+            if args.accumulate_full_epoch
+            else min(args.batch_size, len(train_data))
+        ),
         "augmentation": (
             "paired light random crop and horizontal/vertical flips"
             if args.augment
@@ -340,6 +422,10 @@ def main():
         epoch_adapter_lr = task_optimizer.param_groups[1]["lr"]
         train_items = train_correct = 0
         train_loss_sum = 0.0
+        epoch_tir_stats = []
+        if args.accumulate_full_epoch:
+            lora_optimizer.zero_grad(set_to_none=True)
+            task_optimizer.zero_grad(set_to_none=True)
         for batch_index, batch in enumerate(train_loader, 1):
             labels = batch["label"].to(device)
             logits, _, _ = model(
@@ -350,15 +436,19 @@ def main():
                 labels,
             )
             loss = criterion(logits, labels)
-            lora_optimizer.zero_grad(set_to_none=True)
-            task_optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            lora_optimizer.step()
-            task_optimizer.step()
             items = labels.shape[0]
+            if args.accumulate_full_epoch:
+                (loss * items).backward()
+            else:
+                lora_optimizer.zero_grad(set_to_none=True)
+                task_optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                lora_optimizer.step()
+                task_optimizer.step()
             train_items += items
             train_correct += int((logits.argmax(1) == labels).sum().item())
             train_loss_sum += float(loss.item()) * items
+            epoch_tir_stats.extend(getattr(model, "last_tir_stats", ()))
             if batch_index % 5 == 0:
                 print(
                     f"Epoch [{epoch}/{args.epochs}] batch "
@@ -366,6 +456,22 @@ def main():
                 )
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
+        if args.accumulate_full_epoch:
+            normalize_accumulated_gradients(groups, train_items)
+            lora_optimizer.step()
+            task_optimizer.step()
+        tir_tokens = sum(int(stats["tokens"]) for stats in epoch_tir_stats)
+
+        def sum_tir_stat(name):
+            if not epoch_tir_stats:
+                return 0
+            return int(
+                torch.stack([stats[name] for stats in epoch_tir_stats]).sum().item()
+            )
+
+        tir_discriminative = sum_tir_stat("discriminative")
+        tir_sink = sum_tir_stat("sink")
+        tir_suppressed = sum_tir_stat("suppressed")
         lora_scheduler.step()
         task_scheduler.step()
         completed_epoch = epoch
@@ -382,6 +488,14 @@ def main():
                 "prompt_lr_after_scheduler": task_optimizer.param_groups[0]["lr"],
                 "adapter_lr_after_scheduler": task_optimizer.param_groups[1]["lr"],
                 "samples": train_items,
+                "optimizer_steps": 1 if args.accumulate_full_epoch else batch_index,
+                "tir_discriminative_fraction": tir_discriminative
+                / max(tir_tokens, 1),
+                "tir_sink_fraction": tir_sink / max(tir_tokens, 1),
+                "tir_suppressed_fraction": tir_suppressed
+                / max(tir_tokens, 1),
+                "nir_scale": float(torch.tanh(model.nir_scale).detach().cpu()),
+                "ais_scale": float(torch.tanh(model.ais_scale).detach().cpu()),
             }
         )
         print(
