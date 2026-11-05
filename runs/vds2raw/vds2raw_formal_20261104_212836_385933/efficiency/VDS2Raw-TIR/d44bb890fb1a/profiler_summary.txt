@@ -1,0 +1,40 @@
+torch.profiler summary (forward-only, 10 iters)
+Model: TIRVDS2Raw
+Device: cuda:0
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                           aten::linear         2.67%       2.132ms        35.50%      28.302ms      14.912us       0.000us         0.00%      50.920ms      26.828us          1898  
+                                            aten::addmm        16.34%      13.030ms        29.09%      23.190ms      12.218us      50.920ms        77.83%      50.920ms      26.828us          1898  
+void cutlass::Kernel2<cutlass_80_simt_sgemm_64x64_8x...         0.00%       0.000us         0.00%       0.000us       0.000us      14.342ms        21.92%      14.342ms      18.387us           780  
+void sgemm_largek_lds64<true, false, 5, 5, 4, 4, 4, ...         0.00%       0.000us         0.00%       0.000us       0.000us      13.344ms        20.40%      13.344ms      17.108us           780  
+void cutlass::Kernel2<cutlass_80_simt_sgemm_64x128_8...         0.00%       0.000us         0.00%       0.000us       0.000us      13.148ms        20.10%      13.148ms      84.281us           156  
+void cutlass::Kernel2<cutlass_80_simt_sgemm_128x128_...         0.00%       0.000us         0.00%       0.000us       0.000us       7.027ms        10.74%       7.027ms      45.045us           156  
+                                           aten::matmul         1.78%       1.422ms        12.33%       9.829ms      13.264us       0.000us         0.00%       5.011ms       6.763us           741  
+                                              aten::bmm         4.51%       3.594ms         6.38%       5.090ms       7.831us       4.548ms         6.95%       4.548ms       6.997us           650  
+                                       aten::layer_norm         0.60%     480.725us        12.29%       9.795ms      13.700us       0.000us         0.00%       2.414ms       3.377us           715  
+                                aten::native_layer_norm         3.43%       2.738ms        11.68%       9.315ms      13.027us       2.057ms         3.14%       2.414ms       3.377us           715  
+void magma_sgemmEx_kernel<float, float, float, true,...         0.00%       0.000us         0.00%       0.000us       0.000us       2.163ms         3.31%       2.163ms       6.934us           312  
+void at::native::(anonymous namespace)::vectorized_l...         0.00%       0.000us         0.00%       0.000us       0.000us       2.016ms         3.08%       2.016ms       2.872us           702  
+                                              aten::mul         3.97%       3.166ms         6.72%       5.359ms       5.218us       1.348ms         2.06%       1.348ms       1.313us          1027  
+void cutlass::Kernel2<cutlass_80_simt_sgemm_64x64_8x...         0.00%       0.000us         0.00%       0.000us       0.000us       1.346ms         2.06%       1.346ms       8.628us           156  
+void cublasLt::epilogue::impl::globalKernel<8, 32, f...         0.00%       0.000us         0.00%       0.000us       0.000us       1.231ms         1.88%       1.231ms       1.579us           780  
+                                        Memset (Device)         0.00%       0.000us         0.00%       0.000us       0.000us       1.150ms         1.76%       1.150ms       0.614us          1872  
+                                              aten::add         3.36%       2.679ms         5.67%       4.520ms       5.349us       1.076ms         1.64%       1.076ms       1.273us           845  
+void magma_sgemmEx_kernel<float, float, float, false...         0.00%       0.000us         0.00%       0.000us       0.000us     963.526us         1.47%     963.526us       6.176us           156  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     889.597us         1.36%     889.597us       1.371us           649  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     779.103us         1.19%     779.103us       1.199us           650  
+                                       aten::contiguous         0.25%     202.606us         5.97%       4.759ms       7.627us       0.000us         0.00%     732.249us       1.173us           624  
+                                            aten::clone         0.71%     564.614us         5.72%       4.557ms       7.303us       0.000us         0.00%     732.249us       1.173us           624  
+                                            aten::copy_         1.85%       1.471ms         3.60%       2.874ms       4.606us     732.249us         1.12%     732.249us       1.173us           624  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     732.249us         1.12%     732.249us       1.173us           624  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     685.144us         1.05%     685.144us       1.318us           520  
+void scal_kernel<float, float, 1, true, 6, 5, 5, 3>(...         0.00%       0.000us         0.00%       0.000us       0.000us     626.336us         0.96%     626.336us       0.803us           780  
+                                           aten::conv2d         0.03%      25.251us         0.97%     777.133us      19.926us       0.000us         0.00%     569.474us      14.602us            39  
+                                      aten::convolution         0.06%      44.574us         0.94%     751.882us      19.279us       0.000us         0.00%     569.474us      14.602us            39  
+                                     aten::_convolution         0.12%      97.894us         0.89%     707.308us      18.136us       0.000us         0.00%     569.474us      14.602us            39  
+                                aten::cudnn_convolution         0.49%     391.861us         0.67%     530.842us      13.611us     551.586us         0.84%     551.586us      14.143us            39  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 79.730ms
+Self CUDA time total: 65.422ms

@@ -1,0 +1,191 @@
+{
+  "protocol_warning": "target_test is evaluated during training and selects the checkpoint; reported target_test is a test-set-selected peak, not an unbiased estimate",
+  "metadata": {
+    "method": "MCFT-RGB-NIR-AIS",
+    "seed": 43,
+    "epochs": 200,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+    "target_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+    "class_balanced_training_sampler": false,
+    "original_train_class_counts": {
+      "0": 62,
+      "1": 74,
+      "2": 74
+    },
+    "sampler_domain_class_counts": null,
+    "experiment_profile": "VDS2Raw MCFT RGB-NIR-AIS adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "input_raster_size": [
+      96,
+      96
+    ],
+    "mcft_token_grid_size": [
+      15,
+      15
+    ],
+    "spatial_adapter": "native 96x96 RGB/NIR passes through the released separable convolution stacks before adaptive pooling to 15x15",
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "num_classes": 3,
+    "adaptation_note": "official two-image MCFT trunk plus regularized AIS late-fusion; all 13 gated AIS values and 13 validity bits follow the JMDA input convention",
+    "ais_feature_profile": "full",
+    "ais_feature_names": "all_13_fields_in_feature_schema",
+    "excluded_label_proxy_fields": [],
+    "ais_mask_as_classifier_feature": true,
+    "ais_dropout_probability": 0.5,
+    "augmentation": "paired horizontal and vertical flips",
+    "label_smoothing": 0.1,
+    "weight_decay": 0.0001,
+    "early_stopping_patience_evaluations": 25,
+    "early_stopping_min_epochs": 60,
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted on source_train + target_train only"
+    },
+    "batch_size": 32,
+    "optimizer": {
+      "name": "Adam",
+      "lr": 0.0005,
+      "weight_decay": 0.0001
+    },
+    "scheduler": {
+      "name": "StepLR",
+      "step_size": 20,
+      "gamma": 0.9
+    },
+    "loss": {
+      "ita_weight": 0.1,
+      "itm_weight": 1.0,
+      "itm_negative_mask": "all different-class samples, including class 0"
+    }
+  },
+  "provenance": {
+    "argv": [
+      "/home/lixiang/lx/JMDA_Com/vds2raw/train_mcft.py",
+      "--epochs",
+      "200",
+      "--batch-size",
+      "32",
+      "--lr",
+      "0.0005",
+      "--weight-decay",
+      "0.0001",
+      "--step-size",
+      "20",
+      "--gamma",
+      "0.9",
+      "--label-smoothing",
+      "0.1",
+      "--loss-itm-weight",
+      "1.0",
+      "--ais-dropout-probability",
+      "0.5",
+      "--early-stopping-patience",
+      "25",
+      "--early-stopping-min-epochs",
+      "60",
+      "--data-root",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "--save-dir",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261104_212836_385933/artifacts",
+      "--stats-file",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261104_212836_385933/normalization_stats.json",
+      "--seed",
+      "43",
+      "--num-workers",
+      "2",
+      "--skip-audit"
+    ],
+    "arguments": {
+      "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "save_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261104_212836_385933/artifacts",
+      "stats_file": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261104_212836_385933/normalization_stats.json",
+      "epochs": 200,
+      "batch_size": 32,
+      "eval_batch_size": 128,
+      "eval_frequency": 1,
+      "lr": 0.0005,
+      "weight_decay": 0.0001,
+      "step_size": 20,
+      "gamma": 0.9,
+      "loss_ita_weight": 0.1,
+      "loss_itm_weight": 1.0,
+      "label_smoothing": 0.1,
+      "ais_feature_profile": "full",
+      "ais_dropout_probability": 0.5,
+      "class_balanced_train": false,
+      "early_stopping_patience": 25,
+      "early_stopping_min_epochs": 60,
+      "num_workers": 2,
+      "seed": 43,
+      "augment": true,
+      "max_train_batches": 0,
+      "skip_audit": true
+    },
+    "git_head": "d933f67bfaf88c6ab950ef8056dfc1f30fdcb2d1",
+    "git_status_short": "D runs/memory_probe_20261102/mcft_bs32/VDS2Raw-MCFT3/92b6e24cc8ba/benchmark.log\n D runs/memory_probe_20261102/mcft_bs32/VDS2Raw-MCFT3/92b6e24cc8ba/metrics.json\n D runs/memory_probe_20261102/mcft_bs32/VDS2Raw-MCFT3/92b6e24cc8ba/profiler_summary.txt\n D runs/memory_probe_20261102/mcft_bs32/efficiency_runs.csv\n D runs/memory_probe_20261102/mcft_bs32/efficiency_summary.csv\n D runs/memory_probe_20261102/mcft_bs32/environment.json\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/run_config.json\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261024_002205_64364/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261025_104112_2178598/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261025_104112_2178598/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261028_153906_548814/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/4daa48427b2b/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/4daa48427b2b/metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/4daa48427b2b/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/aac4f9886181/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/aac4f9886181/metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/aac4f9886181/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/bf74fa9eebe1/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/bf74fa9eebe1/metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/VDS2Raw-MCFT3/bf74fa9eebe1/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/efficiency_runs.csv\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/efficiency_summary.csv\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/efficiency/environment.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261029_100905_566087/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/7fb4587534df/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/7fb4587534df/metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/7fb4587534df/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/8e17b3c3f35a/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/8e17b3c3f35a/metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/8e17b3c3f35a/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/d96cbec32324/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/d96cbec32324/metrics.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/VDS2Raw-MCFT3/d96cbec32324/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/efficiency_runs.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/efficiency_summary.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/efficiency/environment.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261029_145426_1064219/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261102_114203_3207439/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261102_114203_3207439/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_result.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_result.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_run_config.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed43_train_history.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_result.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_result.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_run_config.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed44_train_history.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_result.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_result.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_run_config.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed45_train_history.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_result.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_result.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_run_config.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/artifacts/vds2raw_mcft3_seed46_train_history.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/0eda80e0a71c/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/0eda80e0a71c/metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/0eda80e0a71c/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/6ec2a0c4041c/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/6ec2a0c4041c/metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/6ec2a0c4041c/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/83f03f5dffd3/benchmark.log\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/83f03f5dffd3/metrics.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/VDS2Raw-MCFT3/83f03f5dffd3/profiler_summary.txt\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/efficiency_runs.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/efficiency_summary.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/efficiency/environment.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/summary_diagnostics_20261103/runs.csv\n D runs/vds2raw/vds2raw_formal_20261102_131731_3438777/summary_diagnostics_20261103/summary.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261103_202814_2474407/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261104_095716_3567992/summary/summary.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/dataset_audit.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/normalization_stats.json\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/summary/runs.csv\n D runs/vds2raw/vds2raw_formal_20261104_134241_3845007/summary/summary.csv\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/dataset_audit.json\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/normalization_stats.json\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/run_config.json\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/summary/runs.csv\n D runs/vds2raw/vds2raw_smoke_20261024_002128_71656/summary/summary.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/dataset_audit.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency/VDS2Raw-MCFT3/b2df69799185/benchmark.log\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency/VDS2Raw-MCFT3/b2df69799185/metrics.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency/VDS2Raw-MCFT3/b2df69799185/profiler_summary.txt\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency/efficiency_runs.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency/efficiency_summary.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency/environment.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency_multimodal/VDS2Raw-MCFT3/a82e348079a5/benchmark.log\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency_multimodal/VDS2Raw-MCFT3/a82e348079a5/metrics.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency_multimodal/VDS2Raw-MCFT3/a82e348079a5/profiler_summary.txt\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency_multimodal/efficiency_runs.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency_multimodal/efficiency_summary.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/efficiency_multimodal/environment.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/normalization_stats.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/run_config.json\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/summary/runs.csv\n D runs/vds2raw/vds2raw_smoke_20261101_200930_47136/summary/summary.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_result.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_result.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_run_config.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_selected_target_test_confusion_matrix.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_selected_target_test_predictions.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_selected_target_val_confusion_matrix.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_selected_target_val_predictions.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_target_test_metrics.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_target_test_metrics.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_target_val_metrics.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_target_val_metrics.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_train_history.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/artifacts/vds2raw_mcft3_seed42_train_history.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/dataset_audit.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/normalization_stats.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/run_config.json\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/summary/runs.csv\n D runs/vds2raw/vds2raw_smoke_20261103_153223_25720/summary/summary.csv\n D runs/weather_multimodal_smoke_20261101/artifacts/mcft_backlight_seed42_metrics.csv\n D runs/weather_multimodal_smoke_20261101/artifacts/mcft_backlight_seed42_metrics.json\n D runs/weather_multimodal_smoke_20261101/lists/backlight_sda_10shot_seed42.txt\n D runs/weather_multimodal_smoke_20261101/lists/backlight_train.txt\n D runs/weather_multimodal_smoke_20261101/lists/backlight_train_pairs.tsv\n D runs/weather_multimodal_smoke_20261101/lists/backlight_val.txt\n D runs/weather_multimodal_smoke_20261101/lists/paired_protocol_manifest.json\n D runs/weather_multimodal_smoke_20261101/lists/sunny_train.txt\n?? runs/vds2raw/vds2raw_formal_20261104_211723_355870/\n?? runs/vds2raw/vds2raw_formal_20261104_212836_385933/\n?? server_logs/dann_coral_cdan/\n?? server_logs/vds2raw_launcher/formal_20261104_211723_355865.log\n?? server_logs/vds2raw_launcher/formal_20261104_211723_355865.pid\n?? server_logs/vds2raw_launcher/formal_20261104_212836_385928.log\n?? server_logs/vds2raw_launcher/formal_20261104_212836_385928.pid",
+    "dataset_metadata_sha256": {
+      "dataset_manifest.csv": "27cfbd153c60f8ce1d2175f28a96eea8869cf5f2003d7b1554212731cd7bc3b2",
+      "feature_schema.json": "f92144ea2eee9dcd25fa2a07b99942fd37cd99c987ee98d7c801f45b68d175a9",
+      "build_report.json": "0e9c49c5b720176f5fc18bd65144d15aa2d5a12ffc11f708d22365ef69146933",
+      "band_order_verification.json": "0bd90b9332f4c54491da73d9475a9320bfcf9fba39b23168f40563835a7f6e61",
+      "validation_report.json": "9298b4c3669dc33b4f3bc61e37c618e2b1334d42d0ad712e57f5a6eb9a85aa04"
+    },
+    "explicit_input_sha256": {
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/manifest.json": "f12a6048be0d7c23bae2a723dc9b933ff49fc33b4e9762bc6d1b077ce57f10c5"
+    },
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8"
+  }
+}
