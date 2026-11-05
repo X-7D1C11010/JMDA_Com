@@ -61,6 +61,41 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("transfer_loss = mcc(y_t)", trainer)
         self.assertIn("target_conf=", trainer)
 
+    def test_log_driven_multimodal_stabilizers_are_wired(self):
+        with open(os.path.join(ROOT, "DeepCORAL", "train_deepcoral.py"),
+                  encoding="utf-8") as f:
+            coral = f.read()
+        self.assertIn("--vis-lr-mult", coral)
+        self.assertIn("--ir-lr-mult", coral)
+        self.assertIn("args.vis_lr_mult * args.lr", coral)
+        self.assertIn("args.ir_lr_mult * args.lr", coral)
+
+        with open(os.path.join(ROOT, "CDAN", "train_cdan.py"),
+                  encoding="utf-8") as f:
+            cdan = f.read()
+        self.assertIn("--source-warmup-iterations", cdan)
+        self.assertIn("source_warmup = iter_num < args.source_warmup_iterations", cdan)
+        self.assertIn("transfer_weight = 0.0", cdan)
+        self.assertIn("CrossEntropyLoss(label_smoothing=args.label_smoothing)", cdan)
+
+        with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
+                  encoding="utf-8-sig") as f:
+            local_launcher = f.read()
+        for expected in (
+            "'--vis-lr-mult'", "'--ir-lr-mult'",
+            "'--source-warmup-iterations'", "CDANLabelSmoothing",
+        ):
+            self.assertIn(expected, local_launcher)
+
+        with open(os.path.join(ROOT, "scripts", "run_server_dann_coral_cdan.sh"),
+                  encoding="utf-8") as f:
+            server_launcher = f.read()
+        self.assertIn('--vis-lr-mult "$DEEPCORAL_VIS_LR_MULT"', server_launcher)
+        self.assertIn('--source-warmup-iterations "$CDAN_SOURCE_WARMUP_ITERATIONS"',
+                      server_launcher)
+        self.assertIn('--model-selection best_target_val_ACC_within_budget',
+                      server_launcher)
+
     def test_dann_uses_released_cnn_with_dynamic_head(self):
         model_dir = os.path.join(ROOT, "DANN", "models")
         module = load_module(
@@ -200,15 +235,18 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8-sig") as f:
             tuned = f.read()
         for expected in (
-            "DANNEpochs = 22",
-            "DANNGrlMaxIterations = 700",
+            "DANNEpochs = 24",
+            "DANNGrlMaxIterations = 3300",
             "DANNTargetEvalInterval = 1",
-            "DeepCoralWarmupEpochs = 0",
+            "DeepCoralWarmupEpochs = 2",
             "DeepCoralLabelSmoothing = 0.05",
+            "DeepCoralVisualLearningRateMultiplier = 0.1",
+            "DeepCoralInfraredLearningRateMultiplier = 1.0",
             "CdanIterations = 1400",
-            "CDANCoeffMaxIterations = 12000",
+            "CDANSourceWarmupIterations = 200",
+            "CDANCoeffMaxIterations = 6000",
             "CDANTestInterval = 100",
-            "MCCSourceWarmupEpochs = 5",
+            "MCCSourceWarmupEpochs = 2",
         ):
             self.assertIn(expected, tuned)
 
@@ -216,16 +254,16 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8") as f:
             server_heavy = f.read()
         for expected in (
-            'UDA_MDD_EPOCHS:-36',
+            'UDA_MDD_EPOCHS:-20',
             'UDA_MDD_LR:-0.0025',
             'UDA_MDD_ITERS_PER_EPOCH:-80',
-            'UDA_MDD_TRADE_OFF:-0.45',
-            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-12',
-            'UDA_MCC_EPOCHS:-26',
+            'UDA_MDD_TRADE_OFF:-0.35',
+            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-10',
+            'UDA_MCC_EPOCHS:-14',
             'UDA_MCC_LR:-0.002',
             'UDA_MCC_ITERS_PER_EPOCH:-100',
-            'UDA_MCC_TRADE_OFF:-0.15',
-            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-12',
+            'UDA_MCC_TRADE_OFF:-0.02',
+            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-10',
             'UDA_MCC_LABEL_SMOOTHING:-0.10',
         ):
             self.assertIn(expected, server_heavy)

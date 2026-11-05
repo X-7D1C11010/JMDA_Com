@@ -11,11 +11,27 @@ PYTHON_BIN="${PYTHON:-python}"
 DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 TARGET_TEXT="${JMDA_TARGETS:-backlight rainy foggy dark}"
 SEED="${JMDA_SEED:-42}"
-DANN_EPOCHS="${DANN_EPOCHS:-100}"
-DEEPCORAL_EPOCHS="${DEEPCORAL_EPOCHS:-20}"
+DANN_EPOCHS="${DANN_EPOCHS:-24}"
+DEEPCORAL_EPOCHS="${DEEPCORAL_EPOCHS:-30}"
 DANN_ITERATIONS="${DANN_ITERATIONS:-0}"
 DEEPCORAL_ITERATIONS="${DEEPCORAL_ITERATIONS:-0}"
-CDAN_ITERATIONS="${CDAN_ITERATIONS:-2000}"
+CDAN_ITERATIONS="${CDAN_ITERATIONS:-1400}"
+DANN_LR="${DANN_LR:-0.0005}"
+DANN_DOMAIN_LOSS_WEIGHT="${DANN_DOMAIN_LOSS_WEIGHT:-0.5}"
+DANN_GRL_MAX_ITERATIONS="${DANN_GRL_MAX_ITERATIONS:-3300}"
+DEEPCORAL_LR="${DEEPCORAL_LR:-0.0005}"
+DEEPCORAL_MAX_WEIGHT="${DEEPCORAL_MAX_WEIGHT:-0.3}"
+DEEPCORAL_WARMUP_EPOCHS="${DEEPCORAL_WARMUP_EPOCHS:-2}"
+DEEPCORAL_HEAD_LR_MULT="${DEEPCORAL_HEAD_LR_MULT:-3.0}"
+DEEPCORAL_VIS_LR_MULT="${DEEPCORAL_VIS_LR_MULT:-0.1}"
+DEEPCORAL_IR_LR_MULT="${DEEPCORAL_IR_LR_MULT:-1.0}"
+CDAN_LR="${CDAN_LR:-0.0005}"
+CDAN_HEAD_LR_MULT="${CDAN_HEAD_LR_MULT:-3.0}"
+CDAN_AD_LR_MULT="${CDAN_AD_LR_MULT:-3.0}"
+CDAN_TRADE_OFF="${CDAN_TRADE_OFF:-0.3}"
+CDAN_SOURCE_WARMUP_ITERATIONS="${CDAN_SOURCE_WARMUP_ITERATIONS:-200}"
+CDAN_LABEL_SMOOTHING="${CDAN_LABEL_SMOOTHING:-0.05}"
+CDAN_COEFF_MAX_ITERATIONS="${CDAN_COEFF_MAX_ITERATIONS:-6000}"
 DANN_TARGET_EVAL_INTERVAL="${DANN_TARGET_EVAL_INTERVAL:-1}"
 DEEPCORAL_TARGET_EVAL_INTERVAL="${DEEPCORAL_TARGET_EVAL_INTERVAL:-1}"
 CDAN_TEST_INTERVAL="${CDAN_TEST_INTERVAL:-100}"
@@ -41,11 +57,11 @@ Usage:
   bash scripts/run_server_dann_coral_cdan.sh [options]
 
 Options:
-  --dann-epochs N             DANN epochs (default 100)
-  --deepcoral-epochs N        DeepCORAL epochs (default 20)
+  --dann-epochs N             DANN epochs (default 24)
+  --deepcoral-epochs N        DeepCORAL epochs (default 30)
   --dann-iterations N         Exact DANN updates; 0 uses epochs
   --deepcoral-iterations N    Exact DeepCORAL updates; 0 uses epochs
-  --cdan-iterations N         CDAN optimizer updates (default 2000)
+  --cdan-iterations N         CDAN optimizer updates (default 1400)
   --dann-eval-interval N      DANN target-val interval in epochs (default 1)
   --deepcoral-eval-interval N DeepCORAL target-val interval in epochs (default 1)
   --cdan-test-interval N      CDAN target-val interval in updates (default 100)
@@ -137,6 +153,22 @@ positive_integer CDAN_ITERATIONS "$CDAN_ITERATIONS"
 positive_integer DANN_TARGET_EVAL_INTERVAL "$DANN_TARGET_EVAL_INTERVAL"
 positive_integer DEEPCORAL_TARGET_EVAL_INTERVAL "$DEEPCORAL_TARGET_EVAL_INTERVAL"
 positive_integer CDAN_TEST_INTERVAL "$CDAN_TEST_INTERVAL"
+positive_integer DANN_GRL_MAX_ITERATIONS "$DANN_GRL_MAX_ITERATIONS"
+if ! [[ "$DEEPCORAL_WARMUP_EPOCHS" =~ ^[0-9]+$ ]]; then
+  echo "DEEPCORAL_WARMUP_EPOCHS must be non-negative" >&2; exit 2
+fi
+if ! [[ "$CDAN_SOURCE_WARMUP_ITERATIONS" =~ ^[0-9]+$ ]] \
+   || (( CDAN_SOURCE_WARMUP_ITERATIONS >= CDAN_ITERATIONS )); then
+  echo "CDAN_SOURCE_WARMUP_ITERATIONS must be in [0, CDAN_ITERATIONS)" >&2; exit 2
+fi
+positive_integer CDAN_COEFF_MAX_ITERATIONS "$CDAN_COEFF_MAX_ITERATIONS"
+for numeric_setting in \
+  DANN_LR DANN_DOMAIN_LOSS_WEIGHT DEEPCORAL_LR DEEPCORAL_MAX_WEIGHT \
+  DEEPCORAL_HEAD_LR_MULT DEEPCORAL_VIS_LR_MULT DEEPCORAL_IR_LR_MULT \
+  CDAN_LR CDAN_HEAD_LR_MULT CDAN_AD_LR_MULT CDAN_TRADE_OFF \
+  CDAN_LABEL_SMOOTHING; do
+  nonnegative_number "$numeric_setting" "${!numeric_setting}"
+done
 if ! [[ "$DANN_ITERATIONS" =~ ^[0-9]+$ ]]; then
   echo "DANN_ITERATIONS must be non-negative: $DANN_ITERATIONS" >&2; exit 2
 fi
@@ -259,7 +291,7 @@ run_on_gpu() {
       --epochs "$record_epochs" --seed "$SEED" \
       --efficiency-dir "$RUN_ROOT/efficiency" \
       --input-modalities VIS+IR --label-space-relation partial-set \
-      --model-selection final_in_memory >> "$log" 2>&1; then
+      --model-selection best_target_val_ACC_within_budget >> "$log" 2>&1; then
     echo "[FAILED] result collection for $tag" >&2
     return 1
   fi
@@ -288,12 +320,18 @@ if [ "$NUM_WORKERS" = "0" ]; then
 fi
 
 FAILURES=0
+echo "DANN recipe: epochs=$DANN_EPOCHS lr=$DANN_LR domain_weight=$DANN_DOMAIN_LOSS_WEIGHT grl_max=$DANN_GRL_MAX_ITERATIONS"
+echo "DeepCORAL recipe: epochs=$DEEPCORAL_EPOCHS lr=$DEEPCORAL_LR coral_weight=$DEEPCORAL_MAX_WEIGHT warmup=$DEEPCORAL_WARMUP_EPOCHS lr_mult=VIS:$DEEPCORAL_VIS_LR_MULT,IR:$DEEPCORAL_IR_LR_MULT,head:$DEEPCORAL_HEAD_LR_MULT"
+echo "CDAN recipe: iterations=$CDAN_ITERATIONS lr=$CDAN_LR warmup=$CDAN_SOURCE_WARMUP_ITERATIONS trade_off=$CDAN_TRADE_OFF coeff_max=$CDAN_COEFF_MAX_ITERATIONS"
 for target in "${TARGETS[@]}"; do
   tag="DANN_${target}_seed${SEED}"
   run_on_gpu "$tag" "$DANN_MIN_FREE_MIB" "$RUN_ROOT/logs/${tag}.log" \
     "dann_${target}" "$DANN_EPOCHS" \
     "$PYTHON_BIN" "$HERE/DANN/train_dann.py" --target "$target" \
     --epochs "$DANN_EPOCHS" --max-iterations "$DANN_ITERATIONS" \
+    --lr "$DANN_LR" --domain-loss-weight "$DANN_DOMAIN_LOSS_WEIGHT" \
+    --grl-max-iterations "$DANN_GRL_MAX_ITERATIONS" \
+    --lr-scheduler cosine --min-lr-ratio 0.2 \
     --target-eval-interval "$DANN_TARGET_EVAL_INTERVAL" \
     --backbone jmda --batch-size "$BATCH_SIZE" \
     "${COMMON[@]}" || FAILURES=$((FAILURES + 1))
@@ -304,6 +342,13 @@ for target in "${TARGETS[@]}"; do
     "deepcoral_${target}" "$DEEPCORAL_EPOCHS" \
     "$PYTHON_BIN" "$HERE/DeepCORAL/train_deepcoral.py" --target "$target" \
     --epochs "$DEEPCORAL_EPOCHS" --max-iterations "$DEEPCORAL_ITERATIONS" \
+    --lr "$DEEPCORAL_LR" --coral-max-weight "$DEEPCORAL_MAX_WEIGHT" \
+    --coral-warmup-epochs "$DEEPCORAL_WARMUP_EPOCHS" \
+    --head-lr-mult "$DEEPCORAL_HEAD_LR_MULT" \
+    --vis-lr-mult "$DEEPCORAL_VIS_LR_MULT" \
+    --ir-lr-mult "$DEEPCORAL_IR_LR_MULT" \
+    --weight-decay 0.0005 --label-smoothing 0.05 \
+    --lr-scheduler cosine --min-lr-ratio 0.1 \
     --target-eval-interval "$DEEPCORAL_TARGET_EVAL_INTERVAL" \
     --backbone jmda \
     --source-batch-size "$BATCH_SIZE" --target-batch-size "$BATCH_SIZE" \
@@ -315,6 +360,11 @@ for target in "${TARGETS[@]}"; do
     "cdan_${target}" 0 \
     "$PYTHON_BIN" "$HERE/CDAN/train_cdan.py" --target "$target" \
     --num-iterations "$CDAN_ITERATIONS" --test-interval "$CDAN_TEST_INTERVAL" \
+    --lr "$CDAN_LR" --head-lr-mult "$CDAN_HEAD_LR_MULT" \
+    --ad-lr-mult "$CDAN_AD_LR_MULT" --trade-off "$CDAN_TRADE_OFF" \
+    --source-warmup-iterations "$CDAN_SOURCE_WARMUP_ITERATIONS" \
+    --label-smoothing "$CDAN_LABEL_SMOOTHING" \
+    --coeff-max-iter "$CDAN_COEFF_MAX_ITERATIONS" \
     --backbone JMDA \
     --batch-size "$BATCH_SIZE" "${COMMON[@]}" || FAILURES=$((FAILURES + 1))
 done

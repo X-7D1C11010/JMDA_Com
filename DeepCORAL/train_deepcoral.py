@@ -222,6 +222,10 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--head-lr-mult', type=float, default=10.0,
                         help='classifier-head learning-rate multiplier')
+    parser.add_argument('--vis-lr-mult', type=float, default=1.0,
+                        help='VIS encoder learning-rate multiplier')
+    parser.add_argument('--ir-lr-mult', type=float, default=1.0,
+                        help='IR encoder learning-rate multiplier')
     parser.add_argument('--lr-scheduler', choices=['constant', 'cosine'],
                         default='constant')
     parser.add_argument('--min-lr-ratio', type=float, default=0.05,
@@ -275,7 +279,8 @@ def main():
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
     if (args.coral_max_weight < 0 or args.coral_warmup_epochs < 0 or
             args.coral_warmup_epochs >= args.epochs or args.target_eval_interval < 0 or
-            args.head_lr_mult <= 0 or not 0 <= args.min_lr_ratio <= 1 or
+            args.head_lr_mult <= 0 or args.vis_lr_mult <= 0 or
+            args.ir_lr_mult <= 0 or not 0 <= args.min_lr_ratio <= 1 or
             not 0 <= args.label_smoothing < 1):
         raise ValueError('invalid CORAL weight/eval interval/head LR/scheduler setting')
     train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
@@ -345,15 +350,23 @@ def main():
         print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
     # The released recipe uses a 10x head. Keep that as the default while
     # allowing small target datasets to slow the head independently.
-    optimizer_groups = [{'params': model.sharedNet.parameters()}]
+    optimizer_groups = [{
+        'params': model.sharedNet.parameters(),
+        'lr': args.vis_lr_mult * args.lr,
+    }]
     if getattr(model, 'irNet', None) is not None:
-        optimizer_groups.append({'params': model.irNet.parameters()})
+        optimizer_groups.append({
+            'params': model.irNet.parameters(),
+            'lr': args.ir_lr_mult * args.lr,
+        })
     optimizer_groups.append({'params': model.fc.parameters(),
                              'lr': args.head_lr_mult * args.lr})
     optimizer = optim.SGD(optimizer_groups, lr=args.lr, momentum=0.9,
                           weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
           f'{[group["lr"] for group in optimizer.param_groups]}')
+    print(f'DeepCORAL LR multipliers: VIS={args.vis_lr_mult}, '
+          f'IR={args.ir_lr_mult}, head={args.head_lr_mult}')
     criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     print(f'DeepCORAL source label smoothing: {args.label_smoothing}')
 

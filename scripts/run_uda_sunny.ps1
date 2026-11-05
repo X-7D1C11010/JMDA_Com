@@ -50,12 +50,16 @@ param(
     [double]$DeepCoralLabelSmoothing = 0.0,
     [int]$DeepCoralTargetEvalInterval = 0,
     [double]$DeepCoralHeadLearningRateMultiplier = 10.0,
+    [double]$DeepCoralVisualLearningRateMultiplier = 1.0,
+    [double]$DeepCoralInfraredLearningRateMultiplier = 1.0,
     [ValidateSet('constant', 'cosine')]
     [string]$DeepCoralLearningRateScheduler = 'constant',
     [double]$DeepCoralMinimumLearningRateRatio = 0.05,
     [double]$CDANHeadLearningRateMultiplier = 10.0,
     [double]$CDANAdLearningRateMultiplier = 10.0,
     [double]$CDANTradeOff = 1.0,
+    [int]$CDANSourceWarmupIterations = 0,
+    [double]$CDANLabelSmoothing = 0.0,
     [int]$CDANCoeffMaxIterations = 0,
     [double]$CDANCoeffAlpha = 10.0,
     [int]$CDANTestInterval = 500,
@@ -184,10 +188,15 @@ if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
     $DeepCoralLabelSmoothing -lt 0 -or $DeepCoralLabelSmoothing -ge 1 -or
     $DeepCoralTargetEvalInterval -lt 0 -or
     $DeepCoralHeadLearningRateMultiplier -le 0 -or
+    $DeepCoralVisualLearningRateMultiplier -le 0 -or
+    $DeepCoralInfraredLearningRateMultiplier -le 0 -or
     $DeepCoralMinimumLearningRateRatio -lt 0 -or
     $DeepCoralMinimumLearningRateRatio -gt 1 -or
     $CDANHeadLearningRateMultiplier -le 0 -or
     $CDANAdLearningRateMultiplier -le 0 -or $CDANTradeOff -lt 0 -or
+    $CDANSourceWarmupIterations -lt 0 -or
+    $CDANSourceWarmupIterations -ge $CdanIterations -or
+    $CDANLabelSmoothing -lt 0 -or $CDANLabelSmoothing -ge 1 -or
     $CDANCoeffMaxIterations -lt 0 -or $CDANCoeffAlpha -le 0 -or
     $CDANTestInterval -lt 1 -or $MDDIterationsPerEpoch -lt 1 -or
     $MDDTradeOff -lt 0 -or $MDDTradeOffWarmupEpochs -lt 0 -or
@@ -360,11 +369,23 @@ foreach ($method in $Methods.Keys) {
                           '--head-lr-mult', ([Convert]::ToString(
                               $DeepCoralHeadLearningRateMultiplier,
                               [Globalization.CultureInfo]::InvariantCulture)),
+                          '--vis-lr-mult', ([Convert]::ToString(
+                              $DeepCoralVisualLearningRateMultiplier,
+                              [Globalization.CultureInfo]::InvariantCulture)),
+                          '--ir-lr-mult', ([Convert]::ToString(
+                              $DeepCoralInfraredLearningRateMultiplier,
+                              [Globalization.CultureInfo]::InvariantCulture)),
                           '--lr-scheduler', $DeepCoralLearningRateScheduler,
                           '--min-lr-ratio', ([Convert]::ToString(
                               $DeepCoralMinimumLearningRateRatio,
                               [Globalization.CultureInfo]::InvariantCulture)),
                           '--target-eval-interval', $DeepCoralTargetEvalInterval)
+            }
+            if ($method -eq 'CDAN') {
+                $cli += @('--source-warmup-iterations', $CDANSourceWarmupIterations,
+                          '--label-smoothing', ([Convert]::ToString(
+                              $CDANLabelSmoothing,
+                              [Globalization.CultureInfo]::InvariantCulture)))
             }
             if ($method -eq 'MDD') {
                 $cli += @('--iters-per-epoch', $MDDIterationsPerEpoch,

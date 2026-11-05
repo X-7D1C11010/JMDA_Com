@@ -153,7 +153,7 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
         if eff:
             eff.step_end()
 
-        if (i + 1) % args.print_freq == 0:
+        if (i + 1) % args.print_freq == 0 or i + 1 == args.iters_per_epoch:
             acc = accuracy(y_s, labels_s)[0]
             learning_rates = lr_scheduler.get_last_lr()
             print(f'  Epoch [{epoch}/{args.epochs}] iter [{i + 1}/{args.iters_per_epoch}] '

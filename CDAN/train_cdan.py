@@ -167,6 +167,10 @@ def main():
                         help='domain-discriminator learning-rate multiplier')
     parser.add_argument('--trade-off', type=float, default=1.0,
                         help='weight applied to the conditional adversarial loss')
+    parser.add_argument('--source-warmup-iterations', type=int, default=0,
+                        help='source-only updates before conditional adversarial adaptation')
+    parser.add_argument('--label-smoothing', type=float, default=0.0,
+                        help='source cross-entropy label smoothing')
     parser.add_argument('--coeff-max-iter', type=int, default=0,
                         help='GRL ramp length; 0 uses --num-iterations')
     parser.add_argument('--coeff-alpha', type=float, default=10.0,
@@ -204,7 +208,9 @@ def main():
     if (args.num_iterations < 1 or args.test_interval < 1 or
             args.head_lr_mult <= 0 or args.ad_lr_mult <= 0 or
             args.trade_off < 0 or args.coeff_max_iter < 0 or
-            args.coeff_alpha <= 0):
+            args.source_warmup_iterations < 0 or
+            args.source_warmup_iterations >= args.num_iterations or
+            not 0 <= args.label_smoothing < 1 or args.coeff_alpha <= 0):
         raise ValueError('invalid CDAN iteration/evaluation/lr-mult/ramp setting')
     coeff_max_iter = args.coeff_max_iter or args.num_iterations
     args.seed = seed_everything(args.seed)
@@ -302,7 +308,11 @@ def main():
         'CDAN optimizer group lr_mult: '
         f'{[group.get("lr_mult") for group in optimizer.param_groups]}'
     )
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    print(f'CDAN schedule: source-only warmup={args.source_warmup_iterations} '
+          f'updates; adaptation updates='
+          f'{args.num_iterations - args.source_warmup_iterations}; '
+          f'label smoothing={args.label_smoothing}')
 
     best_acc = -float('inf')
     best_iteration = 0
@@ -357,27 +367,33 @@ def main():
         if eff:
             eff.dataloader_done()
 
-        # 原参考实现 train_image.py:175-178：源/目标分别前向，再拼接
+        # Establish a discriminative source classifier before CDAN conditions
+        # its discriminator on target predictions. Target labels stay unused.
         features_source, outputs_source = model(src_imgs)
-        features_target, outputs_target = model(tgt_imgs)
-        features = torch.cat((features_source, features_target), dim=0)
-        outputs = torch.cat((outputs_source, outputs_target), dim=0)
-        softmax_out = nn.Softmax(dim=1)(outputs)
-
-        # Classification loss on source
         loss_cls = criterion(outputs_source, src_labels)
-
-        # CDAN loss（trade_off=1.0，train_image.py:229）
-        if args.method == 'CDAN+E':
-            entropy = Entropy(softmax_out)
-            loss_transfer = CDAN([features, softmax_out], ad_net, entropy,
-                                 calc_coeff(iter_num, alpha=args.coeff_alpha,
-                                            max_iter=coeff_max_iter), random_layer)
+        source_warmup = iter_num < args.source_warmup_iterations
+        if source_warmup:
+            loss_transfer = loss_cls.new_zeros(())
+            transfer_weight = 0.0
+            coeff = 0.0
         else:
-            loss_transfer = CDAN([features, softmax_out], ad_net,
-                                 None, None, random_layer)
+            features_target, outputs_target = model(tgt_imgs)
+            features = torch.cat((features_source, features_target), dim=0)
+            outputs = torch.cat((outputs_source, outputs_target), dim=0)
+            softmax_out = nn.Softmax(dim=1)(outputs)
+            adaptation_iteration = iter_num - args.source_warmup_iterations
+            coeff = calc_coeff(adaptation_iteration, alpha=args.coeff_alpha,
+                               max_iter=coeff_max_iter)
+            if args.method == 'CDAN+E':
+                entropy = Entropy(softmax_out)
+                loss_transfer = CDAN([features, softmax_out], ad_net, entropy,
+                                     coeff, random_layer)
+            else:
+                loss_transfer = CDAN([features, softmax_out], ad_net,
+                                     None, None, random_layer)
+            transfer_weight = args.trade_off
 
-        loss = loss_cls + args.trade_off * loss_transfer
+        loss = loss_cls + transfer_weight * loss_transfer
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -388,8 +404,8 @@ def main():
                 iter_num == args.num_iterations - 1):
             print(f'  iter [{iter_num + 1}/{args.num_iterations}] '
                   f'loss_cls={loss_cls.item():.4f} loss_transfer={loss_transfer.item():.4f} '
-                  f'trade_off={args.trade_off:.3f} '
-                  f'coeff={calc_coeff(iter_num, alpha=args.coeff_alpha, max_iter=coeff_max_iter):.4f} '
+                  f'trade_off={transfer_weight:.3f} warmup={source_warmup} '
+                  f'coeff={coeff:.4f} '
                   f'lr={optimizer.param_groups[0]["lr"]:.2e}')
 
         # Diagnostic target evaluation is periodic, but never controls
