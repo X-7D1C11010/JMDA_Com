@@ -229,8 +229,8 @@ def adapter_vds_mcft3():
         return {
             'rgb': torch.randn(bs, 3, 96, 96, device=device),
             'nir': torch.randn(bs, 1, 96, 96, device=device),
-            'ais': torch.randn(bs, 13, device=device),
-            'ais_mask': torch.ones(bs, 13, device=device),
+            'ais': torch.randn(bs, 4, device=device),
+            'ais_mask': torch.ones(bs, 4, device=device),
         }
     def forward_loss(model, inp):
         labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
@@ -261,8 +261,8 @@ def adapter_vds_tir():
         return {
             'rgb': torch.randn(bs, 3, 224, 224, device=device),
             'nir': torch.randn(bs, 1, 224, 224, device=device),
-            'ais': torch.randn(bs, 13, device=device),
-            'ais_mask': torch.ones(bs, 13, device=device),
+            'ais': torch.randn(bs, 4, device=device),
+            'ais_mask': torch.ones(bs, 4, device=device),
         }
     def forward_loss(model, inp):
         labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
@@ -279,7 +279,7 @@ def adapter_vds_tir():
             'build':build,'make_input':make_input,'forward_loss':forward_loss,
             'forward_infer':forward_infer,
             'vis_shape':'(1,3,224,224)','ir_shape':'(1,1,224,224)',
-            'ais_shape':'(1,13)'}
+            'ais_shape':'(1,4)'}
 
 # ── Source-only ──────────────────────────────────────────────────────────────
 def adapter_source_only():

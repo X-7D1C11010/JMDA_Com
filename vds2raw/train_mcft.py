@@ -22,11 +22,17 @@ from vds2raw.common import (
     save_prediction_artifacts,
     save_run_config,
 )
-from vds2raw.dataset import VDS2RawDataset, audit_dataset, load_or_compute_statistics
+from vds2raw.dataset import (
+    EXCLUDED_AIS_PROXY_FEATURES,
+    SAFE_AIS_FEATURE_NAMES,
+    VDS2RawDataset,
+    audit_dataset,
+    load_or_compute_statistics,
+)
 from vds2raw.models import MCFTWithAIS
 
 
-DEFAULT_AIS_FEATURE_PROFILE = "full"
+DEFAULT_AIS_FEATURE_PROFILE = "continuous"
 
 
 def class_balanced_sampler(*datasets, seed):
@@ -76,11 +82,11 @@ def main():
     parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument(
         "--ais-feature-profile",
-        choices=("continuous", "full"),
+        choices=("continuous",),
         default=DEFAULT_AIS_FEATURE_PROFILE,
         help=(
-            "full (default) matches JMDA with all 13 AIS fields and mask bits; "
-            "continuous is retained only as an explicit ablation"
+            "Proxy-safe AIS input: heading sin/cos, standardized length, and "
+            "standardized width. Navigation-status fields are never exposed."
         ),
     )
     parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
@@ -246,20 +252,13 @@ def main():
         "num_classes": 3,
         "adaptation_note": (
             "official two-image MCFT trunk plus regularized AIS late-fusion; "
-            "all 13 gated AIS values and 13 validity bits follow the JMDA input convention"
+            "only heading, length, and width are retained; validity masks gate "
+            "missing values and are not classifier features"
         ),
         "ais_feature_profile": args.ais_feature_profile,
-        "ais_feature_names": (
-            ["heading_sin", "heading_cos", "length_z", "width_z"]
-            if args.ais_feature_profile == "continuous"
-            else "all_13_fields_in_feature_schema"
-        ),
-        "excluded_label_proxy_fields": (
-            ["nav_status_one_hot"]
-            if args.ais_feature_profile == "continuous"
-            else []
-        ),
-        "ais_mask_as_classifier_feature": True,
+        "ais_feature_names": list(SAFE_AIS_FEATURE_NAMES),
+        "excluded_label_proxy_fields": list(EXCLUDED_AIS_PROXY_FEATURES),
+        "ais_mask_as_classifier_feature": False,
         "ais_dropout_probability": args.ais_dropout_probability,
         "augmentation": "paired horizontal and vertical flips" if args.augment else "none",
         "label_smoothing": args.label_smoothing,

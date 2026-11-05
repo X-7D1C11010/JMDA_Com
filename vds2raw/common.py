@@ -338,10 +338,14 @@ def build_run_provenance(args, data_root, input_files=()):
 
 def save_run_config(save_dir, stem, args, metadata, data_root, input_files=()):
     path = Path(save_dir) / f"{stem}_run_config.json"
+    test_selection_bias = bool(metadata.get("test_selection_bias", True))
     payload = {
         "protocol_warning": (
             "target_test is evaluated during training and selects the checkpoint; "
             "reported target_test is a test-set-selected peak, not an unbiased estimate"
+            if test_selection_bias
+            else "target_test does not select among intermediate checkpoints; "
+            "the recorded checkpoint is the final scheduled evaluation"
         ),
         "metadata": metadata,
         "provenance": build_run_provenance(args, data_root, input_files),
@@ -374,13 +378,20 @@ def save_experiment_results(
     train_csv, train_json = save_record_history(
         save_dir, stem + "_train_history", training_history or [], metadata
     )
+    test_selection_bias = bool(metadata.get("test_selection_bias", True))
+    selection_partition = metadata.get("selection_partition", "target_test")
+    model_selection = (
+        "best target_test ACC, macro-F1 tie-break; test-set-selected peak"
+        if test_selection_bias
+        else "final scheduled target_test evaluation; no intermediate test selection"
+    )
     result = {
-        "protocol": "cross-day fully supervised domain adaptation",
-        "model_selection": (
-            "best target_test ACC, macro-F1 tie-break; test-set-selected peak"
+        "protocol": metadata.get(
+            "supervision_protocol", metadata.get("experiment_profile", "unspecified")
         ),
-        "selection_partition": "target_test",
-        "test_selection_bias": True,
+        "model_selection": model_selection,
+        "selection_partition": selection_partition,
+        "test_selection_bias": test_selection_bias,
         "test_evaluations_for_selection": len(test_history),
         "selected_checkpoint_report_evaluations": 1,
         "selected_epoch": int(selected_epoch),
@@ -413,17 +424,22 @@ def save_experiment_results(
         "samples",
     )
     rows = []
+    test_split_name = (
+        "target_test_selected_peak"
+        if test_selection_bias
+        else "target_test_final_evaluation"
+    )
     for split, metrics in (
         ("target_val_at_selected_epoch", selected_val),
-        ("target_test_selected_peak", selected_test),
+        (test_split_name, selected_test),
     ):
         rows.append(
             {
                 "method": metadata["method"],
                 "seed": metadata["seed"],
                 "selected_epoch": selected_epoch,
-                "selection_partition": "target_test",
-                "test_selection_bias": True,
+                "selection_partition": selection_partition,
+                "test_selection_bias": test_selection_bias,
                 "split": split,
                 "ACC": metrics["accuracy"],
                 "Precision_macro": metrics["precision_macro"],
@@ -445,8 +461,8 @@ def save_experiment_results(
                 "method": metadata["method"],
                 "seed": metadata["seed"],
                 "selected_epoch": selected_epoch,
-                "selection_partition": "target_test",
-                "test_selection_bias": True,
+                "selection_partition": selection_partition,
+                "test_selection_bias": test_selection_bias,
                 "metrics": selected_test,
             },
             ensure_ascii=False,

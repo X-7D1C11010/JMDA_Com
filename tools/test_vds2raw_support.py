@@ -18,6 +18,7 @@ from vds2raw.dataset import (
 )
 from vds2raw.models import MCFTWithAIS
 from vds2raw.train_mcft import class_balanced_sampler
+from vds2raw.train_tir import select_support_indices
 
 
 def write_sample(path, rgb_value, nir_value, label):
@@ -60,6 +61,18 @@ class VDS2RawDatasetTests(_FixtureMixin, unittest.TestCase):
             np.testing.assert_allclose(statistics.rgb_mean, [2.0, 2.0, 2.0])
             np.testing.assert_allclose(statistics.nir_mean, [12.0])
 
+    def test_tir_statistics_can_be_fitted_without_source_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_fixture(root)
+            statistics = compute_image_statistics(
+                root, fit_partitions=("target_train",)
+            )
+            self.assertEqual(statistics.fit_samples, 1)
+            self.assertEqual(statistics.fit_partitions, ("target_train",))
+            np.testing.assert_allclose(statistics.rgb_mean, [3.0, 3.0, 3.0])
+            np.testing.assert_allclose(statistics.nir_mean, [14.0])
+
     def test_mcft_and_tir_views_have_declared_native_shapes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -75,8 +88,11 @@ class VDS2RawDatasetTests(_FixtureMixin, unittest.TestCase):
             self.assertEqual(mcft_item["nir"].shape, (1, 96, 96))
             self.assertEqual(tir_item["rgb"].shape, (3, 224, 224))
             self.assertEqual(tir_item["nir"].shape, (1, 224, 224))
-            self.assertEqual(tir_item["ais"].shape, (13,))
-            self.assertEqual(tir_item["ais_mask"].shape, (13,))
+            self.assertEqual(mcft_item["ais"].shape, (4,))
+            self.assertEqual(mcft_item["ais_mask"].shape, (4,))
+            self.assertEqual(tir_item["ais"].shape, (4,))
+            self.assertEqual(tir_item["ais_mask"].shape, (4,))
+            torch.testing.assert_close(tir_item["ais"], torch.arange(4).float())
 
 
 class MCFTAdapterTests(unittest.TestCase):
@@ -120,16 +136,16 @@ class MCFTAdapterTests(unittest.TestCase):
         self.assertEqual(observed["conv_output"], (96, 96))
         self.assertEqual(observed["pool_output"], (15, 15))
 
-    def test_default_mcft_ais_matches_jmda_values_plus_mask_convention(self):
+    def test_default_mcft_ais_uses_proxy_safe_gated_values_only(self):
         model = MCFTWithAIS(num_classes=3).eval()
-        ais = torch.randn(2, 13)
+        ais = torch.randn(2, 4)
         mask = torch.zeros_like(ais)
         with torch.no_grad():
             expected = model.encode_ais(torch.zeros_like(ais), mask)
             actual = model.encode_ais(ais, mask)
         torch.testing.assert_close(actual, expected)
-        self.assertEqual(model.ais_feature_profile, "full")
-        self.assertEqual(model.ais_encoder[0].normalized_shape, (26,))
+        self.assertEqual(model.ais_feature_profile, "continuous")
+        self.assertEqual(model.ais_encoder[0].normalized_shape, (4,))
 
 
 class TIRCoreTests(unittest.TestCase):
@@ -142,7 +158,7 @@ class TIRCoreTests(unittest.TestCase):
             }
         )
 
-    def test_three_way_rule_amplifies_unique_class_tokens(self):
+    def test_three_way_rule_matches_official_linear_fewer_class_branch(self):
         tokens = torch.tensor(
             [
                 [[0.0, 0.0, 0.0]],
@@ -161,10 +177,13 @@ class TIRCoreTests(unittest.TestCase):
             runtime.aux_container["tir_last_weights"],
             torch.tensor([[2.0, 2.0, 2.0, 1.0]]),
         )
-        self.assertEqual(runtime.aux_container["tir_weight_rule"], "paper_simplified_kway")
+        self.assertEqual(
+            runtime.aux_container["tir_weight_rule"],
+            "official_linear_fewer_classes",
+        )
         self.assertEqual(output.shape, tokens.shape)
 
-    def test_three_way_rule_suppresses_tokens_selected_by_all_classes(self):
+    def test_three_way_all_class_token_uses_official_sum_three_weight(self):
         tokens = torch.tensor(
             [
                 [[0.0, 0.0, 0.0]],
@@ -181,7 +200,7 @@ class TIRCoreTests(unittest.TestCase):
         )
         torch.testing.assert_close(
             runtime.aux_container["tir_last_weights"],
-            torch.tensor([[0.0, 1.0, 1.0, 1.0]]),
+            torch.tensor([[1.0, 1.0, 1.0, 1.0]]),
         )
 
 
@@ -192,6 +211,15 @@ class _LabelOnlyDataset:
         ]
 
 
+class _ThreeClassSupportDataset:
+    def __init__(self, count_per_class=8):
+        self.samples = [
+            (f"class_{label}_sample_{index}.npz", label)
+            for label in range(3)
+            for index in range(count_per_class)
+        ]
+
+
 class LauncherAndSamplingTests(unittest.TestCase):
     def test_mcft_sampler_balances_domain_and_class_groups(self):
         source = _LabelOnlyDataset([0, 0, 0, 1, 2])
@@ -199,6 +227,17 @@ class LauncherAndSamplingTests(unittest.TestCase):
         sampler, counts = class_balanced_sampler(source, target, seed=42)
         self.assertEqual(counts, [{0: 3, 1: 1, 2: 1}, {0: 2, 1: 2, 2: 1}])
         self.assertEqual(len(sampler.weights), 10)
+
+    def test_tir_selects_exactly_five_target_supports_per_class(self):
+        dataset = _ThreeClassSupportDataset()
+        selected = select_support_indices(dataset, shots_per_class=5, seed=42)
+        labels = [dataset.samples[index][1] for index in selected]
+        self.assertEqual(len(selected), 15)
+        self.assertEqual([labels.count(label) for label in range(3)], [5, 5, 5])
+        self.assertEqual(
+            selected,
+            select_support_indices(dataset, shots_per_class=5, seed=42),
+        )
 
     def test_launchers_only_offer_mcft_and_tir(self):
         root = Path(__file__).resolve().parents[1]
@@ -214,6 +253,13 @@ class LauncherAndSamplingTests(unittest.TestCase):
         linux = (root / "scripts/run_vds2raw_methods.sh").read_text(encoding="utf-8")
         self.assertIn('METHOD_ORDER:-mcft3 tir', linux)
         self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"', linux)
+        self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-9999}"', linux)
+        self.assertIn('TIR_SHOTS="${VDS2RAW_TIR_SHOTS_PER_CLASS:-5}"', linux)
+        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
+        self.assertIn('TIR_STATS_FILE="$RUN_DIR/tir_target_normalization_stats.json"', linux)
+        tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
+        self.assertIn("parser.set_defaults(augment=False)", tir_train)
+        self.assertIn('fit_partitions=("target_train",)', tir_train)
 
 
 if __name__ == "__main__":

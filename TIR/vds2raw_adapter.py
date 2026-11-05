@@ -6,12 +6,12 @@ here:
 
 * RGB and NIR are fused by a zero-initialised residual adapter before the
   official CLIP ViT-B/16 visual encoder.
-* all 13 AIS values and their 13 validity bits (the JMDA input convention) are
-  encoded by a regularised late-fusion residual.
-* the paper's simplified K-way TIR rule is used for K != 5: Sum=K receives
-  weight 0, Sum=1 receives weight 2, and other non-zero sums receive weight 1.
-  For the official five-way setting the released linear rule is reproduced
-  exactly: 1 - beta * (Sum - 3).
+* only proxy-safe AIS heading, length and width values are encoded by a
+  regularised late-fusion residual; validity bits gate missing values but are
+  not classifier inputs.
+* the released TIR linear rule ``1 - beta * (Sum - 3)`` is used unchanged.
+  The upstream source explicitly marks that rule as the paper setting for
+  fewer classes, which is the relevant branch for three-class VDS2Raw.
 
 These adaptations preserve the TIR mechanism but are not claimed to be the
 paper's original single-image, source-free 5-way protocol.
@@ -128,29 +128,16 @@ class TokenImportanceRecalibration(nn.Module):
         binary.scatter_(2, topk_indices, 1)
         sum_scores = binary.sum(dim=1)
 
-        class_count = text_features.shape[0]
-        if class_count == 5:
-            weights = torch.where(
-                sum_scores > 0,
-                1.0 - temper_weight * (sum_scores - 3.0),
-                torch.ones_like(sum_scores),
-            )
-            rule = "official_5way_linear"
-        else:
-            # Paper Sec. 4.1 explicitly recommends this simplified rule for
-            # practical K-way settings outside the released 5-way benchmark.
-            weights = torch.ones_like(sum_scores)
-            weights = torch.where(
-                sum_scores.eq(1),
-                torch.full_like(weights, 1.0 + 2.0 * temper_weight),
-                weights,
-            )
-            weights = torch.where(
-                sum_scores.eq(float(class_count)),
-                torch.zeros_like(weights),
-                weights,
-            )
-            rule = "paper_simplified_kway"
+        # Exact device-safe equivalent of TIR/clip/model.py::TIR.forward.
+        # The upstream comment identifies this as the paper rule for fewer
+        # classes.  In particular, do not replace it with the separate
+        # "more classes" simplified ablation left commented out upstream.
+        weights = torch.where(
+            sum_scores.eq(0),
+            torch.ones_like(sum_scores),
+            1.0 - temper_weight * (sum_scores - 3.0),
+        )
+        rule = "official_linear_fewer_classes"
         if params is not None:
             params.aux_container["tir_last_sum_scores"] = sum_scores.detach()
             params.aux_container["tir_last_weights"] = weights.detach()
@@ -257,8 +244,8 @@ class TIRVDS2Raw(nn.Module):
         self.nir_scale = nn.Parameter(torch.zeros(()))
         embed_dim = int(self.clip_model.text_projection.shape[1])
         self.ais_encoder = nn.Sequential(
-            nn.LayerNorm(26),
-            nn.Linear(26, 128),
+            nn.LayerNorm(4),
+            nn.Linear(4, 128),
             nn.GELU(),
             nn.Dropout(0.3),
             nn.Linear(128, embed_dim),
@@ -326,7 +313,12 @@ class TIRVDS2Raw(nn.Module):
         text_features = F.normalize(text_features, dim=-1)
         logits = self.fixed_logit_scale * image_features @ text_features.t()
 
-        ais_input = torch.cat((ais * ais_mask, ais_mask), dim=1)
+        if ais.ndim != 2 or ais.shape[1] != 4 or ais_mask.shape != ais.shape:
+            raise ValueError(
+                "AIS and AIS mask must both have shape [batch, 4] for "
+                "heading_sin, heading_cos, length_z, width_z"
+            )
+        ais_input = ais * ais_mask
         ais_features = self.ais_encoder(ais_input)
         if self.training and self.ais_dropout_probability:
             keep = (

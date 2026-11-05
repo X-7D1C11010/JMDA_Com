@@ -26,6 +26,19 @@ EXPECTED_COUNTS = {
     "target_test": 33,
 }
 REQUIRED_KEYS = {"rgb", "nir", "ais", "ais_mask", "label"}
+SAFE_AIS_FEATURE_INDICES = (0, 1, 2, 3)
+SAFE_AIS_FEATURE_NAMES = ("heading_sin", "heading_cos", "length_z", "width_z")
+EXCLUDED_AIS_PROXY_FEATURES = (
+    "nav_<UNKNOWN>",
+    "nav_at anchor",
+    "nav_engaged in fishing",
+    "nav_moored",
+    "nav_reserved for future amendment [hsc]",
+    "nav_restricted maneuverability",
+    "nav_under way sailing",
+    "nav_under way using engine",
+    "nav_unknown value",
+)
 
 
 @dataclass(frozen=True)
@@ -38,7 +51,7 @@ class ImageStatistics:
     nir_std: tuple[float]
     nir_min: tuple[float]
     nir_max: tuple[float]
-    fit_partitions: tuple[str, str] = TRAIN_PARTITIONS
+    fit_partitions: tuple[str, ...] = TRAIN_PARTITIONS
     fit_samples: int = 210
 
     def to_dict(self):
@@ -53,14 +66,18 @@ class ImageStatistics:
             "nir_max": list(self.nir_max),
             "fit_partitions": list(self.fit_partitions),
             "fit_samples": self.fit_samples,
-            "rule": "statistics fitted on source_train + target_train only",
+            "rule": (
+                "statistics fitted only on: " + " + ".join(self.fit_partitions)
+            ),
         }
 
     @classmethod
-    def from_dict(cls, payload):
-        if tuple(payload["fit_partitions"]) != TRAIN_PARTITIONS:
+    def from_dict(cls, payload, expected_fit_partitions=TRAIN_PARTITIONS):
+        expected_fit_partitions = tuple(expected_fit_partitions)
+        if tuple(payload["fit_partitions"]) != expected_fit_partitions:
             raise ValueError(
-                "normalization statistics were not fitted on the two training partitions"
+                "normalization statistics partition mismatch: expected "
+                f"{expected_fit_partitions}, got {tuple(payload['fit_partitions'])}"
             )
         required_ranges = ("rgb_min", "rgb_max", "nir_min", "nir_max")
         missing_ranges = [key for key in required_ranges if key not in payload]
@@ -96,15 +113,23 @@ def partition_files(root, partition):
     return files
 
 
-def compute_image_statistics(root):
-    """Fit RGB/NIR channel statistics using training partitions only."""
+def compute_image_statistics(root, fit_partitions=TRAIN_PARTITIONS):
+    """Fit RGB/NIR channel statistics using only the requested train data."""
+    fit_partitions = tuple(fit_partitions)
+    if not fit_partitions or any(
+        partition not in TRAIN_PARTITIONS for partition in fit_partitions
+    ):
+        raise ValueError(
+            "image statistics may only use source_train and/or target_train; "
+            f"got {fit_partitions}"
+        )
     sums = np.zeros(4, dtype=np.float64)
     squared = np.zeros(4, dtype=np.float64)
     counts = np.zeros(4, dtype=np.int64)
     minima = np.full(4, np.inf, dtype=np.float64)
     maxima = np.full(4, -np.inf, dtype=np.float64)
     sample_count = 0
-    for partition in TRAIN_PARTITIONS:
+    for partition in fit_partitions:
         for path in partition_files(root, partition):
             with np.load(path, allow_pickle=False) as item:
                 arrays = (item["rgb"], item["nir"])
@@ -129,17 +154,22 @@ def compute_image_statistics(root):
         nir_std=(float(stds[3]),),
         nir_min=(float(minima[3]),),
         nir_max=(float(maxima[3]),),
+        fit_partitions=fit_partitions,
         fit_samples=sample_count,
     )
 
 
-def load_or_compute_statistics(root, stats_file=None):
+def load_or_compute_statistics(
+    root, stats_file=None, fit_partitions=TRAIN_PARTITIONS
+):
+    fit_partitions = tuple(fit_partitions)
     stats_path = Path(stats_file) if stats_file else None
     if stats_path and stats_path.is_file():
         return ImageStatistics.from_dict(
-            json.loads(stats_path.read_text(encoding="utf-8"))
+            json.loads(stats_path.read_text(encoding="utf-8")),
+            expected_fit_partitions=fit_partitions,
         )
-    statistics = compute_image_statistics(root)
+    statistics = compute_image_statistics(root, fit_partitions=fit_partitions)
     if stats_path:
         stats_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = stats_path.with_suffix(stats_path.suffix + ".tmp")
@@ -181,6 +211,12 @@ def audit_dataset(root, check_every_sample=True):
         )
     if schema.get("feature_dim") != 13:
         raise ValueError("AIS feature_dim must be 13")
+    feature_names = tuple(schema.get("ais_feature_names", ()))
+    if feature_names[:4] != SAFE_AIS_FEATURE_NAMES:
+        raise ValueError(
+            "AIS feature schema no longer starts with the approved "
+            f"heading/length/width fields: {feature_names[:4]}"
+        )
 
     counts = {}
     disk_relpaths = set()
@@ -247,12 +283,21 @@ def audit_dataset(root, check_every_sample=True):
         "class_names": list(DISPLAY_CLASS_NAMES),
         "train_statistics_partitions": list(TRAIN_PARTITIONS),
         "overlap_counts": overlap,
+        "model_ais_feature_names": list(SAFE_AIS_FEATURE_NAMES),
+        "excluded_ais_proxy_features": list(EXCLUDED_AIS_PROXY_FEATURES),
+        "ais_mask_usage": "missing-value gating only; not a classifier feature",
         "checked_every_sample": bool(check_every_sample),
     }
 
 
 class VDS2RawDataset(Dataset):
-    """Return normalized RGB/NIR, standardized AIS+mask, and label."""
+    """Return RGB/NIR and proxy-safe continuous AIS fields.
+
+    The prepared files retain the complete 13-field audit record, but models
+    only receive heading (sin/cos), length, and width. Navigation-status
+    one-hot values are direct vessel-class proxies and are removed at the
+    loader boundary. The four validity bits are returned only for gating.
+    """
 
     def __init__(self, root, partition, statistics, image_size=None, augment=False):
         self.root = Path(root).expanduser().resolve()
@@ -285,8 +330,12 @@ class VDS2RawDataset(Dataset):
         with np.load(path, allow_pickle=False) as item:
             rgb = torch.from_numpy(item["rgb"].astype(np.float32))
             nir = torch.from_numpy(item["nir"].astype(np.float32))
-            ais = torch.from_numpy(item["ais"].astype(np.float32))
-            ais_mask = torch.from_numpy(item["ais_mask"].astype(np.float32))
+            ais = torch.from_numpy(
+                item["ais"][list(SAFE_AIS_FEATURE_INDICES)].astype(np.float32)
+            )
+            ais_mask = torch.from_numpy(
+                item["ais_mask"][list(SAFE_AIS_FEATURE_INDICES)].astype(np.float32)
+            )
             label = int(item["label"])
         rgb = (rgb - self.rgb_mean) / self.rgb_std
         nir = (nir - self.nir_mean) / self.nir_std
@@ -323,11 +372,12 @@ class VDS2RawDataset(Dataset):
 class VDS2RawTIRDataset(Dataset):
     """VDS2Raw view for CLIP/TIR with paired RGB/NIR geometry.
 
-    RGB follows the official CLIP ViT-B/16 224x224 normalization. NIR stays in
-    train-fitted z-score space for the project-specific residual adapter. AIS
-    and its validity mask are returned unchanged. Random crop/flip parameters
-    are shared by RGB and NIR, and heading components are corrected after
-    reflections.
+    RGB follows the official CLIP ViT-B/16 224x224 normalization after raw-DN
+    range conversion using training-only statistics. NIR stays in train-fitted
+    z-score space for the project-specific residual adapter. Only proxy-safe
+    continuous AIS fields and their gating masks are returned. Random crop/flip
+    parameters are shared by RGB and NIR, and heading components are corrected
+    after reflections.
     """
 
     CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -351,6 +401,13 @@ class VDS2RawTIRDataset(Dataset):
         self.nir_std = torch.tensor(statistics.nir_std, dtype=torch.float32).view(
             1, 1, 1
         )
+        self.rgb_min = torch.tensor(statistics.rgb_min, dtype=torch.float32).view(
+            3, 1, 1
+        )
+        self.rgb_range = torch.tensor(
+            np.subtract(statistics.rgb_max, statistics.rgb_min),
+            dtype=torch.float32,
+        ).clamp_min_(1.0).view(3, 1, 1)
         self.clip_mean = torch.tensor(self.CLIP_MEAN, dtype=torch.float32).view(
             3, 1, 1
         )
@@ -366,11 +423,19 @@ class VDS2RawTIRDataset(Dataset):
         with np.load(path, allow_pickle=False) as item:
             rgb = torch.from_numpy(item["rgb"].astype(np.float32))
             nir = torch.from_numpy(item["nir"].astype(np.float32))
-            ais = torch.from_numpy(item["ais"].astype(np.float32))
-            ais_mask = torch.from_numpy(item["ais_mask"].astype(np.float32))
+            ais = torch.from_numpy(
+                item["ais"][list(SAFE_AIS_FEATURE_INDICES)].astype(np.float32)
+            )
+            ais_mask = torch.from_numpy(
+                item["ais_mask"][list(SAFE_AIS_FEATURE_INDICES)].astype(np.float32)
+            )
             label = int(item["label"])
 
-        rgb = (rgb / 255.0).clamp_(0.0, 1.0)
+        # The prepared Sentinel-2 crops are uint16 raw DNs (observed maxima
+        # exceed 255), so dividing by 255 silently saturates valid signal.
+        # Convert with train-only channel ranges before official CLIP
+        # normalization instead of assuming an 8-bit image container.
+        rgb = ((rgb - self.rgb_min) / self.rgb_range).clamp_(0.0, 1.0)
         nir = (nir - self.nir_mean) / self.nir_std
         if self.augment:
             top, left, height, width = transforms.RandomResizedCrop.get_params(
@@ -406,7 +471,10 @@ __all__ = [
     "CLASS_NAMES",
     "DISPLAY_CLASS_NAMES",
     "EXPECTED_COUNTS",
+    "EXCLUDED_AIS_PROXY_FEATURES",
     "PARTITIONS",
+    "SAFE_AIS_FEATURE_INDICES",
+    "SAFE_AIS_FEATURE_NAMES",
     "TRAIN_PARTITIONS",
     "ImageStatistics",
     "VDS2RawDataset",
