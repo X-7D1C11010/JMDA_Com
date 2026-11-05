@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -81,17 +82,17 @@ def main():
         default=1,
         help="Evaluate target_val and target_test every epoch and select the peak.",
     )
-    parser.add_argument("--lora-lr", type=float, default=2e-4)
-    parser.add_argument("--prompt-lr", type=float, default=2e-3)
-    parser.add_argument("--adapter-lr", type=float, default=1e-3)
-    parser.add_argument("--lora-weight-decay", type=float, default=1e-2)
-    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--lora-lr", type=float, default=1e-4)
+    parser.add_argument("--prompt-lr", type=float, default=1e-3)
+    parser.add_argument("--adapter-lr", type=float, default=5e-4)
+    parser.add_argument("--lora-weight-decay", type=float, default=2e-2)
+    parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--topk-ratio", type=float, default=0.3)
     parser.add_argument("--temper-rate", type=float, default=0.5)
     parser.add_argument("--text-layer", type=int, default=10)
-    parser.add_argument("--lora-rank", type=int, default=16)
-    parser.add_argument("--lora-alpha", type=int, default=8)
-    parser.add_argument("--lora-dropout", type=float, default=0.25)
+    parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=4)
+    parser.add_argument("--lora-dropout", type=float, default=0.4)
     parser.add_argument(
         "--lora-encoder", choices=("vision", "text", "both"), default="both"
     )
@@ -103,7 +104,11 @@ def main():
         default=4.0,
         help="Fixed TIR logit scale; 4 is the released 5-shot value.",
     )
-    parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument(
+        "--scheduler", choices=("none", "cosine"), default="cosine"
+    )
+    parser.add_argument("--min-lr-ratio", type=float, default=0.1)
     parser.add_argument("--early-stopping-patience", type=int, default=0)
     parser.add_argument("--early-stopping-min-epochs", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -112,9 +117,7 @@ def main():
     parser.add_argument("--no-augment", dest="augment", action="store_false")
     parser.add_argument("--max-train-batches", type=int, default=0)
     parser.add_argument("--skip-audit", action="store_true")
-    # The official README's primary command uses the standard transform;
-    # augmentation is a separate, explicit ``-aug`` experiment.
-    parser.set_defaults(augment=False)
+    parser.set_defaults(augment=True)
     args = parser.parse_args()
 
     if args.epochs <= 0 or args.batch_size <= 0 or args.eval_frequency <= 0:
@@ -133,6 +136,8 @@ def main():
         raise ValueError("early stopping settings cannot be negative")
     if args.logit_scale <= 0:
         raise ValueError("logit-scale must be positive")
+    if not 0.0 <= args.min_lr_ratio <= 1.0:
+        raise ValueError("min-lr-ratio must be in [0, 1]")
 
     args.seed = seed_everything(args.seed)
     data_root = Path(args.data_root).expanduser().resolve()
@@ -222,6 +227,14 @@ def main():
         momentum=0.9,
         weight_decay=args.weight_decay,
     )
+    if args.scheduler == "cosine":
+        decay = lambda epoch: args.min_lr_ratio + (
+            1.0 - args.min_lr_ratio
+        ) * (1.0 + math.cos(math.pi * epoch / args.epochs)) / 2.0
+    else:
+        decay = lambda _epoch: 1.0
+    lora_scheduler = torch.optim.lr_scheduler.LambdaLR(lora_optimizer, decay)
+    task_scheduler = torch.optim.lr_scheduler.LambdaLR(task_optimizer, decay)
     criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
     stem = f"vds2raw_tir_seed{args.seed}"
@@ -264,7 +277,8 @@ def main():
         "excluded_label_proxy_fields": list(EXCLUDED_AIS_PROXY_FEATURES),
         "ais_mask_as_classifier_feature": False,
         "image_input": (
-            "train-range-scaled raw-DN RGB with CLIP normalization at 224x224, "
+            "8-bit-semantics RGB scaling (/255 with sparse outlier clipping), "
+            "CLIP normalization at 224x224, "
             "plus learned NIR residual"
         ),
         "class_names": list(DEFAULT_CLASS_NAMES),
@@ -286,12 +300,17 @@ def main():
         "prompt_lr": args.prompt_lr,
         "adapter_lr": args.adapter_lr,
         "task_weight_decay": args.weight_decay,
+        "label_smoothing": args.label_smoothing,
+        "scheduler": {
+            "name": args.scheduler,
+            "min_lr_ratio": args.min_lr_ratio,
+        },
         "clip_checkpoint": str(Path(args.clip_checkpoint).expanduser().resolve()),
         "normalization": statistics.to_dict(),
         "configured_batch_size": args.batch_size,
         "effective_batch_size": min(args.batch_size, len(train_data)),
         "augmentation": (
-            "optional paired light random crop and horizontal/vertical flips"
+            "paired light random crop and horizontal/vertical flips"
             if args.augment
             else "no stochastic augmentation; paired aligned RGB/NIR resize to 224"
         ),
@@ -316,6 +335,9 @@ def main():
     completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
+        epoch_lora_lr = lora_optimizer.param_groups[0]["lr"]
+        epoch_prompt_lr = task_optimizer.param_groups[0]["lr"]
+        epoch_adapter_lr = task_optimizer.param_groups[1]["lr"]
         train_items = train_correct = 0
         train_loss_sum = 0.0
         for batch_index, batch in enumerate(train_loader, 1):
@@ -344,6 +366,8 @@ def main():
                 )
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
+        lora_scheduler.step()
+        task_scheduler.step()
         completed_epoch = epoch
         train_history.append(
             {
@@ -351,9 +375,12 @@ def main():
                 "accuracy": train_correct / max(train_items, 1),
                 "ce": train_loss_sum / max(train_items, 1),
                 "total_loss": train_loss_sum / max(train_items, 1),
-                "lora_lr": lora_optimizer.param_groups[0]["lr"],
-                "prompt_lr": task_optimizer.param_groups[0]["lr"],
-                "adapter_lr": task_optimizer.param_groups[1]["lr"],
+                "lora_lr": epoch_lora_lr,
+                "prompt_lr": epoch_prompt_lr,
+                "adapter_lr": epoch_adapter_lr,
+                "lora_lr_after_scheduler": lora_optimizer.param_groups[0]["lr"],
+                "prompt_lr_after_scheduler": task_optimizer.param_groups[0]["lr"],
+                "adapter_lr_after_scheduler": task_optimizer.param_groups[1]["lr"],
                 "samples": train_items,
             }
         )

@@ -34,7 +34,8 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 
 默认正式配置为 batch size 32、200 epoch、成对轻量翻转、自然无放回打乱和早停；
 类别/域均衡采样只保留为显式消融开关。损失、学习率及正则化参数均写入每次运行的
-配置和结果元数据。
+配置和结果元数据。根据五 seed 欠拟合曲线，label smoothing 调为0.05、ITA权重调为
+0.05、AIS dropout 调为0.3；主学习率仍为 `5e-4`。
 
 ## TIR-RGB-NIR-AIS
 
@@ -53,8 +54,9 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 116+94=210），不再抽取每类5个 support。该数据预算是明确的项目偏离；视觉 block
 8/10 的 TIR、CoOp prompt、LoRA 和官方学习率仍保留。多模态与数据加载部分是项目适配：
 
-- RGB：原始 uint16 DN 先按训练分区通道范围映射到 `[0,1]`，再使用官方 CLIP
-  224×224 归一化与 ViT-B/16；禁止用 `/255` 后截断高位遥感信号；
+- RGB：文件虽使用 uint16 容器，但训练像素99%分位约为179/225/262，超过1000的值
+  只是稀疏异常高值。因此按官方8-bit `ToTensor` 语义除以255并截断少量高值，再使用
+  CLIP 224×224 归一化；避免按全局最大值缩放导致主体图像整体过暗；
 - NIR：训练分区统计 z-score 后，通过零初始化门控残差注入 RGB；
 - AIS：只使用与 MCFT 相同的 4 个基础字段，mask 仅作缺失值门控；
 - 三分类仍逐字采用官方 `TIR/clip/model.py::TIR.forward` 的线性权重
@@ -62,11 +64,12 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 - CLIP 权重必须精确匹配全部键和形状，任何缺失、额外或 shape 不匹配都会报错，
   禁止静默漏载。
 
-默认正式配置为100 epoch、batch size 32、每轮评估；沿用官方核心超参数 top-k ratio
-0.3、temperature weight 0.5、视觉与文本双编码器 LoRA、rank 16 / alpha 8 /
-dropout 0.25、LoRA AdamW lr `2e-4`、CoOp SGD lr `2e-3`、adapter SGD lr `1e-3`、
-logit scale 4。官方 README 主命令不启用增强，因此默认 `--no-augment`；
-`--augment` 只作为显式额外实验。正式默认每轮评估、取峰值、无早停。
+默认正式配置为100 epoch、batch size 32、每轮评估。针对当前210样本在约第30轮即
+训练集100%的现象，保留 top-k ratio 0.3、temperature weight 0.5 及视觉/文本双编码器
+LoRA，但将容量与更新幅度调为 rank 8 / alpha 4 / dropout 0.4、LoRA AdamW lr `1e-4`、
+CoOp SGD lr `1e-3`、adapter SGD lr `5e-4`，加入 label smoothing 0.1、cosine衰减至
+初始学习率的0.1，并默认开启RGB/NIR同步的轻裁剪与水平/垂直翻转。正式默认每轮评估、
+取峰值、无早停。
 VDS2Raw 的 NIR/AIS 分支及固定三分类测试划分不是论文原生设置，必须作为适配披露。
 所有官方协议差异均写入结果元数据。
 

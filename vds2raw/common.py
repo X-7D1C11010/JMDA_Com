@@ -180,19 +180,18 @@ def capture_selected_state(
     target_val_metrics=None,
     target_test_metrics=None,
 ):
-    """Keep only mutable model state in host memory, without writing a model file."""
-    parameters = {
-        name: parameter.detach().cpu().clone()
-        for name, parameter in model.named_parameters()
-        if parameter.requires_grad
-    }
-    buffers = {
-        name: buffer.detach().cpu().clone()
-        for name, buffer in model.named_buffers()
+    """Keep a complete model state in host memory without writing a model file.
+
+    A full state is required for LoRA modules that merge their low-rank delta
+    into an otherwise frozen base weight when ``eval()`` is entered. Capturing
+    trainable tensors alone cannot reconstruct that merged evaluation state.
+    """
+    model_state = {
+        name: value.detach().cpu().clone()
+        for name, value in model.state_dict().items()
     }
     return {
-        "parameter_state": parameters,
-        "buffer_state": buffers,
+        "model_state": model_state,
         "selected_epoch": int(epoch),
         "selection_metrics": dict(selection_metrics),
         "target_val_metrics": dict(target_val_metrics or selection_metrics),
@@ -204,21 +203,7 @@ def restore_selected_state(model, snapshot):
     """Restore a snapshot produced by :func:`capture_selected_state`."""
     if snapshot is None:
         raise ValueError("selected model snapshot is missing")
-    parameters = dict(model.named_parameters())
-    buffers = dict(model.named_buffers())
-    with torch.no_grad():
-        for name, value in snapshot["parameter_state"].items():
-            if name not in parameters:
-                raise RuntimeError(f"selected parameter no longer exists: {name}")
-            parameters[name].copy_(
-                value.to(device=parameters[name].device, dtype=parameters[name].dtype)
-            )
-        for name, value in snapshot["buffer_state"].items():
-            if name not in buffers:
-                raise RuntimeError(f"selected buffer no longer exists: {name}")
-            buffers[name].copy_(
-                value.to(device=buffers[name].device, dtype=buffers[name].dtype)
-            )
+    model.load_state_dict(snapshot["model_state"], strict=True)
     return snapshot
 
 

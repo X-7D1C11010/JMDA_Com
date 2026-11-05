@@ -415,8 +415,8 @@ class VDS2RawDataset(Dataset):
 class VDS2RawTIRDataset(Dataset):
     """VDS2Raw view for CLIP/TIR with paired RGB/NIR geometry.
 
-    RGB follows the official CLIP ViT-B/16 224x224 normalization after raw-DN
-    range conversion using training-only statistics. NIR stays in train-fitted
+    RGB follows the official CLIP ViT-B/16 224x224 normalization after
+    8-bit-semantics scaling with sparse high-outlier clipping. NIR stays in train-fitted
     z-score space for the project-specific residual adapter. Only proxy-safe
     continuous AIS fields and their gating masks are returned. Random crop/flip
     parameters are shared by RGB and NIR, and heading components are corrected
@@ -459,13 +459,6 @@ class VDS2RawTIRDataset(Dataset):
         self.nir_std = torch.tensor(statistics.nir_std, dtype=torch.float32).view(
             1, 1, 1
         )
-        self.rgb_min = torch.tensor(statistics.rgb_min, dtype=torch.float32).view(
-            3, 1, 1
-        )
-        self.rgb_range = torch.tensor(
-            np.subtract(statistics.rgb_max, statistics.rgb_min),
-            dtype=torch.float32,
-        ).clamp_min_(1.0).view(3, 1, 1)
         self.clip_mean = torch.tensor(self.CLIP_MEAN, dtype=torch.float32).view(
             3, 1, 1
         )
@@ -489,11 +482,11 @@ class VDS2RawTIRDataset(Dataset):
             )
             label = int(item["label"])
 
-        # The prepared Sentinel-2 crops are uint16 raw DNs (observed maxima
-        # exceed 255), so dividing by 255 silently saturates valid signal.
-        # Convert with train-only channel ranges before official CLIP
-        # normalization instead of assuming an 8-bit image container.
-        rgb = ((rgb - self.rgb_min) / self.rgb_range).clamp_(0.0, 1.0)
+        # Although stored in uint16 containers, 99% of training pixels are at
+        # or below roughly 179/225/262 for R/G/B. Scaling by rare maxima above
+        # 1000 makes normal vessels unnaturally dark for CLIP. Match the
+        # official 8-bit ToTensor semantics and clip only sparse high outliers.
+        rgb = (rgb / 255.0).clamp_(0.0, 1.0)
         nir = (nir - self.nir_mean) / self.nir_std
         if self.augment:
             top, left, height, width = transforms.RandomResizedCrop.get_params(

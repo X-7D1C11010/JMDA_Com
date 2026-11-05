@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from MCFT.mcft_model import MViT
+from TIR.loralib.layers import LinearLoRA
 from TIR.vds2raw_adapter import TokenImportanceRecalibration
 from vds2raw.common import capture_selected_state, restore_selected_state
 from vds2raw.dataset import (
@@ -94,6 +95,12 @@ class VDS2RawDatasetTests(_FixtureMixin, unittest.TestCase):
             self.assertEqual(tir_item["ais"].shape, (4,))
             self.assertEqual(tir_item["ais_mask"].shape, (4,))
             torch.testing.assert_close(tir_item["ais"], torch.arange(4).float())
+            expected_red = (1.0 / 255.0 - VDS2RawTIRDataset.CLIP_MEAN[0]) / (
+                VDS2RawTIRDataset.CLIP_STD[0]
+            )
+            self.assertAlmostEqual(
+                float(tir_item["rgb"][0, 0, 0]), expected_red, places=5
+            )
 
     def test_source_loading_is_driven_by_target_present_classes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -176,6 +183,8 @@ class MCFTAdapterTests(unittest.TestCase):
     def test_best_state_is_restored_without_a_model_file(self):
         model = nn.Linear(2, 2)
         original = model.weight.detach().clone()
+        model.bias.requires_grad_(False)
+        original_frozen_bias = model.bias.detach().clone()
         snapshot = capture_selected_state(
             model,
             3,
@@ -183,9 +192,30 @@ class MCFTAdapterTests(unittest.TestCase):
         )
         with torch.no_grad():
             model.weight.add_(10.0)
+            model.bias.add_(20.0)
         restore_selected_state(model, snapshot)
         torch.testing.assert_close(model.weight, original)
+        torch.testing.assert_close(model.bias, original_frozen_bias)
         self.assertEqual(snapshot["selected_epoch"], 3)
+
+    def test_full_snapshot_restores_lora_merged_evaluation_weight(self):
+        base = nn.Linear(2, 2, bias=True)
+        model = LinearLoRA(base, r=1, lora_alpha=1, dropout_rate=0.0)
+        inputs = torch.tensor([[1.0, 1.0]])
+        with torch.no_grad():
+            model.w_lora_A.fill_(0.25)
+            model.w_lora_B.fill_(0.5)
+        model.eval()
+        selected_output = model(inputs).detach().clone()
+        snapshot = capture_selected_state(model, 4, {"accuracy": 0.75})
+
+        model.train()
+        with torch.no_grad():
+            model.w_lora_B.fill_(2.0)
+        model.eval()
+        self.assertFalse(torch.allclose(model(inputs), selected_output))
+        restore_selected_state(model, snapshot)
+        torch.testing.assert_close(model(inputs), selected_output)
 
 
 class TIRCoreTests(unittest.TestCase):
@@ -275,9 +305,12 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"', linux)
         self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"', linux)
         self.assertIn('--eval-frequency 1', linux)
+        self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0001}"', linux)
+        self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-8}"', linux)
+        self.assertIn('--scheduler cosine', linux)
         self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
         tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
-        self.assertIn("parser.set_defaults(augment=False)", tir_train)
+        self.assertIn("parser.set_defaults(augment=True)", tir_train)
         self.assertIn("train_data = ConcatDataset((source, target))", tir_train)
         self.assertIn('"target_label_budget": "all available target_train labels"', tir_train)
         self.assertNotIn("save_checkpoint(", tir_train)
