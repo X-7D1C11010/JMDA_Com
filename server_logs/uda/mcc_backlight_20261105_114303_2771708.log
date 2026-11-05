@@ -1,0 +1,74 @@
+[GPU-WAIT] mcc_backlight: require free >= 18000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-05T11:50:55+08:00 mcc_backlight: GPU 0: free=20303 MiB, util=21%; GPU 1: free=31342 MiB, util=33%
+[GPU-WAIT] 2026-11-05T11:51:25+08:00 mcc_backlight: GPU 0: free=20303 MiB, util=21%; GPU 1: free=31410 MiB, util=3%
+[GPU-WAIT] 2026-11-05T11:51:55+08:00 mcc_backlight: GPU 0: free=19632 MiB, util=24%; GPU 1: free=31344 MiB, util=23%
+[GPU-WAIT] 2026-11-05T11:52:25+08:00 mcc_backlight: GPU 0: free=19800 MiB, util=14%; GPU 1: free=31344 MiB, util=23%
+[GPU-WAIT] 2026-11-05T11:52:55+08:00 mcc_backlight: GPU 0: free=20303 MiB, util=18%; GPU 1: free=32094 MiB, util=0%
+[GPU-WAIT] 2026-11-05T11:53:25+08:00 mcc_backlight: GPU 0: free=20303 MiB, util=14%; GPU 1: free=31344 MiB, util=1%
+[GPU-WAIT] 2026-11-05T11:53:55+08:00 mcc_backlight: GPU 0: free=19632 MiB, util=14%; GPU 1: free=31344 MiB, util=21%
+[GPU-WAIT] 2026-11-05T11:54:25+08:00 mcc_backlight: GPU 0: free=19606 MiB, util=16%; GPU 1: free=32094 MiB, util=0%
+[GPU-WAIT] 2026-11-05T11:54:55+08:00 mcc_backlight: GPU 0: free=20295 MiB, util=14%; GPU 1: free=32094 MiB, util=0%
+[GPU-SELECT] mcc_backlight: physical GPU 1; free=31344 MiB, util=2%; launching: /home/lixiang/envs/lx_pytorch/bin/python /home/lixiang/lx/JMDA_Com/MCC/train_mcc.py --target backlight --epochs 14 --lr 0.002 --iters-per-epoch 100 --trade-off 0.02 --trade-off-warmup-epochs 10 --source-warmup-epochs 2 --label-smoothing 0.10 --backbone jmda --batch-size 16 --seed 42 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/20261105_114303_2771708 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261105_114303_2771708 --num-workers 8 --prefetch-factor 4 --multimodal --enhanced-augmentation --no-save-model --pin-memory --persistent-workers
+Deterministic kernels: True
+Controlled random seed: 42
+Namespace(target='backlight', epochs=14, batch_size=16, lr=0.002, lr_gamma=0.001, lr_decay=0.75, momentum=0.9, wd=0.001, temperature=2.5, trade_off=0.02, trade_off_warmup_epochs=10, source_warmup_epochs=2, label_smoothing=0.1, bottleneck_dim=256, print_freq=100, iters_per_epoch=100, backbone='jmda', enhanced_augmentation=True, multimodal=True, save_model=False, early_stop_patience=0, early_stop_min_delta=0.0, data_dir='/home/lixiang/lx/JMDA_Com/prepared_lists/20261105_114303_2771708', save_dir='/home/lixiang/lx/JMDA_Com/checkpoints/uda/20261105_114303_2771708', efficiency_output_dir='/home/lixiang/lx/JMDA_Com/efficiency_results/uda', seed=42, num_workers=8, prefetch_factor=4, eval_num_workers=0, worker_timeout_seconds=300, pin_memory=True, persistent_workers=True)
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515, target train: 113, target val: 36
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+Target val: exact VIS/IR pairs=36, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 8, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, eval={'num_workers': 0, 'pin_memory': True}
+MCC encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, 512+512 direct concatenation
+MCC schedule: source-only warmup=2 epochs; MCC ramp=10 epochs
+WARNING: labelled target validation is evaluated after every epoch and the highest-accuracy epoch is selected. Training remains target-label-free, but reporting is target-validation-selected UDA.
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/MCC-MM/fee1b6b64909
+  Epoch [1/14] iter [100/100] loss=0.7520 cls=0.7520 mcc=0.0000 transfer_weight=0.0000 src_acc=93.75 target_conf=nan lr=[1.862e-04,1.862e-03]
+Epoch [1/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.6741 | Val Recall (Macro): 0.7639 | Val F1 (Macro): 0.7030 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [2/14] iter [100/100] loss=0.7750 cls=0.7750 mcc=0.0000 transfer_weight=0.0000 src_acc=93.75 target_conf=nan lr=[1.744e-04,1.744e-03]
+Epoch [2/14] target val accuracy: 0.7500
+Val Precision (Macro): 0.7269 | Val Recall (Macro): 0.7824 | Val F1 (Macro): 0.7364 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [3/14] iter [100/100] loss=0.8946 cls=0.8929 mcc=0.8460 transfer_weight=0.0020 src_acc=87.50 target_conf=0.5234 lr=[1.643e-04,1.643e-03]
+Epoch [3/14] target val accuracy: 0.7778
+Val Precision (Macro): 0.7821 | Val Recall (Macro): 0.8056 | Val F1 (Macro): 0.7734 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [4/14] iter [100/100] loss=0.7663 cls=0.7629 mcc=0.8550 transfer_weight=0.0040 src_acc=93.75 target_conf=0.5096 lr=[1.554e-04,1.554e-03]
+Epoch [4/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.5933 | Val Recall (Macro): 0.6898 | Val F1 (Macro): 0.6205 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [5/14] iter [100/100] loss=0.6216 cls=0.6165 mcc=0.8484 transfer_weight=0.0060 src_acc=93.75 target_conf=0.5437 lr=[1.476e-04,1.476e-03]
+Epoch [5/14] target val accuracy: 0.7500
+Val Precision (Macro): 0.5948 | Val Recall (Macro): 0.7037 | Val F1 (Macro): 0.6279 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [6/14] iter [100/100] loss=0.5493 cls=0.5425 mcc=0.8551 transfer_weight=0.0080 src_acc=100.00 target_conf=0.4557 lr=[1.406e-04,1.406e-03]
+Epoch [6/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.6173 | Val Recall (Macro): 0.6574 | Val F1 (Macro): 0.6115 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [7/14] iter [100/100] loss=0.6071 cls=0.5986 mcc=0.8558 transfer_weight=0.0100 src_acc=93.75 target_conf=0.5473 lr=[1.343e-04,1.343e-03]
+Epoch [7/14] target val accuracy: 0.6944
+Val Precision (Macro): 0.5988 | Val Recall (Macro): 0.6296 | Val F1 (Macro): 0.5683 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [8/14] iter [100/100] loss=0.5480 cls=0.5381 mcc=0.8234 transfer_weight=0.0120 src_acc=100.00 target_conf=0.6738 lr=[1.287e-04,1.287e-03]
+Epoch [8/14] target val accuracy: 0.6389
+Val Precision (Macro): 0.5115 | Val Recall (Macro): 0.5833 | Val F1 (Macro): 0.5251 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [9/14] iter [100/100] loss=0.5936 cls=0.5814 mcc=0.8688 transfer_weight=0.0140 src_acc=100.00 target_conf=0.4459 lr=[1.236e-04,1.236e-03]
+Epoch [9/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.6099 | Val Recall (Macro): 0.6574 | Val F1 (Macro): 0.6059 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [10/14] iter [100/100] loss=0.5821 cls=0.5685 mcc=0.8501 transfer_weight=0.0160 src_acc=100.00 target_conf=0.4875 lr=[1.189e-04,1.189e-03]
+Epoch [10/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.6634 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.6443 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [11/14] iter [100/100] loss=0.6148 cls=0.5996 mcc=0.8495 transfer_weight=0.0180 src_acc=93.75 target_conf=0.5249 lr=[1.146e-04,1.146e-03]
+Epoch [11/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.6074 | Val Recall (Macro): 0.6667 | Val F1 (Macro): 0.6004 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [12/14] iter [100/100] loss=0.5544 cls=0.5373 mcc=0.8533 transfer_weight=0.0200 src_acc=100.00 target_conf=0.5826 lr=[1.107e-04,1.107e-03]
+Epoch [12/14] target val accuracy: 0.7222
+Val Precision (Macro): 0.6206 | Val Recall (Macro): 0.6667 | Val F1 (Macro): 0.6066 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [13/14] iter [100/100] loss=0.6246 cls=0.6079 mcc=0.8345 transfer_weight=0.0200 src_acc=93.75 target_conf=0.5834 lr=[1.071e-04,1.071e-03]
+Epoch [13/14] target val accuracy: 0.6389
+Val Precision (Macro): 0.5115 | Val Recall (Macro): 0.5833 | Val F1 (Macro): 0.5251 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [14/14] iter [100/100] loss=0.5380 cls=0.5208 mcc=0.8569 transfer_weight=0.0200 src_acc=100.00 target_conf=0.4442 lr=[1.037e-04,1.037e-03]
+Epoch [14/14] target val accuracy: 0.6667
+Val Precision (Macro): 0.5761 | Val Recall (Macro): 0.6343 | Val F1 (Macro): 0.5721 | Val class coverage: 9/9 | Val samples: 36
+Best target val accuracy (backlight, selected): 0.7778 at epoch 3
+Selected target val metrics:
+Val Precision (Macro): 0.7821 | Val Recall (Macro): 0.8056 | Val F1 (Macro): 0.7734 | Val class coverage: 9/9 | Val samples: 36
+Last-epoch target val accuracy (backlight, epoch 14): 0.6667
+Final target val accuracy (backlight, selected epoch 3): 0.7778
+Peak timing diagnostic: peak_acc=0.7778; matching_epochs=[3]; last_peak_progress=21.4%; threshold=70.0%; status=early_peak_not_recovered
+{"timestamp": "2026-11-05T11:58:16", "suite_id": "20261105_114303_2771708", "run_tag": "mcc_backlight", "method": "mcc", "protocol": "UDA", "target": "backlight", "seed": 42, "epochs": 14, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "best_target_val_ACC_within_budget", "status": "success", "exit_code": 0, "duration_seconds": 441.0, "final_acc": 0.7778, "best_acc": 0.7778, "final_acc_std": null, "precision_macro": 0.7821, "precision_macro_std": null, "recall_macro": 0.8056, "recall_macro_std": null, "f1_macro": 0.7734, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 14, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/mcc_backlight_20261105_114303_2771708.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda", "error_type": null, "error_summary": null}
