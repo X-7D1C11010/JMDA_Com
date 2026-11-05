@@ -387,9 +387,16 @@ def main():
         "configured_batch_size": args.batch_size,
         "effective_batch_size": min(args.batch_size, len(train_data)),
         "optimizer_effective_batch_size": (
-            len(train_data)
-            if args.accumulate_full_epoch
-            else min(args.batch_size, len(train_data))
+            min(
+                len(train_data),
+                args.batch_size * args.max_train_batches,
+            )
+            if args.accumulate_full_epoch and args.max_train_batches
+            else (
+                len(train_data)
+                if args.accumulate_full_epoch
+                else min(args.batch_size, len(train_data))
+            )
         ),
         "augmentation": (
             "paired light random crop and horizontal/vertical flips"

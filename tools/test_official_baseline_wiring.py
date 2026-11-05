@@ -222,7 +222,7 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8") as f:
             server_launcher = f.read()
         self.assertIn(
-            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS="${UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-0}"',
+            'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS="${UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-16}"',
             server_launcher,
         )
         self.assertIn(

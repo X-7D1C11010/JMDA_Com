@@ -70,12 +70,13 @@ if [ "$seen_tir" -gt 0 ] && [ ! -f "$TIR_CLIP_CHECKPOINT" ]; then
   exit 1
 fi
 
-MAX_BATCH_ARGS=()
+MCFT_MAX_BATCH_ARGS=()
+TIR_MAX_BATCH_ARGS=()
 if [ "$MODE" = smoke ]; then
   MCFT_EPOCHS=1; TIR_EPOCHS=1
-  MCFT_BATCH=2; TIR_BATCH=2
+  MCFT_BATCH=2; TIR_BATCH=32
   MCFT_EARLY_PATIENCE=0; TIR_EARLY_PATIENCE=0
-  MAX_BATCH_ARGS=(--max-train-batches 1)
+  MCFT_MAX_BATCH_ARGS=(--max-train-batches 1)
 fi
 
 RUN_ID="vds2raw_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
@@ -127,7 +128,7 @@ for seed in "${SEEDS[@]}"; do
           --early-stopping-patience "$MCFT_EARLY_PATIENCE" \
           --early-stopping-min-epochs "$MCFT_EARLY_MIN_EPOCHS" \
           --stats-file "$STATS_FILE" \
-          "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
+          "${COMMON[@]}" "${MCFT_MAX_BATCH_ARGS[@]}"
         ;;
       tir)
         run_one "tir_seed$seed" "$TIR_MIN_FREE_MIB" \
@@ -147,7 +148,7 @@ for seed in "${SEEDS[@]}"; do
           --early-stopping-patience "$TIR_EARLY_PATIENCE" \
           --early-stopping-min-epochs "$TIR_EARLY_MIN_EPOCHS" \
           --stats-file "$STATS_FILE" \
-          "${COMMON[@]}" "${MAX_BATCH_ARGS[@]}"
+          "${COMMON[@]}" "${TIR_MAX_BATCH_ARGS[@]}"
         ;;
     esac
   done

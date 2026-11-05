@@ -48,7 +48,7 @@ if ('tir' -in $MethodOrder -and -not (Test-Path -LiteralPath $ClipCheckpoint -Pa
     throw "Missing TIR CLIP checkpoint: $ClipCheckpoint"
 }
 if ($Mode -eq 'smoke') {
-    $McftEpochs = 1; $TirEpochs = 1; $McftBatch = 2; $TirBatch = 2
+    $McftEpochs = 1; $TirEpochs = 1; $McftBatch = 2; $TirBatch = 32
 }
 
 $RunId = 'vds2raw_{0}_{1}_{2}' -f $Mode, (Get-Date -Format 'yyyyMMdd_HHmmss'), $PID
@@ -79,7 +79,8 @@ foreach ($seed in $Seeds) {
         '--seed', $seed,
         '--num-workers', (Env-OrDefault 'VDS2RAW_NUM_WORKERS' '0'), '--skip-audit'
     )
-    $smokeArgs = if ($Mode -eq 'smoke') { @('--max-train-batches', '1') } else { @() }
+    $mcftSmokeArgs = if ($Mode -eq 'smoke') { @('--max-train-batches', '1') } else { @() }
+    $tirSmokeArgs = @()
     foreach ($method in $MethodOrder) {
         switch ($method) {
             'mcft3' {
@@ -97,7 +98,7 @@ foreach ($seed in $Seeds) {
                     '--early-stopping-patience', (Env-OrDefault 'VDS2RAW_MCFT_EARLY_STOPPING_PATIENCE' '25'),
                     '--early-stopping-min-epochs', (Env-OrDefault 'VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS' '60'),
                     '--stats-file', $StatsFile
-                ) + $common + $smokeArgs
+                ) + $common + $mcftSmokeArgs
                 Invoke-Method -Tag "mcft3_seed$seed" -Arguments $arguments
             }
             'tir' {
@@ -122,7 +123,7 @@ foreach ($seed in $Seeds) {
                     '--early-stopping-patience', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_PATIENCE' '0'),
                     '--early-stopping-min-epochs', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS' '0'),
                     '--stats-file', $StatsFile
-                ) + $common + $smokeArgs
+                ) + $common + $tirSmokeArgs
                 Invoke-Method -Tag "tir_seed$seed" -Arguments $arguments
             }
         }

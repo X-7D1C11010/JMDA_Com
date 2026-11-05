@@ -104,6 +104,9 @@ export VDS2RAW_RUN_COMPLEXITY_BENCHMARK=0
 bash scripts/run_vds2raw_background.sh smoke
 ```
 
+TIR smoke 使用 batch 32 跑完整210样本的一轮（7个显存微批、1次 optimizer step），
+不再使用只含2个样本的截断 batch；这样才能同时验证平衡采样和整轮梯度累积。
+
 只运行一种方法可设置 `VDS2RAW_METHOD_ORDER="mcft3"` 或
 `VDS2RAW_METHOD_ORDER="tir"`。GPU 门槛默认分别为 6144 MiB 与 14336 MiB，启动器会
 等待候选卡满足空闲显存及利用率门槛；它不能替代集群级独占调度。
