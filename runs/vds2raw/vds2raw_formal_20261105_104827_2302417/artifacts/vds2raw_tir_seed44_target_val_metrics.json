@@ -1,0 +1,209 @@
+{
+  "metric_definition": {
+    "ACC": "classification accuracy",
+    "Precision_macro": "macro precision over evaluation classes",
+    "Recall_macro": "macro recall over evaluation classes",
+    "F1_macro": "macro F1 over evaluation classes"
+  },
+  "metadata": {
+    "method": "TIR-RGB-NIR-AIS",
+    "seed": 44,
+    "epochs": 100,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "official_repository": "https://github.com/shuaiyi308/TIR",
+    "official_commit": "188ff2fcb7373fd5882319212bf712a676e90773",
+    "official_paper_protocol": "source-free 5-way 1/5-shot CLIP ViT-B/16 target fine-tuning",
+    "experiment_profile": "VDS2Raw source-free three-modal 3-way few-shot adaptation",
+    "supervision_protocol": "source-free target-only 3-way K-shot support fine-tuning",
+    "protocol_deviation": "VDS2Raw has only three classes and adds NIR/AIS adapters; training otherwise follows target-only K-shot full-support updates and the released linear TIR rule for fewer classes",
+    "source_labelled_samples": 0,
+    "target_labelled_samples": 15,
+    "target_support_pool_samples": 94,
+    "shots_per_class": 5,
+    "support_indices": [
+      2,
+      24,
+      15,
+      5,
+      19,
+      60,
+      73,
+      63,
+      69,
+      56,
+      88,
+      81,
+      83,
+      89,
+      85
+    ],
+    "support_paths": [
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Cargo/day1_g_11_coreg__ann_178.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Cargo/day7_g_16_coreg__ann_532.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Cargo/day5_g_13_coreg__ann_282.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Cargo/day1_g_31_coreg__ann_213.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Cargo/day5_g_1_coreg__ann_664.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Fishing/day7_g_0_coreg__ann_293.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Fishing/day7_g_41_coreg__ann_13.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Fishing/day7_g_19_coreg__ann_677.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Fishing/day7_g_3_coreg__ann_164.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Fishing/day5_g_19_coreg__ann_478.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Sailing_Pleasure/day7_g_27_coreg__ann_684.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Sailing_Pleasure/day5_g_27_coreg__ann_468.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Sailing_Pleasure/day7_g_0_coreg__ann_296.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Sailing_Pleasure/day7_g_31_coreg__ann_447.npz",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready/samples/target_train/Sailing_Pleasure/day7_g_19_coreg__ann_676.npz"
+    ],
+    "training_update_semantics": "one full support-set optimizer step per epoch",
+    "normalization_fit_partitions": [
+      "target_train"
+    ],
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": false,
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "ais_input": "heading sin/cos, length, and width only; validity mask is gating-only",
+    "ais_feature_names": [
+      "heading_sin",
+      "heading_cos",
+      "length_z",
+      "width_z"
+    ],
+    "excluded_label_proxy_fields": [
+      "nav_<UNKNOWN>",
+      "nav_at anchor",
+      "nav_engaged in fishing",
+      "nav_moored",
+      "nav_reserved for future amendment [hsc]",
+      "nav_restricted maneuverability",
+      "nav_under way sailing",
+      "nav_under way using engine",
+      "nav_unknown value"
+    ],
+    "ais_mask_as_classifier_feature": false,
+    "image_input": "train-range-scaled raw-DN RGB with CLIP normalization at 224x224, plus learned NIR residual",
+    "class_names": [
+      "cargo ship",
+      "fishing vessel",
+      "sailing and pleasure vessel"
+    ],
+    "tir": {
+      "topk_ratio": 0.3,
+      "temper_rate": 0.5,
+      "visual_blocks": [
+        8,
+        10
+      ],
+      "weight_rule": "official_linear_fewer_classes"
+    },
+    "lora": {
+      "encoder": "both",
+      "position": "all",
+      "rank": 16,
+      "alpha": 8,
+      "dropout": 0.25,
+      "lr": 0.0002,
+      "weight_decay": 0.01
+    },
+    "prompt_lr": 0.002,
+    "adapter_lr": 0.001,
+    "task_weight_decay": 0.0005,
+    "clip_checkpoint": "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+    "normalization": {
+      "rgb_mean": [
+        104.95668725989952,
+        149.40754515735816,
+        197.51423172466016
+      ],
+      "rgb_std": [
+        29.108739311603983,
+        30.02059853026043,
+        34.05372343487899
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        84.23210443447104
+      ],
+      "nir_std": [
+        29.00931388253918
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "target_train"
+      ],
+      "fit_samples": 94,
+      "rule": "statistics fitted only on: target_train"
+    },
+    "configured_batch_size": 9999,
+    "effective_batch_size": 15,
+    "augmentation": "no stochastic augmentation; paired aligned RGB/NIR resize to 224",
+    "early_stopping_patience_evaluations": 0,
+    "early_stopping_min_epochs": 0,
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_104827_2302417/artifacts/vds2raw_tir_seed44_run_config.json",
+    "completed_epochs": 100,
+    "stopped_early": false
+  },
+  "final": {
+    "epoch": 100,
+    "ACC": 0.4642857142857143,
+    "Precision_macro": 0.34848484848484845,
+    "Recall_macro": 0.31666666666666665,
+    "F1_macro": 0.30576441102756896,
+    "val_samples": 28,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC_then_F1": {
+    "epoch": 100,
+    "ACC": 0.4642857142857143,
+    "Precision_macro": 0.34848484848484845,
+    "Recall_macro": 0.31666666666666665,
+    "F1_macro": 0.30576441102756896,
+    "val_samples": 28,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "best_by_ACC": {
+    "epoch": 100,
+    "ACC": 0.4642857142857143,
+    "Precision_macro": 0.34848484848484845,
+    "Recall_macro": 0.31666666666666665,
+    "F1_macro": 0.30576441102756896,
+    "val_samples": 28,
+    "val_present_classes": 3,
+    "val_total_classes": 3
+  },
+  "history": [
+    {
+      "epoch": 100,
+      "ACC": 0.4642857142857143,
+      "Precision_macro": 0.34848484848484845,
+      "Recall_macro": 0.31666666666666665,
+      "F1_macro": 0.30576441102756896,
+      "val_samples": 28,
+      "val_present_classes": 3,
+      "val_total_classes": 3
+    }
+  ]
+}
