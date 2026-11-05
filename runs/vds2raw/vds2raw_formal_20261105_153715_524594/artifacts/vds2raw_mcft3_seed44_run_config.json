@@ -1,0 +1,215 @@
+{
+  "protocol_warning": "target_test is evaluated during training and selects the checkpoint; reported target_test is a test-set-selected peak, not an unbiased estimate",
+  "metadata": {
+    "method": "MCFT-RGB-NIR-AIS",
+    "seed": 44,
+    "epochs": 200,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "source_partition": "source_train",
+    "target_train_partition": "target_train",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "supervision_protocol": "all source_train and all target_train labels visible during training",
+    "source_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+    "target_label_usage": "joint source+target CE and label-conditioned auxiliary losses",
+    "active_class_ids_from_target_train": [
+      0,
+      1,
+      2
+    ],
+    "source_target_class_sets_equal": true,
+    "class_balanced_training_sampler": false,
+    "original_train_class_counts": {
+      "0": 62,
+      "1": 74,
+      "2": 74
+    },
+    "sampler_domain_class_counts": null,
+    "experiment_profile": "VDS2Raw MCFT RGB-NIR-AIS adaptation",
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "checkpoint_policy": "in-memory best state; no model files retained",
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "input_raster_size": [
+      96,
+      96
+    ],
+    "mcft_token_grid_size": [
+      15,
+      15
+    ],
+    "spatial_adapter": "native 96x96 RGB/NIR passes through the released separable convolution stacks before adaptive pooling to 15x15",
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "num_classes": 3,
+    "adaptation_note": "official two-image MCFT trunk plus regularized AIS late-fusion; only heading, length, and width are retained; validity masks gate missing values and are not classifier features",
+    "ais_feature_profile": "continuous",
+    "ais_feature_names": [
+      "heading_sin",
+      "heading_cos",
+      "length_z",
+      "width_z"
+    ],
+    "excluded_label_proxy_fields": [
+      "nav_<UNKNOWN>",
+      "nav_at anchor",
+      "nav_engaged in fishing",
+      "nav_moored",
+      "nav_reserved for future amendment [hsc]",
+      "nav_restricted maneuverability",
+      "nav_under way sailing",
+      "nav_under way using engine",
+      "nav_unknown value"
+    ],
+    "ais_mask_as_classifier_feature": false,
+    "ais_dropout_probability": 0.3,
+    "augmentation": "paired horizontal and vertical flips",
+    "label_smoothing": 0.05,
+    "weight_decay": 0.0001,
+    "early_stopping_patience_evaluations": 25,
+    "early_stopping_min_epochs": 60,
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted only on: source_train + target_train"
+    },
+    "batch_size": 32,
+    "optimizer": {
+      "name": "Adam",
+      "lr": 0.0005,
+      "weight_decay": 0.0001
+    },
+    "scheduler": {
+      "name": "StepLR",
+      "step_size": 20,
+      "gamma": 0.9
+    },
+    "loss": {
+      "ita_weight": 0.05,
+      "itm_weight": 1.0,
+      "itm_negative_mask": "all different-class samples, including class 0"
+    }
+  },
+  "provenance": {
+    "argv": [
+      "/home/lixiang/lx/JMDA_Com/vds2raw/train_mcft.py",
+      "--epochs",
+      "200",
+      "--batch-size",
+      "32",
+      "--lr",
+      "0.0005",
+      "--weight-decay",
+      "0.0001",
+      "--step-size",
+      "20",
+      "--gamma",
+      "0.9",
+      "--label-smoothing",
+      "0.05",
+      "--loss-ita-weight",
+      "0.05",
+      "--loss-itm-weight",
+      "1.0",
+      "--ais-dropout-probability",
+      "0.3",
+      "--early-stopping-patience",
+      "25",
+      "--early-stopping-min-epochs",
+      "60",
+      "--stats-file",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/normalization_stats.json",
+      "--data-root",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "--save-dir",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts",
+      "--seed",
+      "44",
+      "--num-workers",
+      "2",
+      "--skip-audit"
+    ],
+    "arguments": {
+      "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "save_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts",
+      "stats_file": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/normalization_stats.json",
+      "epochs": 200,
+      "batch_size": 32,
+      "eval_batch_size": 128,
+      "eval_frequency": 1,
+      "lr": 0.0005,
+      "weight_decay": 0.0001,
+      "step_size": 20,
+      "gamma": 0.9,
+      "loss_ita_weight": 0.05,
+      "loss_itm_weight": 1.0,
+      "label_smoothing": 0.05,
+      "ais_feature_profile": "continuous",
+      "ais_dropout_probability": 0.3,
+      "class_balanced_train": false,
+      "early_stopping_patience": 25,
+      "early_stopping_min_epochs": 60,
+      "num_workers": 2,
+      "seed": 44,
+      "augment": true,
+      "max_train_batches": 0,
+      "skip_audit": true
+    },
+    "git_head": "77ebdaa8b61d89d02f1675db2bc07b7bedae3102",
+    "git_status_short": "M server_logs/dann_coral_cdan/20261105_133812_3727165/efficiency/efficiency_runs.csv\n M server_logs/dann_coral_cdan/20261105_133812_3727165/launcher.out.log\n M server_logs/dann_coral_cdan/20261105_133812_3727165/results/runs.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/\n?? server_logs/dann_coral_cdan/20261105_133812_3727165/efficiency/CDAN-MM/\n?? server_logs/dann_coral_cdan/20261105_133812_3727165/efficiency/efficiency_summary.csv\n?? server_logs/dann_coral_cdan/20261105_133812_3727165/results/uda/cdan_backlight_20261105_154805.json\n?? server_logs/vds2raw_launcher/formal_20261105_153715_524589.log\n?? server_logs/vds2raw_launcher/formal_20261105_153715_524589.pid",
+    "dataset_metadata_sha256": {
+      "dataset_manifest.csv": "27cfbd153c60f8ce1d2175f28a96eea8869cf5f2003d7b1554212731cd7bc3b2",
+      "feature_schema.json": "f92144ea2eee9dcd25fa2a07b99942fd37cd99c987ee98d7c801f45b68d175a9",
+      "build_report.json": "0e9c49c5b720176f5fc18bd65144d15aa2d5a12ffc11f708d22365ef69146933",
+      "band_order_verification.json": "0bd90b9332f4c54491da73d9475a9320bfcf9fba39b23168f40563835a7f6e61",
+      "validation_report.json": "9298b4c3669dc33b4f3bc61e37c618e2b1334d42d0ad712e57f5a6eb9a85aa04"
+    },
+    "explicit_input_sha256": {
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/manifest.json": "f12a6048be0d7c23bae2a723dc9b933ff49fc33b4e9762bc6d1b077ce57f10c5"
+    },
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8"
+  }
+}
