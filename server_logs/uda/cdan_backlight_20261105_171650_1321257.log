@@ -1,0 +1,69 @@
+[GPU-WAIT] cdan_backlight: require free >= 18000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-05T19:03:24+08:00 cdan_backlight: GPU 0: free=21874 MiB, util=0%; GPU 1: free=30259 MiB, util=63%
+[GPU-WAIT] 2026-11-05T19:03:54+08:00 cdan_backlight: GPU 0: free=21874 MiB, util=0%; GPU 1: free=29510 MiB, util=96%
+[GPU-SELECT] cdan_backlight: physical GPU 0; free=21874 MiB, util=0%; launching: python /home/lixiang/lx/JMDA_Com/CDAN/train_cdan.py --target backlight --num-iterations 1400 --test-interval 100 --lr 0.0005 --head-lr-mult 3.0 --ad-lr-mult 10.0 --trade-off 1.0 --source-warmup-iterations 0 --label-smoothing 0.05 --coeff-max-iter 12000 --backbone JMDA --batch-size 16 --seed 42 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/20261105_171650_1321257 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261105_171650_1321257 --num-workers 8 --prefetch-factor 4 --multimodal --enhanced-augmentation --no-save-model --pin-memory --persistent-workers
+Deterministic kernels: True
+Controlled random seed: 42
+Device: cuda, Method: CDAN+E
+Multimodal preprocessing: JMDA paired Resize(256) + RandomCrop(224) + HFlip; validation Resize(224)
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515 images
+Target train: 113 images
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 8, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, eval=JMDA deterministic single-view, workers/view=0
+JMDA VIS fine-tuning: projection only; frozen ResNet parameters with legacy train-mode BN; VIS trainable=262,656/11,439,168; IR fully trainable
+CDAN-MM encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, 512+512 direct concatenation; CDAN bottleneck=256
+Random projection (--random): False; ad_net input dim=2304
+CDAN optimizer group lr_mult: [0.1, 1, 3.0, 3.0, 10.0]
+CDAN schedule: source-only warmup=0 updates; adaptation updates=1400; label smoothing=0.05
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/CDAN-MM/87a63e1cdf1f
+  iter [100/1400] loss_cls=0.4795 loss_transfer=0.5476 trade_off=1.000 warmup=False coeff=0.0412 lr=4.66e-05
+iter [100/1400] target val accuracy (JMDA deterministic single-view): 0.3333
+Val Precision (Macro): 0.3674 | Val Recall (Macro): 0.3787 | Val F1 (Macro): 0.3346 | Val class coverage: 9/9 | Val samples: 36
+  iter [200/1400] loss_cls=0.3866 loss_transfer=0.2867 trade_off=1.000 warmup=False coeff=0.0827 lr=4.36e-05
+iter [200/1400] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.4206 | Val Recall (Macro): 0.4611 | Val F1 (Macro): 0.4138 | Val class coverage: 9/9 | Val samples: 36
+  iter [300/1400] loss_cls=0.3161 loss_transfer=0.2103 trade_off=1.000 warmup=False coeff=0.1239 lr=4.11e-05
+iter [300/1400] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.3306 | Val Recall (Macro): 0.4722 | Val F1 (Macro): 0.3703 | Val class coverage: 9/9 | Val samples: 36
+  iter [400/1400] loss_cls=0.5036 loss_transfer=0.2220 trade_off=1.000 warmup=False coeff=0.1647 lr=3.89e-05
+iter [400/1400] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.3377 | Val Recall (Macro): 0.4722 | Val F1 (Macro): 0.3791 | Val class coverage: 9/9 | Val samples: 36
+  iter [500/1400] loss_cls=0.3355 loss_transfer=0.2342 trade_off=1.000 warmup=False coeff=0.2050 lr=3.69e-05
+iter [500/1400] target val accuracy (JMDA deterministic single-view): 0.3333
+Val Precision (Macro): 0.3254 | Val Recall (Macro): 0.3981 | Val F1 (Macro): 0.3365 | Val class coverage: 9/9 | Val samples: 36
+  iter [600/1400] loss_cls=0.3121 loss_transfer=0.0951 trade_off=1.000 warmup=False coeff=0.2445 lr=3.52e-05
+iter [600/1400] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.3396 | Val Recall (Macro): 0.4722 | Val F1 (Macro): 0.3773 | Val class coverage: 9/9 | Val samples: 36
+  iter [700/1400] loss_cls=0.3335 loss_transfer=0.1610 trade_off=1.000 warmup=False coeff=0.2833 lr=3.36e-05
+iter [700/1400] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.4648 | Val Recall (Macro): 0.4537 | Val F1 (Macro): 0.3870 | Val class coverage: 9/9 | Val samples: 36
+  iter [800/1400] loss_cls=0.3497 loss_transfer=0.2340 trade_off=1.000 warmup=False coeff=0.3211 lr=3.22e-05
+iter [800/1400] target val accuracy (JMDA deterministic single-view): 0.5000
+Val Precision (Macro): 0.5074 | Val Recall (Macro): 0.5315 | Val F1 (Macro): 0.4643 | Val class coverage: 9/9 | Val samples: 36
+  iter [900/1400] loss_cls=0.3869 loss_transfer=0.2373 trade_off=1.000 warmup=False coeff=0.3580 lr=3.09e-05
+iter [900/1400] target val accuracy (JMDA deterministic single-view): 0.4444
+Val Precision (Macro): 0.5040 | Val Recall (Macro): 0.5037 | Val F1 (Macro): 0.4844 | Val class coverage: 9/9 | Val samples: 36
+  iter [1000/1400] loss_cls=0.3177 loss_transfer=0.2426 trade_off=1.000 warmup=False coeff=0.3938 lr=2.97e-05
+iter [1000/1400] target val accuracy (JMDA deterministic single-view): 0.5000
+Val Precision (Macro): 0.5537 | Val Recall (Macro): 0.5176 | Val F1 (Macro): 0.4672 | Val class coverage: 9/9 | Val samples: 36
+  iter [1100/1400] loss_cls=0.4264 loss_transfer=0.4091 trade_off=1.000 warmup=False coeff=0.4284 lr=2.87e-05
+iter [1100/1400] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.3946 | Val Recall (Macro): 0.4630 | Val F1 (Macro): 0.3807 | Val class coverage: 9/9 | Val samples: 36
+  iter [1200/1400] loss_cls=0.3632 loss_transfer=0.2753 trade_off=1.000 warmup=False coeff=0.4618 lr=2.77e-05
+iter [1200/1400] target val accuracy (JMDA deterministic single-view): 0.4444
+Val Precision (Macro): 0.4524 | Val Recall (Macro): 0.4861 | Val F1 (Macro): 0.4078 | Val class coverage: 9/9 | Val samples: 36
+  iter [1300/1400] loss_cls=0.3359 loss_transfer=0.1843 trade_off=1.000 warmup=False coeff=0.4939 lr=2.68e-05
+iter [1300/1400] target val accuracy (JMDA deterministic single-view): 0.4444
+Val Precision (Macro): 0.4545 | Val Recall (Macro): 0.4769 | Val F1 (Macro): 0.4049 | Val class coverage: 9/9 | Val samples: 36
+  iter [1400/1400] loss_cls=0.3301 loss_transfer=0.1762 trade_off=1.000 warmup=False coeff=0.5248 lr=2.59e-05
+iter [1400/1400] target val accuracy (JMDA deterministic single-view): 0.5000
+Val Precision (Macro): 0.5392 | Val Recall (Macro): 0.5324 | Val F1 (Macro): 0.4839 | Val class coverage: 9/9 | Val samples: 36
+Best target val accuracy (backlight, selected): 0.5000 at iteration 1400
+Selected target val metrics:
+Val Precision (Macro): 0.5392 | Val Recall (Macro): 0.5324 | Val F1 (Macro): 0.4839 | Val class coverage: 9/9 | Val samples: 36
+Last-iteration target val accuracy (backlight): 0.5000
+Final target val accuracy (backlight, selected iteration 1400): 0.5000
+{"timestamp": "2026-11-05T19:09:13", "suite_id": "20261105_171650_1321257", "run_tag": "cdan_backlight", "method": "cdan", "protocol": "UDA", "target": "backlight", "seed": 42, "epochs": 100, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "best_target_val_ACC_within_budget", "status": "success", "exit_code": 0, "duration_seconds": 349.0, "final_acc": 0.5, "best_acc": 0.5, "final_acc_std": null, "precision_macro": 0.5392, "precision_macro_std": null, "recall_macro": 0.5324, "recall_macro_std": null, "f1_macro": 0.4839, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 14, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/cdan_backlight_20261105_171650_1321257.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda", "error_type": null, "error_summary": null}

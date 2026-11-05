@@ -1,0 +1,240 @@
+{
+  "protocol_warning": "target_test is evaluated during training and selects the checkpoint; reported target_test is a test-set-selected peak, not an unbiased estimate",
+  "metadata": {
+    "method": "TIR-RGB-NIR-AIS",
+    "seed": 46,
+    "epochs": 100,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "official_repository": "https://github.com/shuaiyi308/TIR",
+    "official_commit": "188ff2fcb7373fd5882319212bf712a676e90773",
+    "official_paper_protocol": "source-free 5-way 1/5-shot CLIP ViT-B/16 target fine-tuning",
+    "experiment_profile": "VDS2Raw fully supervised three-modal adaptation",
+    "supervision_protocol": "all matching-class source_train and all target_train labels visible",
+    "protocol_deviation": "Fair-comparison adaptation uses all source/target labels and RGB/NIR/AIS inputs instead of the paper's source-free few-shot budget; TIR, CoOp, LoRA and their optimizer hyperparameters are retained",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "target_label_budget": "all available target_train labels",
+    "active_class_ids_from_target_train": [
+      0,
+      1,
+      2
+    ],
+    "source_target_class_sets_equal": true,
+    "training_update_semantics": "minibatch updates over full source+target training set",
+    "normalization_fit_partitions": [
+      "source_train",
+      "target_train"
+    ],
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "checkpoint_policy": "in-memory best state; no model files retained",
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "ais_input": "heading sin/cos, length, and width only; validity mask is gating-only",
+    "ais_feature_names": [
+      "heading_sin",
+      "heading_cos",
+      "length_z",
+      "width_z"
+    ],
+    "excluded_label_proxy_fields": [
+      "nav_<UNKNOWN>",
+      "nav_at anchor",
+      "nav_engaged in fishing",
+      "nav_moored",
+      "nav_reserved for future amendment [hsc]",
+      "nav_restricted maneuverability",
+      "nav_under way sailing",
+      "nav_under way using engine",
+      "nav_unknown value"
+    ],
+    "ais_mask_as_classifier_feature": false,
+    "image_input": "8-bit-semantics RGB scaling (/255 with sparse outlier clipping), CLIP normalization at 224x224, plus learned NIR residual",
+    "class_names": [
+      "cargo ship",
+      "fishing vessel",
+      "sailing and pleasure vessel"
+    ],
+    "tir": {
+      "topk_ratio": 0.3,
+      "temper_rate": 0.5,
+      "visual_blocks": [
+        8,
+        10
+      ],
+      "weight_rule": "official_linear_fewer_classes"
+    },
+    "lora": {
+      "encoder": "both",
+      "position": "all",
+      "rank": 8,
+      "alpha": 4,
+      "dropout": 0.4,
+      "lr": 0.0001,
+      "weight_decay": 0.02
+    },
+    "prompt_lr": 0.001,
+    "adapter_lr": 0.0005,
+    "task_weight_decay": 0.001,
+    "label_smoothing": 0.1,
+    "scheduler": {
+      "name": "cosine",
+      "min_lr_ratio": 0.1
+    },
+    "clip_checkpoint": "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted only on: source_train + target_train"
+    },
+    "configured_batch_size": 32,
+    "effective_batch_size": 32,
+    "augmentation": "paired light random crop and horizontal/vertical flips",
+    "early_stopping_patience_evaluations": 0,
+    "early_stopping_min_epochs": 0
+  },
+  "provenance": {
+    "argv": [
+      "/home/lixiang/lx/JMDA_Com/vds2raw/train_tir.py",
+      "--epochs",
+      "100",
+      "--batch-size",
+      "32",
+      "--eval-frequency",
+      "1",
+      "--clip-checkpoint",
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+      "--lora-lr",
+      "0.0001",
+      "--prompt-lr",
+      "0.001",
+      "--adapter-lr",
+      "0.0005",
+      "--lora-weight-decay",
+      "0.02",
+      "--weight-decay",
+      "0.001",
+      "--lora-rank",
+      "8",
+      "--lora-alpha",
+      "4",
+      "--lora-dropout",
+      "0.4",
+      "--label-smoothing",
+      "0.1",
+      "--scheduler",
+      "cosine",
+      "--min-lr-ratio",
+      "0.1",
+      "--augment",
+      "--early-stopping-patience",
+      "0",
+      "--early-stopping-min-epochs",
+      "0",
+      "--stats-file",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/normalization_stats.json",
+      "--data-root",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "--save-dir",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts",
+      "--seed",
+      "46",
+      "--num-workers",
+      "2",
+      "--skip-audit"
+    ],
+    "arguments": {
+      "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "save_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts",
+      "stats_file": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261105_153715_524594/normalization_stats.json",
+      "clip_checkpoint": "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+      "epochs": 100,
+      "batch_size": 32,
+      "eval_batch_size": 64,
+      "eval_frequency": 1,
+      "lora_lr": 0.0001,
+      "prompt_lr": 0.001,
+      "adapter_lr": 0.0005,
+      "lora_weight_decay": 0.02,
+      "weight_decay": 0.001,
+      "topk_ratio": 0.3,
+      "temper_rate": 0.5,
+      "text_layer": 10,
+      "lora_rank": 8,
+      "lora_alpha": 4,
+      "lora_dropout": 0.4,
+      "lora_encoder": "both",
+      "lora_position": "all",
+      "ais_dropout_probability": 0.5,
+      "logit_scale": 4.0,
+      "label_smoothing": 0.1,
+      "scheduler": "cosine",
+      "min_lr_ratio": 0.1,
+      "early_stopping_patience": 0,
+      "early_stopping_min_epochs": 0,
+      "num_workers": 2,
+      "seed": 46,
+      "augment": true,
+      "max_train_batches": 0,
+      "skip_audit": true
+    },
+    "git_head": "c8022719e83ef8e2b5aa54d87f429148468b7b09",
+    "git_status_short": "M server_logs/vds2raw_launcher/formal_20261105_153715_524589.log\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_result.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_result.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_selected_target_test_confusion_matrix.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_selected_target_test_confusion_matrix.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_selected_target_test_predictions.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_selected_target_val_confusion_matrix.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_selected_target_val_confusion_matrix.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_selected_target_val_predictions.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_target_test_metrics.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_target_test_metrics.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_target_val_metrics.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_target_val_metrics.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_train_history.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed45_train_history.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_result.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_result.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_run_config.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_selected_target_test_confusion_matrix.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_selected_target_test_confusion_matrix.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_selected_target_test_predictions.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_selected_target_val_confusion_matrix.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_selected_target_val_confusion_matrix.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_selected_target_val_predictions.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_target_test_metrics.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_target_test_metrics.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_target_val_metrics.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_target_val_metrics.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_train_history.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_mcft3_seed46_train_history.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_result.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_result.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_run_config.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_selected_target_test_confusion_matrix.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_selected_target_test_confusion_matrix.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_selected_target_test_predictions.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_selected_target_val_confusion_matrix.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_selected_target_val_confusion_matrix.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_selected_target_val_predictions.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_target_test_metrics.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_target_test_metrics.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_target_val_metrics.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_target_val_metrics.json\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_train_history.csv\n?? runs/vds2raw/vds2raw_formal_20261105_153715_524594/artifacts/vds2raw_tir_seed45_train_history.json",
+    "dataset_metadata_sha256": {
+      "dataset_manifest.csv": "27cfbd153c60f8ce1d2175f28a96eea8869cf5f2003d7b1554212731cd7bc3b2",
+      "feature_schema.json": "f92144ea2eee9dcd25fa2a07b99942fd37cd99c987ee98d7c801f45b68d175a9",
+      "build_report.json": "0e9c49c5b720176f5fc18bd65144d15aa2d5a12ffc11f708d22365ef69146933",
+      "band_order_verification.json": "0bd90b9332f4c54491da73d9475a9320bfcf9fba39b23168f40563835a7f6e61",
+      "validation_report.json": "9298b4c3669dc33b4f3bc61e37c618e2b1334d42d0ad712e57f5a6eb9a85aa04"
+    },
+    "explicit_input_sha256": {
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt": "5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f",
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/manifest.json": "f12a6048be0d7c23bae2a723dc9b933ff49fc33b4e9762bc6d1b077ce57f10c5"
+    },
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8"
+  }
+}
