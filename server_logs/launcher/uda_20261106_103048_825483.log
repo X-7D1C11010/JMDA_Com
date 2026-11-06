@@ -1,0 +1,34 @@
+协议=uda 轮数=100 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/uda
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261106_103049_825495
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+运行公共配置预检...
+[OK] paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261106_103049_825495/paired_protocol_manifest.json (4 labelled lists, 1 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=29815/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[OK] real CLIP class-name mapping: /home/lixiang/lx/JMDA_Com/class.txt (14 classes)
+[OK] server preflight passed
+UDA selected methods: DANN,DeepCORAL,CDAN,MDD,MCC
+UDA multimodal protocol: JMDA non-tensor VIS ResNet-18 + IR U-Net, 512+512 direct concatenation, batch=16, CDAN iterations=2000, report peak target-val ACC, no checkpoint
+UDA DataLoader: workers=8 prefetch=4 pin_memory=1 persistent_workers=1
+>>> [dann_backlight] GPU门禁: free>=16000MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/uda/dann_backlight_20261106_103049_825495.log)
+    done: dann_backlight
+>>> [deepcoral_backlight] GPU门禁: free>=16000MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/uda/deepcoral_backlight_20261106_103049_825495.log)
+    done: deepcoral_backlight
+>>> [cdan_backlight] GPU门禁: free>=18000MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/uda/cdan_backlight_20261106_103049_825495.log)
+    done: cdan_backlight
+>>> [mdd_backlight] GPU门禁: free>=20000MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/uda/mdd_backlight_20261106_103049_825495.log)
+    done: mdd_backlight
+>>> [mcc_backlight] GPU门禁: free>=18000MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/uda/mcc_backlight_20261106_103049_825495.log)
+    done: mcc_backlight
+阶段结束（uda）：失败任务数=0。
+全部任务成功（uda）。

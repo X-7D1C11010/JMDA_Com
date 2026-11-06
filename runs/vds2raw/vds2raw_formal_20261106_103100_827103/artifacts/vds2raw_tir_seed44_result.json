@@ -1,0 +1,212 @@
+{
+  "protocol": "all matching-class source_train and all target_train labels visible",
+  "model_selection": "best target_test ACC, macro-F1 tie-break; test-set-selected peak",
+  "selection_partition": "target_test",
+  "test_selection_bias": true,
+  "test_evaluations_for_selection": 31,
+  "selected_checkpoint_report_evaluations": 1,
+  "selected_epoch": 7,
+  "target_val": {
+    "accuracy": 0.6428571428571429,
+    "precision_macro": 0.5384615384615384,
+    "recall_macro": 0.42857142857142855,
+    "f1_macro": 0.40211640211640215,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28
+  },
+  "target_test": {
+    "accuracy": 0.5757575757575758,
+    "precision_macro": 0.7394636015325671,
+    "recall_macro": 0.4409982174688057,
+    "f1_macro": 0.43823326432022086,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 33
+  },
+  "metadata": {
+    "method": "TIR-RGB-NIR-AIS",
+    "seed": 44,
+    "epochs": 60,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "official_repository": "https://github.com/shuaiyi308/TIR",
+    "official_commit": "188ff2fcb7373fd5882319212bf712a676e90773",
+    "official_paper_protocol": "source-free 5-way 1/5-shot CLIP ViT-B/16 target fine-tuning",
+    "experiment_profile": "VDS2Raw fully supervised three-modal adaptation",
+    "supervision_protocol": "all matching-class source_train and all target_train labels visible",
+    "protocol_deviation": "Fair-comparison adaptation uses all source/target labels and RGB/NIR/AIS inputs instead of the paper's source-free few-shot budget; the TIR, CoOp and LoRA mechanisms are retained while capacity and schedule are regularized for the 210-sample supervised setting",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "target_label_budget": "all available target_train labels",
+    "active_class_ids_from_target_train": [
+      0,
+      1,
+      2
+    ],
+    "source_target_class_sets_equal": true,
+    "training_update_semantics": "minibatch updates over full source+target training data",
+    "domain_class_balanced_training": false,
+    "domain_class_counts": null,
+    "sampling": "natural shuffle without replacement",
+    "combined_class_counts": [
+      62,
+      74,
+      74
+    ],
+    "class_weight_power": 0.5,
+    "class_weights": [
+      1.0598199367523193,
+      0.9700900316238403,
+      0.9700900316238403
+    ],
+    "normalization_fit_partitions": [
+      "source_train",
+      "target_train"
+    ],
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "checkpoint_policy": "in-memory best state; no model files retained",
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "ais_input": "heading sin/cos, length, and width only; validity mask is gating-only",
+    "ais_feature_names": [
+      "heading_sin",
+      "heading_cos",
+      "length_z",
+      "width_z"
+    ],
+    "excluded_label_proxy_fields": [
+      "nav_<UNKNOWN>",
+      "nav_at anchor",
+      "nav_engaged in fishing",
+      "nav_moored",
+      "nav_reserved for future amendment [hsc]",
+      "nav_restricted maneuverability",
+      "nav_under way sailing",
+      "nav_under way using engine",
+      "nav_unknown value"
+    ],
+    "ais_mask_as_classifier_feature": false,
+    "image_input": "8-bit-semantics RGB scaling (/255 with sparse outlier clipping), CLIP normalization at 224x224, plus learned NIR residual",
+    "class_names": [
+      "cargo ship",
+      "fishing vessel",
+      "sailing and pleasure vessel"
+    ],
+    "tir": {
+      "topk_ratio": 0.3,
+      "temper_rate": 0.5,
+      "visual_blocks": [
+        8,
+        10
+      ],
+      "weight_rule": "paper_simplified_kway_extremes_bounded",
+      "min_weight": 0.25,
+      "max_weight": 1.75
+    },
+    "lora": {
+      "encoder": "vision",
+      "position": "all",
+      "params": [
+        "q",
+        "v"
+      ],
+      "rank": 8,
+      "alpha": 4,
+      "dropout": 0.25,
+      "lr": 5e-05,
+      "weight_decay": 0.01
+    },
+    "prompt_lr": 0.0005,
+    "adapter_lr": 0.0003,
+    "task_weight_decay": 0.003,
+    "label_smoothing": 0.05,
+    "scheduler": {
+      "name": "cosine",
+      "min_lr_ratio": 0.1,
+      "warmup_epochs": 5
+    },
+    "initial_fusion_scales": {
+      "nir": 0.1,
+      "ais": 0.1
+    },
+    "clip_checkpoint": "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted only on: source_train + target_train"
+    },
+    "configured_batch_size": 32,
+    "effective_batch_size": 32,
+    "optimizer_effective_batch_size": 32,
+    "augmentation": "paired moderate random crop and horizontal/vertical flips, plus mild RGB photometric and NIR gain jitter",
+    "early_stopping_monitor": "target_val macro F1, accuracy tie-breaker",
+    "early_stopping_patience_evaluations": 12,
+    "early_stopping_min_epochs": 15,
+    "run_config": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_run_config.json",
+    "completed_epochs": 31,
+    "stopped_early": true
+  },
+  "target_val_history_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_target_val_metrics.csv",
+  "target_val_history_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_target_val_metrics.json",
+  "target_test_history_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_target_test_metrics.csv",
+  "target_test_history_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_target_test_metrics.json",
+  "training_history_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_train_history.csv",
+  "training_history_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_train_history.json",
+  "prediction_artifacts": {
+    "target_val": {
+      "predictions_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_selected_target_val_predictions.csv",
+      "confusion_matrix_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_selected_target_val_confusion_matrix.csv",
+      "confusion_matrix_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_selected_target_val_confusion_matrix.json"
+    },
+    "target_test": {
+      "predictions_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_selected_target_test_predictions.csv",
+      "confusion_matrix_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_selected_target_test_confusion_matrix.csv",
+      "confusion_matrix_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261106_103100_827103/artifacts/vds2raw_tir_seed44_selected_target_test_confusion_matrix.json"
+    }
+  }
+}
