@@ -5,9 +5,10 @@ follow ``MViT_pytorch_upload.py`` and ``MViT_demo_h2013.py``: a 15x15 token grid
 dim=64, depth=6, four heads, CE + 0.1*ITA + ITM, Adam 5e-4, StepLR(20, 0.9),
 batch 64, 500 epochs and evaluation every 10 epochs.  HSI+LiDAR cannot be
 recreated from this dataset, so the explicit modality adaptation is HSI->RGB
-VIS (3 channels) and LiDAR->grayscale IR (1 channel).  Training remains
-source-supervised, with sunny examples restricted to the target weather's
-known class support.
+VIS (3 channels) and LiDAR->grayscale IR (1 channel).  For the shared
+supervised-budget protocol, every independent target-weather experiment
+trains on all label-visible sunny source pairs and target-train pairs,
+restricted to the target weather's class support.
 """
 
 import argparse
@@ -17,7 +18,7 @@ import sys
 import torch
 import torch.nn as nn
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torchvision.transforms import functional as TF
 
 
@@ -166,13 +167,32 @@ def main():
         os.path.join(args.data_dir, 'sunny_train.txt'), label_map,
         horizontal_flip=args.horizontal_flip,
     )
+    target_train = PairedVisIrDataset(
+        os.path.join(args.data_dir, f'{args.target}_train.txt'), label_map,
+        horizontal_flip=args.horizontal_flip,
+    )
     target_val = PairedVisIrDataset(
         os.path.join(args.data_dir, f'{args.target}_val.txt'), label_map,
         horizontal_flip=False,
     )
+    expected_labels = set(range(num_classes))
+    source_labels = {label for _, _, label in source.samples}
+    target_train_labels = {label for _, _, label in target_train.samples}
+    if source_labels != expected_labels or target_train_labels != expected_labels:
+        raise ValueError(
+            'source/target training class support mismatch after target-driven '
+            f'filtering: expected={sorted(expected_labels)}, '
+            f'source={sorted(source_labels)}, target={sorted(target_train_labels)}'
+        )
+    train_data = ConcatDataset((source, target_train))
     print(
         f'Source train (sunny VIS+IR): kept={len(source)}, '
         f'dropped_label={source.skipped}, dropped_unpaired={source.dropped_unpaired}'
+    )
+    print(
+        f'Target train ({args.target} VIS+IR, labels visible): '
+        f'kept={len(target_train)}, dropped_label={target_train.skipped}, '
+        f'dropped_unpaired={target_train.dropped_unpaired}'
     )
     print(
         f'Target val ({args.target} VIS+IR): kept={len(target_val)}, '
@@ -180,8 +200,8 @@ def main():
         f'dropped_unpaired={target_val.dropped_unpaired}'
     )
 
-    source_loader = DataLoader(
-        source, batch_size=args.batch_size, shuffle=True,
+    train_loader = DataLoader(
+        train_data, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, drop_last=False,
     )
     target_val_loader = DataLoader(
@@ -203,8 +223,10 @@ def main():
         from efficiency_common import EfficiencyLogger
         efficiency = EfficiencyLogger(
             args.efficiency_output_dir, 'MCFT', seed=args.seed,
-            device=str(device), modalities='VIS+IR', protocol='Supervised',
-            target_label_count=0, target_labels_per_class=0,
+            device=str(device), modalities='VIS+IR',
+            protocol='FullySupervisedAdaptation',
+            target_label_count=len(target_train),
+            target_labels_per_class='all available',
             backbone='MCFT MViT released architecture (VIS3 + IR1 adaptation)',
             pretraining='None (trained from scratch)',
         )
@@ -217,13 +239,13 @@ def main():
     stopped_early = False
     completed_epoch = 0
     run_stem = f'mcft_{args.target}_seed{args.seed}'
-    best_checkpoint = os.path.join(args.save_dir, f'{run_stem}_best.pth')
+    best_state = None
     for epoch in range(1, args.epochs + 1):
         completed_epoch = epoch
         if efficiency:
             efficiency.epoch_start(epoch - 1)
         model.train()
-        for batch_index, (vis, ir, labels) in enumerate(source_loader, 1):
+        for batch_index, (vis, ir, labels) in enumerate(train_loader, 1):
             if efficiency:
                 efficiency.step_start()
             vis = vis.to(device)
@@ -244,7 +266,7 @@ def main():
             if batch_index % 5 == 0:
                 print(
                     f'  Epoch [{epoch}/{args.epochs}] '
-                    f'batch [{batch_index}/{len(source_loader)}] '
+                    f'batch [{batch_index}/{len(train_loader)}] '
                     f'ce={classification_loss.item():.4f} '
                     f'ita={loss_ita.item():.4f} itm={loss_itm.item():.4f}'
                 )
@@ -264,7 +286,10 @@ def main():
                      metrics['f1_macro'] > best_metrics['f1_macro'])):
                 best_metrics = dict(metrics)
                 best_epoch = epoch
-                torch.save(model.state_dict(), best_checkpoint)
+                best_state = {
+                    name: tensor.detach().cpu().clone()
+                    for name, tensor in model.state_dict().items()
+                }
                 evaluations_without_improvement = 0
             else:
                 evaluations_without_improvement += 1
@@ -280,18 +305,25 @@ def main():
             )
             break
 
-    last_checkpoint = os.path.join(args.save_dir, f'{run_stem}_last.pth')
-    torch.save(model.state_dict(), last_checkpoint)
-    best_state = torch.load(best_checkpoint, map_location='cpu', weights_only=False)
+    if best_state is None:
+        raise RuntimeError('MCFT completed without a target-val evaluation')
     model.load_state_dict(best_state, strict=True)
-    print(f'Strictly reloaded best checkpoint: {best_checkpoint}')
+    print('Strictly restored the in-memory best state; no model file was written.')
     metrics_csv, metrics_json = save_metric_history(
         args.save_dir,
         run_stem,
         history,
         metadata={
-            'method': 'MCFT', 'protocol': 'source-supervised',
+            'method': 'MCFT', 'protocol': 'fully-supervised adaptation',
             'source': 'sunny', 'target': args.target,
+            'supervision_protocol': (
+                'all target-class-matched sunny_train labels and all '
+                'target_train labels are visible'
+            ),
+            'source_labelled_samples': len(source),
+            'target_labelled_samples': len(target_train),
+            'target_label_budget': 'all available target_train labels',
+            'source_target_class_sets_equal': True,
             'class_ids_original_zero_based': class_ids, 'label_map': label_map,
             'epochs': args.epochs, 'eval_frequency': args.eval_frequency,
             'seed': args.seed, 'input_modalities': 'VIS_RGB+IR_grayscale',
@@ -300,6 +332,7 @@ def main():
             'spatial_adapter': '96x96 convolution then adaptive pooling to 15x15',
             'official_modality_adaptation': 'HSI->VIS; LiDAR->IR',
             'max_train_batches': args.max_train_batches,
+            'checkpoint_policy': 'in-memory best state; no model files retained',
             'completed_epochs': completed_epoch,
             'stopped_early': stopped_early,
             'early_stopping': {
@@ -320,7 +353,7 @@ def main():
             'f1_macro': final_metrics['f1_macro'],
             'selected_epoch': best_epoch,
             'last_epoch_acc': last_metrics['accuracy'],
-            'target': args.target, 'protocol': 'Supervised',
+            'target': args.target, 'protocol': 'FullySupervisedAdaptation',
         })
 
     print(f'Last-epoch target val accuracy: {last_metrics["accuracy"]:.4f}')

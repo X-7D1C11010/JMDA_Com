@@ -128,6 +128,14 @@ def validate(val_loader, classifier, num_classes):
 def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
                 optimizer, lr_scheduler, epoch, args, eff=None):
     classifier.train()
+    cls_loss_sum = 0.0
+    transfer_loss_sum = 0.0
+    source_correct = 0
+    source_samples = 0
+    target_confidence_sum = 0.0
+    target_entropy_sum = 0.0
+    target_steps = 0
+    target_class_counts = None
     for i in range(args.iters_per_epoch):
         if eff:
             eff.step_start()
@@ -167,6 +175,25 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
             transfer_loss = mcc(y_t)
             transfer_weight = args.trade_off
         loss = cls_loss + transfer_loss * transfer_weight
+        with torch.no_grad():
+            cls_loss_sum += cls_loss.item()
+            transfer_loss_sum += transfer_loss.item()
+            source_correct += int(y_s.argmax(dim=1).eq(labels_s).sum().item())
+            source_samples += int(labels_s.numel())
+            if target_class_counts is None:
+                target_class_counts = torch.zeros(
+                    y_s.size(1), dtype=torch.long)
+            if y_t is not None:
+                target_probabilities = F.softmax(y_t, dim=1)
+                target_confidence_sum += target_probabilities.max(
+                    dim=1).values.mean().item()
+                target_entropy_sum += (-(target_probabilities *
+                                         target_probabilities.clamp_min(1e-8).log())
+                                       .sum(dim=1).mean().item())
+                target_steps += 1
+                target_class_counts += torch.bincount(
+                    target_probabilities.argmax(dim=1),
+                    minlength=target_probabilities.size(1)).cpu()
         loss.backward()
         optimizer.step()
         lr_scheduler.step()
@@ -184,6 +211,19 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mcc,
                   f'src_acc={acc.item():.2f} target_conf={target_confidence:.4f} '
                   f'lr=[{min(learning_rates):.3e},{max(learning_rates):.3e}]',
                   flush=True)
+    return {
+        'avg_cls': cls_loss_sum / args.iters_per_epoch,
+        'avg_mcc': transfer_loss_sum / args.iters_per_epoch,
+        'source_acc': source_correct / max(source_samples, 1),
+        'target_conf': (target_confidence_sum / target_steps
+                        if target_steps else float('nan')),
+        'target_entropy': (target_entropy_sum / target_steps
+                           if target_steps else float('nan')),
+        'target_class_coverage': int((target_class_counts > 0).sum().item()),
+        'target_class_hist': target_class_counts.tolist(),
+        'transfer_weight': transfer_weight,
+        'adaptation_steps': target_steps,
+    }
 
 
 def main():
@@ -346,8 +386,22 @@ def main():
         last_epoch = epoch
         if eff:
             eff.epoch_start(epoch)
-        train_epoch(train_source_iter, train_target_iter, classifier, mcc,
-                    optimizer, lr_scheduler, epoch, args, eff=eff)
+        train_diagnostics = train_epoch(
+            train_source_iter, train_target_iter, classifier, mcc,
+            optimizer, lr_scheduler, epoch, args, eff=eff)
+        print(
+            f'Epoch [{epoch}/{args.epochs}] train summary: '
+            f'avg_cls={train_diagnostics["avg_cls"]:.4f} '
+            f'avg_mcc={train_diagnostics["avg_mcc"]:.4f} '
+            f'source_acc={train_diagnostics["source_acc"]:.4f} '
+            f'target_conf={train_diagnostics["target_conf"]:.4f} '
+            f'target_entropy={train_diagnostics["target_entropy"]:.4f} '
+            f'target_class_coverage={train_diagnostics["target_class_coverage"]}/{num_classes} '
+            f'target_class_hist={train_diagnostics["target_class_hist"]} '
+            f'transfer_weight={train_diagnostics["transfer_weight"]:.4f} '
+            f'adaptation_steps={train_diagnostics["adaptation_steps"]}',
+            flush=True,
+        )
         val_metrics = validate(tgt_val_loader, classifier, num_classes)
         last_metrics = dict(val_metrics)
         acc = val_metrics['accuracy']

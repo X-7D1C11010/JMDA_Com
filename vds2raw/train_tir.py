@@ -47,12 +47,17 @@ def build_model(args):
         topk_ratio=args.topk_ratio,
         temper_rate=args.temper_rate,
         text_layer=args.text_layer,
+        tir_min_weight=args.tir_min_weight,
+        tir_max_weight=args.tir_max_weight,
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         lora_encoder=args.lora_encoder,
         lora_position=args.lora_position,
+        lora_params=args.lora_params,
         ais_dropout_probability=args.ais_dropout_probability,
+        nir_initial_scale=args.nir_initial_scale,
+        ais_initial_scale=args.ais_initial_scale,
         logit_scale=args.logit_scale,
     )
 
@@ -92,6 +97,55 @@ def normalize_accumulated_gradients(parameter_groups, denominator):
                 parameter.grad.div_(float(denominator))
 
 
+def mild_class_weights(*datasets, power=0.5):
+    """Return inverse-frequency weights without replacement oversampling.
+
+    Combining source and target counts keeps the supervised budget intact.
+    The square-root default is deliberately milder than exact inverse class
+    frequency and therefore does not repeatedly expose minority samples.
+    """
+
+    if not 0.0 <= power <= 1.0:
+        raise ValueError("class weight power must be in [0, 1]")
+    counts = torch.zeros(len(DEFAULT_CLASS_NAMES), dtype=torch.float64)
+    for dataset in datasets:
+        for _, label in dataset.samples:
+            counts[int(label)] += 1
+    if bool((counts <= 0).any()):
+        raise ValueError(f"every active class needs training samples; counts={counts}")
+    weights = counts.pow(-float(power))
+    weights = weights / weights.mean()
+    return weights.float(), counts.to(torch.int64).tolist()
+
+
+def warmup_cosine_multiplier(epoch_index, total_epochs, warmup_epochs, min_lr_ratio):
+    """Epoch scheduler with an explicit low-LR warmup and cosine decay."""
+
+    if total_epochs <= 0 or warmup_epochs < 0 or warmup_epochs >= total_epochs:
+        raise ValueError("warmup must satisfy 0 <= warmup_epochs < total_epochs")
+    if not 0.0 <= min_lr_ratio <= 1.0:
+        raise ValueError("min_lr_ratio must be in [0, 1]")
+    epoch_index = min(max(int(epoch_index), 0), int(total_epochs))
+    if warmup_epochs and epoch_index < warmup_epochs:
+        return float(epoch_index + 1) / float(warmup_epochs)
+    progress = (epoch_index - warmup_epochs) / max(total_epochs - warmup_epochs, 1)
+    progress = min(max(progress, 0.0), 1.0)
+    return min_lr_ratio + (1.0 - min_lr_ratio) * (
+        1.0 + math.cos(math.pi * progress)
+    ) / 2.0
+
+
+def better_validation_metrics(candidate, incumbent):
+    """Prefer macro F1 for early stopping, with accuracy as the tie-breaker."""
+
+    if incumbent is None:
+        return True
+    return (candidate["f1_macro"], candidate["accuracy"]) > (
+        incumbent["f1_macro"],
+        incumbent["accuracy"],
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Official TIR core with RGB+NIR+AIS VDS2Raw adapters"
@@ -103,7 +157,7 @@ def main():
         "--clip-checkpoint",
         default=str(ROOT / "pretrained_weights" / "clip" / "ViT-B-16.pt"),
     )
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -117,35 +171,44 @@ def main():
         default=1,
         help="Evaluate target_val and target_test every epoch and select the peak.",
     )
-    parser.add_argument("--lora-lr", type=float, default=2e-4)
-    parser.add_argument("--prompt-lr", type=float, default=2e-3)
-    parser.add_argument("--adapter-lr", type=float, default=1e-3)
+    parser.add_argument("--lora-lr", type=float, default=5e-5)
+    parser.add_argument("--prompt-lr", type=float, default=5e-4)
+    parser.add_argument("--adapter-lr", type=float, default=3e-4)
     parser.add_argument("--lora-weight-decay", type=float, default=1e-2)
-    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--weight-decay", type=float, default=3e-3)
     parser.add_argument("--topk-ratio", type=float, default=0.3)
     parser.add_argument("--temper-rate", type=float, default=0.5)
+    parser.add_argument("--tir-min-weight", type=float, default=0.25)
+    parser.add_argument("--tir-max-weight", type=float, default=1.75)
     parser.add_argument("--text-layer", type=int, default=10)
-    parser.add_argument("--lora-rank", type=int, default=16)
-    parser.add_argument("--lora-alpha", type=int, default=8)
+    parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=4)
     parser.add_argument("--lora-dropout", type=float, default=0.25)
     parser.add_argument(
-        "--lora-encoder", choices=("vision", "text", "both"), default="both"
+        "--lora-encoder", choices=("vision", "text", "both"), default="vision"
     )
     parser.add_argument("--lora-position", default="all")
-    parser.add_argument("--ais-dropout-probability", type=float, default=0.5)
+    parser.add_argument(
+        "--lora-params", nargs="+", choices=("q", "k", "v"), default=("q", "v")
+    )
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.3)
+    parser.add_argument("--nir-initial-scale", type=float, default=0.1)
+    parser.add_argument("--ais-initial-scale", type=float, default=0.1)
     parser.add_argument(
         "--logit-scale",
         type=float,
         default=4.0,
         help="Fixed TIR logit scale; 4 is the released 5-shot value.",
     )
-    parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument("--label-smoothing", type=float, default=0.05)
     parser.add_argument(
-        "--scheduler", choices=("none", "cosine"), default="none"
+        "--scheduler", choices=("none", "cosine"), default="cosine"
     )
     parser.add_argument("--min-lr-ratio", type=float, default=0.1)
-    parser.add_argument("--early-stopping-patience", type=int, default=0)
-    parser.add_argument("--early-stopping-min-epochs", type=int, default=0)
+    parser.add_argument("--warmup-epochs", type=int, default=5)
+    parser.add_argument("--early-stopping-patience", type=int, default=12)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=15)
+    parser.add_argument("--class-weight-power", type=float, default=0.5)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--augment", dest="augment", action="store_true")
@@ -179,8 +242,8 @@ def main():
     parser.add_argument("--skip-audit", action="store_true")
     parser.set_defaults(
         augment=True,
-        domain_class_balanced_train=True,
-        accumulate_full_epoch=True,
+        domain_class_balanced_train=False,
+        accumulate_full_epoch=False,
     )
     args = parser.parse_args()
 
@@ -194,6 +257,12 @@ def main():
         raise ValueError("topk-ratio must be in (0, 1]")
     if args.temper_rate < 0 or not 0 <= args.label_smoothing < 1:
         raise ValueError("invalid temper-rate or label-smoothing")
+    if not 0.0 <= args.tir_min_weight <= args.tir_max_weight:
+        raise ValueError("TIR weight bounds must satisfy 0 <= min <= max")
+    if not -1.0 < args.nir_initial_scale < 1.0:
+        raise ValueError("nir-initial-scale must be in (-1, 1)")
+    if not -1.0 < args.ais_initial_scale < 1.0:
+        raise ValueError("ais-initial-scale must be in (-1, 1)")
     if args.text_layer not in range(12):
         raise ValueError("text-layer must be between 0 and 11")
     if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
@@ -202,6 +271,10 @@ def main():
         raise ValueError("logit-scale must be positive")
     if not 0.0 <= args.min_lr_ratio <= 1.0:
         raise ValueError("min-lr-ratio must be in [0, 1]")
+    if not 0 <= args.warmup_epochs < args.epochs:
+        raise ValueError("warmup-epochs must be in [0, epochs)")
+    if not 0.0 <= args.class_weight_power <= 1.0:
+        raise ValueError("class-weight-power must be in [0, 1]")
 
     args.seed = seed_everything(args.seed)
     data_root = Path(args.data_root).expanduser().resolve()
@@ -282,6 +355,9 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(args).to(device)
+    class_weights, combined_class_counts = mild_class_weights(
+        source, target, power=args.class_weight_power
+    )
     groups = model.parameter_groups()
     if not groups["lora"]:
         raise RuntimeError("LoRA injection produced no trainable parameters")
@@ -299,14 +375,20 @@ def main():
         weight_decay=args.weight_decay,
     )
     if args.scheduler == "cosine":
-        decay = lambda epoch: args.min_lr_ratio + (
-            1.0 - args.min_lr_ratio
-        ) * (1.0 + math.cos(math.pi * epoch / args.epochs)) / 2.0
+        decay = lambda epoch: warmup_cosine_multiplier(
+            epoch,
+            args.epochs,
+            args.warmup_epochs,
+            args.min_lr_ratio,
+        )
     else:
         decay = lambda _epoch: 1.0
     lora_scheduler = torch.optim.lr_scheduler.LambdaLR(lora_optimizer, decay)
     task_scheduler = torch.optim.lr_scheduler.LambdaLR(task_optimizer, decay)
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights.to(device),
+        label_smoothing=args.label_smoothing,
+    )
 
     stem = f"vds2raw_tir_seed{args.seed}"
     metadata = {
@@ -326,7 +408,8 @@ def main():
         "protocol_deviation": (
             "Fair-comparison adaptation uses all source/target labels and "
             "RGB/NIR/AIS inputs instead of the paper's source-free few-shot budget; "
-            "TIR, CoOp, LoRA and their optimizer hyperparameters are retained"
+            "the TIR, CoOp and LoRA mechanisms are retained while capacity and "
+            "schedule are regularized for the 210-sample supervised setting"
         ),
         "source_labelled_samples": len(source),
         "target_labelled_samples": len(target),
@@ -340,6 +423,14 @@ def main():
         ),
         "domain_class_balanced_training": args.domain_class_balanced_train,
         "domain_class_counts": counts_by_domain,
+        "sampling": (
+            "legacy replacement domain-class balancing"
+            if args.domain_class_balanced_train
+            else "natural shuffle without replacement"
+        ),
+        "combined_class_counts": combined_class_counts,
+        "class_weight_power": args.class_weight_power,
+        "class_weights": class_weights.tolist(),
         "normalization_fit_partitions": ["source_train", "target_train"],
         "selection_partition": "target_test",
         "diagnostic_partition": "target_val",
@@ -363,11 +454,14 @@ def main():
             "topk_ratio": args.topk_ratio,
             "temper_rate": args.temper_rate,
             "visual_blocks": [8, 10],
-            "weight_rule": "paper_simplified_kway_extremes",
+            "weight_rule": "paper_simplified_kway_extremes_bounded",
+            "min_weight": args.tir_min_weight,
+            "max_weight": args.tir_max_weight,
         },
         "lora": {
             "encoder": args.lora_encoder,
             "position": args.lora_position,
+            "params": list(args.lora_params),
             "rank": args.lora_rank,
             "alpha": args.lora_alpha,
             "dropout": args.lora_dropout,
@@ -381,6 +475,11 @@ def main():
         "scheduler": {
             "name": args.scheduler,
             "min_lr_ratio": args.min_lr_ratio,
+            "warmup_epochs": args.warmup_epochs,
+        },
+        "initial_fusion_scales": {
+            "nir": args.nir_initial_scale,
+            "ais": args.ais_initial_scale,
         },
         "clip_checkpoint": str(Path(args.clip_checkpoint).expanduser().resolve()),
         "normalization": statistics.to_dict(),
@@ -399,10 +498,12 @@ def main():
             )
         ),
         "augmentation": (
-            "paired light random crop and horizontal/vertical flips"
+            "paired moderate random crop and horizontal/vertical flips, plus "
+            "mild RGB photometric and NIR gain jitter"
             if args.augment
             else "no stochastic augmentation; paired aligned RGB/NIR resize to 224"
         ),
+        "early_stopping_monitor": "target_val macro F1, accuracy tie-breaker",
         "early_stopping_patience_evaluations": args.early_stopping_patience,
         "early_stopping_min_epochs": args.early_stopping_min_epochs,
     }
@@ -418,6 +519,7 @@ def main():
 
     val_history, test_history, train_history = [], [], []
     best_test_metrics = None
+    best_val_metrics = None
     selected = None
     evaluations_without_improvement = 0
     stopped_early = False
@@ -479,6 +581,7 @@ def main():
         tir_discriminative = sum_tir_stat("discriminative")
         tir_sink = sum_tir_stat("sink")
         tir_suppressed = sum_tir_stat("suppressed")
+        tir_clipped = sum_tir_stat("clipped")
         lora_scheduler.step()
         task_scheduler.step()
         completed_epoch = epoch
@@ -501,6 +604,7 @@ def main():
                 "tir_sink_fraction": tir_sink / max(tir_tokens, 1),
                 "tir_suppressed_fraction": tir_suppressed
                 / max(tir_tokens, 1),
+                "tir_clipped_fraction": tir_clipped / max(tir_tokens, 1),
                 "nir_scale": float(torch.tanh(model.nir_scale).detach().cpu()),
                 "ais_scale": float(torch.tanh(model.ais_scale).detach().cpu()),
             }
@@ -528,6 +632,8 @@ def main():
                     target_val_metrics=val_metrics,
                     target_test_metrics=test_metrics,
                 )
+            if better_validation_metrics(val_metrics, best_val_metrics):
+                best_val_metrics = dict(val_metrics)
                 evaluations_without_improvement = 0
             else:
                 evaluations_without_improvement += 1
@@ -538,7 +644,7 @@ def main():
             ):
                 stopped_early = True
                 print(
-                    "Early stopping: target_test did not improve for "
+                    "Early stopping: target_val did not improve for "
                     f"{evaluations_without_improvement} evaluations."
                 )
                 break

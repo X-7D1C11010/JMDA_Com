@@ -67,7 +67,6 @@ from data_loader_options import (
 )
 from uda_multimodal import (
     CyclingDataIterator,
-    FullCoverageBatchSampler,
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
     jmda_train_transform,
@@ -330,19 +329,18 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
+    # Covariance from the old 2-sample target tail was too noisy and repeated
+    # four times in every source-driven epoch.  Do not delete fixed examples:
+    # shuffle every epoch and omit only that epoch's random incomplete tail.
     src_loader = DataLoader(
-        src_ds,
-        batch_sampler=FullCoverageBatchSampler(
-            src_ds, args.source_batch_size, shuffle=True),
-        **loader_kwargs,
+        src_ds, batch_size=args.source_batch_size, shuffle=True,
+        drop_last=True, **loader_kwargs,
     )
     src_eval_loader = DataLoader(src_eval_ds, batch_size=args.test_batch_size,
                                  shuffle=False, **eval_loader_kwargs)
     tgt_loader = DataLoader(
-        tgt_ds,
-        batch_sampler=FullCoverageBatchSampler(
-            tgt_ds, args.target_batch_size, shuffle=True),
-        **loader_kwargs,
+        tgt_ds, batch_size=args.target_batch_size, shuffle=True,
+        drop_last=True, **loader_kwargs,
     )
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
                                 shuffle=False, **eval_loader_kwargs)
@@ -451,6 +449,11 @@ def main():
         src_iter = iter(src_loader)
         tgt_iter = CyclingDataIterator(tgt_loader)
         batches_this_epoch = min(n_batches, planned_updates - global_step)
+        epoch_cls_loss = 0.0
+        epoch_coral_loss = 0.0
+        epoch_weighted_coral = 0.0
+        epoch_source_confidence = 0.0
+        epoch_target_confidence = 0.0
 
         for i in range(batches_this_epoch):
             alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
@@ -477,6 +480,14 @@ def main():
             # 原参考实现 main.py:46：CORAL 作用于 fc 输出（softmax 前 logits）。
             loss_coral = CORAL(src_outputs['fused'], tgt_outputs['fused'])
             loss = loss_cls + _lambda * loss_coral
+            with torch.no_grad():
+                epoch_cls_loss += loss_cls.item()
+                epoch_coral_loss += loss_coral.item()
+                epoch_weighted_coral += _lambda * loss_coral.item()
+                epoch_source_confidence += torch.softmax(
+                    src_outputs['fused'], dim=1).max(dim=1).values.mean().item()
+                epoch_target_confidence += torch.softmax(
+                    tgt_outputs['fused'], dim=1).max(dim=1).values.mean().item()
 
             optimizer.zero_grad()
             loss.backward()
@@ -494,6 +505,17 @@ def main():
                       f'loss_cls={loss_cls.item():.4f} '
                       f'loss_coral={loss_coral.item():.4f} '
                       f'lr={[round(group["lr"], 8) for group in optimizer.param_groups]}')
+
+        print(
+            f'Epoch [{epoch+1}/{outer_epochs}] train summary: '
+            f'avg_cls={epoch_cls_loss / batches_this_epoch:.4f} '
+            f'avg_coral={epoch_coral_loss / batches_this_epoch:.4f} '
+            f'avg_weighted_coral={epoch_weighted_coral / batches_this_epoch:.4f} '
+            f'source_conf={epoch_source_confidence / batches_this_epoch:.4f} '
+            f'target_conf={epoch_target_confidence / batches_this_epoch:.4f} '
+            f'lambda={_lambda:.4f}',
+            flush=True,
+        )
 
         source_metrics = evaluate(model, src_eval_loader, device, num_classes)
         source_fused_acc = source_metrics['fused']['accuracy']

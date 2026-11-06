@@ -36,6 +36,14 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn("self.token_grid_pool(self.separable2(x2))", model)
         self.assertGreaterEqual(train.count("image_size=96"), 4)
 
+    def test_weather_mcft_uses_full_target_supervision_without_checkpoints(self):
+        train = (ROOT / "MCFT" / "train_mcft.py").read_text(encoding="utf-8")
+        self.assertIn("f'{args.target}_train.txt'", train)
+        self.assertIn("ConcatDataset((source, target_train))", train)
+        self.assertIn("'target_label_budget': 'all available target_train labels'", train)
+        self.assertIn("in-memory best state; no model files retained", train)
+        self.assertNotIn("torch.save(", train)
+
     def test_vds2raw_launchers_are_mcft_tir_only(self):
         for relative in (
             "scripts/run_vds2raw_methods.sh",
@@ -45,6 +53,17 @@ class ComparisonReproducibilityTests(unittest.TestCase):
             self.assertRegex(source, re.compile(r"mcft3", re.I))
             self.assertRegex(source, re.compile(r"tir", re.I))
             self.assertNotRegex(source, re.compile(r"train_(?:ccsa|dsne)", re.I))
+
+    def test_tir_then_weather_mcft_launcher_is_strictly_sequential(self):
+        launcher = (
+            ROOT / "scripts" / "run_tir_mcft_weather_sequential.sh"
+        ).read_text(encoding="utf-8")
+        tir_call = 'bash "$HERE/scripts/run_vds2raw_methods.sh" "$MODE"'
+        mcft_call = 'bash "$HERE/scripts/run_server.sh" supervised "$MCFT_EPOCHS"'
+        self.assertLess(launcher.index(tir_call), launcher.index(mcft_call))
+        self.assertIn('export VDS2RAW_METHOD_ORDER="tir"', launcher)
+        self.assertIn('/mnt/data/lixiang/data/Data', launcher)
+        self.assertIn('MCFT_SEEDS <<< "${COMBINED_MCFT_SEEDS:-42 43 44 45 46}"', launcher)
 
     def test_efficiency_registry_has_current_methods(self):
         benchmark = (ROOT / "tools" / "benchmark_efficiency.py").read_text(

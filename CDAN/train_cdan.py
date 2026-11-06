@@ -404,21 +404,43 @@ def main():
             loss_transfer = loss_cls.new_zeros(())
             transfer_weight = 0.0
             coeff = 0.0
+            domain_details = {
+                'domain_accuracy': float('nan'),
+                'domain_source_accuracy': float('nan'),
+                'domain_target_accuracy': float('nan'),
+            }
+            target_confidence = float('nan')
+            target_entropy = float('nan')
+            target_class_coverage = 0
+            target_class_hist = []
         else:
             features_target, outputs_target = model(tgt_imgs)
             features = torch.cat((features_source, features_target), dim=0)
             outputs = torch.cat((outputs_source, outputs_target), dim=0)
             softmax_out = nn.Softmax(dim=1)(outputs)
+            target_probabilities = nn.Softmax(dim=1)(outputs_target.detach())
+            target_confidence = target_probabilities.max(
+                dim=1).values.mean().item()
+            target_entropy = (-(target_probabilities *
+                                target_probabilities.clamp_min(1e-8).log())
+                              .sum(dim=1).mean().item())
+            target_class_counts = torch.bincount(
+                target_probabilities.argmax(dim=1),
+                minlength=num_classes).cpu()
+            target_class_coverage = int((target_class_counts > 0).sum().item())
+            target_class_hist = target_class_counts.tolist()
             adaptation_iteration = iter_num - args.source_warmup_iterations
             coeff = calc_coeff(adaptation_iteration, alpha=args.coeff_alpha,
                                max_iter=coeff_max_iter)
             if args.method == 'CDAN+E':
                 entropy = Entropy(softmax_out)
-                loss_transfer = CDAN([features, softmax_out], ad_net, entropy,
-                                     coeff, random_layer)
+                loss_transfer, domain_details = CDAN(
+                    [features, softmax_out], ad_net, entropy, coeff,
+                    random_layer, return_details=True)
             else:
-                loss_transfer = CDAN([features, softmax_out], ad_net,
-                                     None, None, random_layer)
+                loss_transfer, domain_details = CDAN(
+                    [features, softmax_out], ad_net, None, None,
+                    random_layer, return_details=True)
             transfer_weight = args.trade_off
 
         loss = loss_cls + transfer_weight * loss_transfer
@@ -434,6 +456,13 @@ def main():
                   f'loss_cls={loss_cls.item():.4f} loss_transfer={loss_transfer.item():.4f} '
                   f'trade_off={transfer_weight:.3f} warmup={source_warmup} '
                   f'coeff={coeff:.4f} '
+                  f'domain_acc={domain_details["domain_accuracy"]:.4f} '
+                  f'domain_src_acc={domain_details["domain_source_accuracy"]:.4f} '
+                  f'domain_tgt_acc={domain_details["domain_target_accuracy"]:.4f} '
+                  f'target_conf={target_confidence:.4f} '
+                  f'target_entropy={target_entropy:.4f} '
+                  f'target_class_coverage={target_class_coverage}/{num_classes} '
+                  f'target_class_hist={target_class_hist} '
                   f'lr={optimizer.param_groups[0]["lr"]:.2e}')
 
         # Diagnostic target evaluation is periodic, but never controls

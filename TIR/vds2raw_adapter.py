@@ -4,16 +4,15 @@ The visual/text backbone, CoOp prompt construction and LoRA implementation are
 from the vendored official repository.  VDS2Raw-specific changes are isolated
 here:
 
-* RGB and NIR are fused by a zero-initialised residual adapter before the
-  official CLIP ViT-B/16 visual encoder.
+* RGB and NIR are fused by a small non-zero residual adapter before the
+  official CLIP ViT-B/16 visual encoder so the NIR branch receives gradients
+  from the first update.
 * only proxy-safe AIS heading, length and width values are encoded by a
   regularised late-fusion residual; validity bits gate missing values but are
   not classifier inputs.
-* the paper's simplified K-way rule is used for three-class VDS2Raw: suppress
-  tokens selected by every class (``Sum=K``), enhance class-specific tokens
-  (``Sum=1``), and leave the remaining tokens unchanged. The released linear
-  rule is centred on the paper's 5-way setting and cannot suppress any token
-  when copied literally to a three-class task.
+* the paper's simplified K-way ordering is used for three-class VDS2Raw, with
+  bounded weights to avoid complete token deletion or 2x amplification. The
+  released five-way path remains unchanged.
 
 These adaptations preserve the TIR mechanism but are not claimed to be the
 paper's original single-image, source-free 5-way protocol.
@@ -21,6 +20,7 @@ paper's original single-image, source-free 5-way protocol.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -142,12 +142,25 @@ class TokenImportanceRecalibration(nn.Module):
         else:
             # The paper appendix explicitly generalises TIR to K-way tasks by
             # assigning Sum=K weight 0 and Sum=1 a weight greater than 1.
+            # VDS2Raw has only three classes, where unbounded extreme weights
+            # made the recalibration unnecessarily brittle. Preserve the
+            # ordering of the paper rule while preventing complete token
+            # deletion or a 2x amplification.
             weights = torch.ones_like(sum_scores)
             weights = torch.where(sum_scores.eq(1), weights.new_tensor(2.0), weights)
             weights = torch.where(
                 sum_scores.eq(class_count), weights.new_tensor(0.0), weights
             )
-            rule = "paper_simplified_kway_extremes"
+            min_weight = float(getattr(params, "tir_min_weight", 0.25))
+            max_weight = float(getattr(params, "tir_max_weight", 1.75))
+            if not 0.0 <= min_weight <= max_weight:
+                raise ValueError(
+                    "TIR K-way weight bounds must satisfy "
+                    f"0 <= min <= max; got {min_weight}, {max_weight}"
+                )
+            raw_weights = weights
+            weights = weights.clamp(min=min_weight, max=max_weight)
+            rule = "paper_simplified_kway_extremes_bounded"
         if params is not None:
             params.aux_container["tir_last_sum_scores"] = sum_scores.detach()
             params.aux_container["tir_last_weights"] = weights.detach()
@@ -161,7 +174,16 @@ class TokenImportanceRecalibration(nn.Module):
                     # to every inference/complexity measurement.
                     "discriminative": sum_scores.eq(1).sum().detach(),
                     "sink": sum_scores.eq(class_count).sum().detach(),
-                    "suppressed": weights.eq(0).sum().detach(),
+                    "suppressed": (
+                        raw_weights.eq(0).sum().detach()
+                        if class_count != 5
+                        else weights.eq(0).sum().detach()
+                    ),
+                    "clipped": (
+                        raw_weights.ne(weights).sum().detach()
+                        if class_count != 5
+                        else weights.new_zeros((), dtype=torch.long)
+                    ),
                 }
             )
         recalibrated = patches * weights.unsqueeze(-1)
@@ -204,6 +226,8 @@ class TIRRuntime:
     topk_ratio: float = 0.3
     temper_rate: float = 0.5
     text_layer: int = 10
+    tir_min_weight: float = 0.25
+    tir_max_weight: float = 1.75
     aux_container: dict = field(default_factory=dict)
 
     def as_namespace(self):
@@ -211,6 +235,8 @@ class TIRRuntime:
             topk_ratio=self.topk_ratio,
             temper_rate=self.temper_rate,
             txtlayer=self.text_layer,
+            tir_min_weight=self.tir_min_weight,
+            tir_max_weight=self.tir_max_weight,
             aux_container=self.aux_container,
         )
 
@@ -225,12 +251,17 @@ class TIRVDS2Raw(nn.Module):
         topk_ratio: float = 0.3,
         temper_rate: float = 0.5,
         text_layer: int = 10,
-        lora_rank: int = 16,
-        lora_alpha: int = 8,
+        tir_min_weight: float = 0.25,
+        tir_max_weight: float = 1.75,
+        lora_rank: int = 8,
+        lora_alpha: int = 4,
         lora_dropout: float = 0.25,
-        lora_encoder: str = "both",
+        lora_encoder: str = "vision",
         lora_position: str = "all",
-        ais_dropout_probability: float = 0.5,
+        lora_params: Sequence[str] = ("q", "v"),
+        ais_dropout_probability: float = 0.3,
+        nir_initial_scale: float = 0.1,
+        ais_initial_scale: float = 0.1,
         logit_scale: float = 4.0,
     ):
         super().__init__()
@@ -238,8 +269,22 @@ class TIRVDS2Raw(nn.Module):
             raise ValueError("TIR requires at least two classes")
         if not 0.0 <= ais_dropout_probability < 1.0:
             raise ValueError("ais_dropout_probability must be in [0, 1)")
+        if not 0.0 <= tir_min_weight <= tir_max_weight:
+            raise ValueError("TIR weight bounds must satisfy 0 <= min <= max")
+        if not -1.0 < nir_initial_scale < 1.0:
+            raise ValueError("nir_initial_scale must be in (-1, 1)")
+        if not -1.0 < ais_initial_scale < 1.0:
+            raise ValueError("ais_initial_scale must be in (-1, 1)")
+        if not lora_params or any(name not in {"q", "k", "v"} for name in lora_params):
+            raise ValueError("lora_params must contain one or more of: q, k, v")
         self.class_names = tuple(class_names)
-        self.runtime = TIRRuntime(topk_ratio, temper_rate, text_layer)
+        self.runtime = TIRRuntime(
+            topk_ratio,
+            temper_rate,
+            text_layer,
+            tir_min_weight,
+            tir_max_weight,
+        )
         self.ais_dropout_probability = float(ais_dropout_probability)
         self.fixed_logit_scale = float(logit_scale)
         self.clip_model = load_clip_checkpoint_strict(clip_checkpoint)
@@ -248,7 +293,7 @@ class TIRVDS2Raw(nn.Module):
             encoder=lora_encoder,
             position=lora_position,
             backbone=OFFICIAL_BACKBONE,
-            params=["q", "k", "v"],
+            params=list(lora_params),
             r=int(lora_rank),
             alpha=int(lora_alpha),
             dropout_rate=float(lora_dropout),
@@ -263,7 +308,7 @@ class TIRVDS2Raw(nn.Module):
             nn.GELU(),
             nn.Conv2d(16, 3, 1),
         )
-        self.nir_scale = nn.Parameter(torch.zeros(()))
+        self.nir_scale = nn.Parameter(torch.tensor(math.atanh(nir_initial_scale)))
         embed_dim = int(self.clip_model.text_projection.shape[1])
         self.ais_encoder = nn.Sequential(
             nn.LayerNorm(4),
@@ -272,7 +317,7 @@ class TIRVDS2Raw(nn.Module):
             nn.Dropout(0.3),
             nn.Linear(128, embed_dim),
         )
-        self.ais_scale = nn.Parameter(torch.zeros(()))
+        self.ais_scale = nn.Parameter(torch.tensor(math.atanh(ais_initial_scale)))
 
         for parameter in self.clip_model.parameters():
             parameter.requires_grad_(False)

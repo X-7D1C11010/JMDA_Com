@@ -490,7 +490,7 @@ class VDS2RawTIRDataset(Dataset):
         nir = (nir - self.nir_mean) / self.nir_std
         if self.augment:
             top, left, height, width = transforms.RandomResizedCrop.get_params(
-                rgb, scale=(0.9, 1.0), ratio=(0.95, 1.05)
+                rgb, scale=(0.85, 1.0), ratio=(0.9, 1.1)
             )
             rgb = rgb[:, top : top + height, left : left + width]
             nir = nir[:, top : top + height, left : left + width]
@@ -500,6 +500,17 @@ class VDS2RawTIRDataset(Dataset):
             if bool(torch.rand(()) < 0.5):
                 rgb, nir = rgb.flip(-2), nir.flip(-2)
                 ais[1] = -ais[1]
+            # Mild sensor/illumination jitter regularizes the high-capacity
+            # CLIP adapters without breaking RGB/NIR geometric alignment.
+            if bool(torch.rand(()) < 0.5):
+                brightness = 0.9 + 0.2 * torch.rand(())
+                contrast = 0.9 + 0.2 * torch.rand(())
+                rgb_mean = rgb.mean(dim=(-2, -1), keepdim=True)
+                rgb = (
+                    rgb_mean + (rgb * brightness - rgb_mean) * contrast
+                ).clamp_(0.0, 1.0)
+            if bool(torch.rand(()) < 0.5):
+                nir = nir * (0.95 + 0.1 * torch.rand(()))
         size = (self.image_size, self.image_size)
         rgb = F.interpolate(
             rgb.unsqueeze(0), size=size, mode="bicubic", align_corners=False

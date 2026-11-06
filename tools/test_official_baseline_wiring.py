@@ -236,38 +236,38 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             tuned = f.read()
         for expected in (
             "DANNLearningRate = 0.0003",
-            "DANNEpochs = 30",
-            "DANNDomainLossWeight = 0.25",
-            "DANNGrlMaxIterations = 6000",
+            "DANNEpochs = 36",
+            "DANNDomainLossWeight = 0.35",
+            "DANNGrlMaxIterations = 5000",
             "DANNLearningRateScheduler = 'constant'",
             "DANNTargetEvalInterval = 1",
-            "DeepCoralLearningRate = 0.0003",
-            "DeepCoralEpochs = 24",
-            "DeepCoralWarmupEpochs = 0",
-            "DeepCoralWeightDecay = 0.001",
-            "DeepCoralLabelSmoothing = 0.10",
+            "DeepCoralLearningRate = 0.0004",
+            "DeepCoralEpochs = 30",
+            "DeepCoralWarmupEpochs = 2",
+            "DeepCoralWeightDecay = 0.0005",
+            "DeepCoralLabelSmoothing = 0.05",
             "DeepCoralVisualLearningRateMultiplier = 0.1",
             "DeepCoralInfraredLearningRateMultiplier = 1.0",
-            "DeepCoralMaxWeight = 0.6",
-            "DeepCoralHeadLearningRateMultiplier = 3.0",
+            "DeepCoralMaxWeight = 0.3",
+            "DeepCoralHeadLearningRateMultiplier = 5.0",
             "CdanIterations = 2000",
             "CDANHeadLearningRateMultiplier = 3.0",
             "CDANAdLearningRateMultiplier = 3.0",
-            "CDANTradeOff = 0.3",
+            "CDANTradeOff = 0.6",
             "CDANSourceWarmupIterations = 300",
             "CDANCoeffMaxIterations = 6000",
             "CDANTestInterval = 100",
-            "MDDEpochs = 32",
+            "MDDEpochs = 40",
             "MDDIterationsPerEpoch = 60",
             "MDDTradeOff = 0.35",
             "MDDTradeOffWarmupEpochs = 16",
             "MCCLearningRate = 0.001",
-            "MCCEpochs = 20",
+            "MCCEpochs = 24",
             "MCCIterationsPerEpoch = 40",
-            "MCCTradeOff = 0.01",
-            "MCCTradeOffWarmupEpochs = 12",
-            "MCCSourceWarmupEpochs = 2",
-            "MCCLabelSmoothing = 0.15",
+            "MCCTradeOff = 0.05",
+            "MCCTradeOffWarmupEpochs = 10",
+            "MCCSourceWarmupEpochs = 5",
+            "MCCLabelSmoothing = 0.10",
         ):
             self.assertIn(expected, tuned)
 
@@ -275,19 +275,48 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8") as f:
             server_heavy = f.read()
         for expected in (
-            'UDA_MDD_EPOCHS:-32',
+            'UDA_MDD_EPOCHS:-40',
             'UDA_MDD_LR:-0.0025',
             'UDA_MDD_ITERS_PER_EPOCH:-60',
             'UDA_MDD_TRADE_OFF:-0.35',
             'UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-16',
-            'UDA_MCC_EPOCHS:-20',
+            'UDA_MCC_EPOCHS:-24',
             'UDA_MCC_LR:-0.001',
             'UDA_MCC_ITERS_PER_EPOCH:-40',
-            'UDA_MCC_TRADE_OFF:-0.01',
-            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-12',
-            'UDA_MCC_LABEL_SMOOTHING:-0.15',
+            'UDA_MCC_TRADE_OFF:-0.05',
+            'UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-10',
+            'UDA_MCC_LABEL_SMOOTHING:-0.10',
         ):
             self.assertIn(expected, server_heavy)
+
+    def test_latest_diagnostics_and_full_domain_batches_are_wired(self):
+        with open(os.path.join(ROOT, "DANN", "train_dann.py"),
+                  encoding="utf-8") as f:
+            dann = f.read()
+        self.assertGreaterEqual(dann.count("drop_last=True"), 2)
+        self.assertIn("avg_domain=", dann)
+        self.assertIn("domain_acc=", dann)
+
+        with open(os.path.join(ROOT, "DeepCORAL", "train_deepcoral.py"),
+                  encoding="utf-8") as f:
+            coral = f.read()
+        self.assertGreaterEqual(coral.count("drop_last=True"), 2)
+        self.assertIn("avg_weighted_coral=", coral)
+        self.assertIn("target_conf=", coral)
+
+        for relative in ("MDD/train_mdd.py", "MCC/train_mcc.py"):
+            with self.subTest(method=relative):
+                with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
+                    trainer = f.read()
+                self.assertIn("target_entropy=", trainer)
+                self.assertIn("target_class_hist=", trainer)
+
+        with open(os.path.join(ROOT, "CDAN", "train_cdan.py"),
+                  encoding="utf-8") as f:
+            cdan = f.read()
+        self.assertIn("domain_acc=", cdan)
+        self.assertIn("target_entropy=", cdan)
+        self.assertIn("target_class_hist=", cdan)
 
     def test_source_label_smoothing_is_explicit_and_launcher_controlled(self):
         with open(os.path.join(ROOT, "DeepCORAL", "train_deepcoral.py"),

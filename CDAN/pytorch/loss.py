@@ -18,7 +18,8 @@ def grl_hook(coeff):
         return -coeff*grad.clone()
     return fun1
 
-def CDAN(input_list, ad_net, entropy=None, coeff=None, random_layer=None):
+def CDAN(input_list, ad_net, entropy=None, coeff=None, random_layer=None,
+         return_details=False):
     softmax_output = input_list[1].detach()
     feature = input_list[0]
     if random_layer is None:
@@ -29,6 +30,18 @@ def CDAN(input_list, ad_net, entropy=None, coeff=None, random_layer=None):
         ad_out = ad_net(random_out.view(-1, random_out.size(1)))       
     batch_size = softmax_output.size(0) // 2
     dc_target = torch.from_numpy(np.array([[1]] * batch_size + [[0]] * batch_size)).float().cuda()
+    with torch.no_grad():
+        domain_predictions = (ad_out >= 0.5).float()
+        domain_accuracy = domain_predictions.eq(dc_target).float().mean().item()
+        domain_source_accuracy = domain_predictions[:batch_size].eq(
+            dc_target[:batch_size]).float().mean().item()
+        domain_target_accuracy = domain_predictions[batch_size:].eq(
+            dc_target[batch_size:]).float().mean().item()
+        details = {
+            'domain_accuracy': domain_accuracy,
+            'domain_source_accuracy': domain_source_accuracy,
+            'domain_target_accuracy': domain_target_accuracy,
+        }
     if entropy is not None:
         entropy.register_hook(grl_hook(coeff))
         entropy = 1.0+torch.exp(-entropy)
@@ -40,9 +53,14 @@ def CDAN(input_list, ad_net, entropy=None, coeff=None, random_layer=None):
         target_weight = entropy*target_mask
         weight = source_weight / torch.sum(source_weight).detach().item() + \
                  target_weight / torch.sum(target_weight).detach().item()
-        return torch.sum(weight.view(-1, 1) * nn.BCELoss(reduction='none')(ad_out, dc_target)) / torch.sum(weight).detach().item()
+        loss = (torch.sum(weight.view(-1, 1) *
+                          nn.BCELoss(reduction='none')(ad_out, dc_target)) /
+                torch.sum(weight).detach().item())
     else:
-        return nn.BCELoss()(ad_out, dc_target) 
+        loss = nn.BCELoss()(ad_out, dc_target)
+    if return_details:
+        return loss, details
+    return loss
 
 def DANN(features, ad_net):
     ad_out = ad_net(features)

@@ -37,16 +37,16 @@ if (-not $OutDir) {
 
 # Method-specific recalibration for the shared JMDA multimodal front end.
 # These values come from the first unified-protocol backlight/seed42 curves:
-# - DANN: alignment became unstable when GRL/domain pressure rose; use weaker,
-#   slower adversarial pressure and keep the LR constant for the random IR arm.
-# - DeepCORAL: a 10x head fitted source by epoch 2; slow the head and increase
-#   the gradual CORAL ceiling so classification and alignment learn together.
-# - CDAN: the random IR arm needs source-only stabilization before conditional
-#   adversarial training; the discriminator is also reduced from 10x to 3x.
-# - MDD: retain the successful direction but reduce update density/transfer
-#   dominance after the source classifier has converged.
-# - MCC: target accuracy fell before MCC started, so reduce LR and updates per
-#   epoch instead of extending the source-only warmup.
+# - DANN: keep the successful lower LR, but restore moderate domain pressure
+#   and a longer budget so adaptation, rather than source-only fitting, grows.
+# - DeepCORAL: place the classifier between the two previous learning speeds,
+#   use two source-only epochs, then restore the gentler 0->0.3 CORAL ramp.
+# - CDAN: retain the 300-update source warmup and raise only transfer weight;
+#   discriminator LR stays fixed so this round isolates the changed pressure.
+# - MDD: its last epoch was still improving, so extend the same 60-update
+#   schedule without changing its already useful loss balance.
+# - MCC: preserve 40 updates/epoch, restore 200 absolute warmup updates, reduce
+#   confidence-suppressing smoothing and make the MCC term non-negligible.
 $env:JMDA_DETERMINISTIC = '1'
 $env:CUBLAS_WORKSPACE_CONFIG = ':4096:8'
 $arguments = @{
@@ -59,20 +59,20 @@ $arguments = @{
     ImageBatchSize = $BatchSize
     Epochs = 0
     DANNLearningRate = 0.0003
-    DANNEpochs = 30
-    DANNDomainLossWeight = 0.25
-    DANNGrlMaxIterations = 6000
+    DANNEpochs = 36
+    DANNDomainLossWeight = 0.35
+    DANNGrlMaxIterations = 5000
     DANNTargetEvalInterval = 1
     DANNLearningRateScheduler = 'constant'
     DANNMinimumLearningRateRatio = 0.1
-    DeepCoralLearningRate = 0.0003
-    DeepCoralEpochs = 24
-    DeepCoralMaxWeight = 0.6
-    DeepCoralWarmupEpochs = 0
-    DeepCoralWeightDecay = 0.001
-    DeepCoralLabelSmoothing = 0.10
+    DeepCoralLearningRate = 0.0004
+    DeepCoralEpochs = 30
+    DeepCoralMaxWeight = 0.3
+    DeepCoralWarmupEpochs = 2
+    DeepCoralWeightDecay = 0.0005
+    DeepCoralLabelSmoothing = 0.05
     DeepCoralTargetEvalInterval = 1
-    DeepCoralHeadLearningRateMultiplier = 3.0
+    DeepCoralHeadLearningRateMultiplier = 5.0
     DeepCoralVisualLearningRateMultiplier = 0.1
     DeepCoralInfraredLearningRateMultiplier = 1.0
     DeepCoralLearningRateScheduler = 'constant'
@@ -81,24 +81,24 @@ $arguments = @{
     CdanIterations = 2000
     CDANHeadLearningRateMultiplier = 3.0
     CDANAdLearningRateMultiplier = 3.0
-    CDANTradeOff = 0.3
+    CDANTradeOff = 0.6
     CDANSourceWarmupIterations = 300
     CDANLabelSmoothing = 0.05
     CDANCoeffMaxIterations = 6000
     CDANCoeffAlpha = 10.0
     CDANTestInterval = 100
     MDDLearningRate = 0.0025
-    MDDEpochs = 32
+    MDDEpochs = 40
     MDDIterationsPerEpoch = 60
     MDDTradeOff = 0.35
     MDDTradeOffWarmupEpochs = 16
     MCCLearningRate = 0.001
-    MCCEpochs = 20
+    MCCEpochs = 24
     MCCIterationsPerEpoch = 40
-    MCCTradeOff = 0.01
-    MCCTradeOffWarmupEpochs = 12
-    MCCSourceWarmupEpochs = 2
-    MCCLabelSmoothing = 0.15
+    MCCTradeOff = 0.05
+    MCCTradeOffWarmupEpochs = 10
+    MCCSourceWarmupEpochs = 5
+    MCCLabelSmoothing = 0.10
     SkipBenchmark = $true
 }
 if ($DataDir) { $arguments.DataDir = $DataDir }

@@ -6,7 +6,8 @@
 - `source_train`：116；`target_train`：94；`target_val`：28；`target_test`：33。
 - 为保证对比监督预算一致，MCFT 与 TIR 都使用全部 `source_train + target_train`
   真实标签。TIR 因此是公平对比适配，不再宣称遵循论文的 source-free few-shot
-  数据预算；其 TIR、CoOp、LoRA 核心和优化器超参数仍来自官方实现。
+  数据预算；其 TIR、CoOp、LoRA 核心来自官方实现，容量和训练日程针对当前小样本
+  三模态监督任务进行正则化调整。
 - 两种方法先读取 `target_train` 中实际有数据的类别，再用该集合过滤
   `source_train`；加载后强制检查 source/target 类别集合完全相同，否则立即报错。
 - 两种方法的归一化统计均只由匹配类别后的训练分区拟合；审计要求所有分区间
@@ -52,27 +53,31 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 官方实验是 CLIP ViT-B/16 上的 source-free、5-way 1/5-shot 目标域微调。为满足本项目
 的公平监督预算，VDS2Raw 适配使用匹配类别后的全部 source/target 训练样本（当前为
 116+94=210），不再抽取每类5个 support。该数据预算是明确的项目偏离；视觉 block
-8/10 的 TIR、CoOp prompt、LoRA 和官方学习率仍保留。多模态与数据加载部分是项目适配：
+8/10 的 TIR、CoOp prompt 和 LoRA 机制保留。多模态与数据加载部分是项目适配：
 
 - RGB：文件虽使用 uint16 容器，但训练像素99%分位约为179/225/262，超过1000的值
   只是稀疏异常高值。因此按官方8-bit `ToTensor` 语义除以255并截断少量高值，再使用
   CLIP 224×224 归一化；避免按全局最大值缩放导致主体图像整体过暗；
-- NIR：训练分区统计 z-score 后，通过零初始化门控残差注入 RGB；
+- NIR：训练分区统计 z-score 后，通过初始有效权重0.1的可学习门控残差注入 RGB；
 - AIS：只使用与 MCFT 相同的 4 个基础字段，mask 仅作缺失值门控；
 - TIR 发布代码中的 `1 - beta * (Sum - 3)` 以5-way的 `Sum=3` 为中点；直接用于三分类
   时所有权重均不小于1，无法抑制 `Sum=K` attention-sink token。三分类因此采用论文
-  附录明确提出的通用 K-way 简化规则：`Sum=K` 权重0、`Sum=1` 权重2，其余权重1；
+  附录明确提出的通用 K-way 简化排序，但把极端权重限制到 `[0.25, 1.75]`，避免
+  完全删除token或2倍放大；官方五分类权重公式保持不变；
 - CLIP 权重必须精确匹配全部键和形状，任何缺失、额外或 shape 不匹配都会报错，
   禁止静默漏载。
 
-默认正式配置为100 epoch、显存微批 batch size 32、每轮评估。官方代码对每个 episode
-的完整 support set 每轮只更新一次；因此32仅用于梯度累积，210个训练样本完成后才执行
-一次 optimizer step，避免旧实现每轮7次更新造成的700步过拟合。采样对 source/target ×
-三类别六个单元等权，以消除自然拼接中类别与域的强相关。LoRA/CoOp 参数恢复官方配置：
-rank 16 / alpha 8 / dropout 0.25、LoRA AdamW lr `2e-4`、CoOp SGD lr `2e-3`、adapter
-SGD lr `1e-3`、无 label smoothing、常数学习率；默认开启RGB/NIR同步的轻裁剪与水平/
-垂直翻转。逐轮记录额外保存 TIR sink/discriminative token 比例、NIR/AIS 门控尺度与实际
-optimizer step 数。正式默认每轮评估、取峰值、无早停。
+官方发布代码对每个5-way episode使用完整support set，每轮一次更新，共100轮；没有给出
+适用于本项目210样本三模态监督任务的专门日程。当前默认正式配置调整为最多60 epoch、
+batch size 32的mini-batch更新、5轮warmup后cosine衰减。LoRA只作用于视觉编码器Q/V，
+rank 8 / alpha 4 / dropout 0.25；LoRA/CoOp/adapter初始学习率分别为 `5e-5`、`5e-4`、
+`3e-4`。自然无放回shuffle替代六单元有放回均衡采样，并根据合并后的source+target类别
+计数使用平方根逆频率的温和CE权重。label smoothing为0.05，task weight decay为0.003，
+AIS dropout为0.3。默认增强为RGB/NIR同步的中等裁剪和水平/垂直翻转，外加轻量RGB亮度/
+对比度及NIR增益扰动。每轮评估，以target_val macro-F1（ACC并列判优）执行最少15轮、
+patience 12的早停；既有汇总仍记录实际运行区间内target_test ACC峰值并明确test-selection
+bias。逐轮记录额外保存TIR sink/discriminative/clipped token比例、NIR/AIS门控尺度与实际
+optimizer step数。
 VDS2Raw 的 NIR/AIS 分支及固定三分类测试划分不是论文原生设置，必须作为适配披露。
 所有官方协议差异均写入结果元数据。
 
@@ -104,8 +109,8 @@ export VDS2RAW_RUN_COMPLEXITY_BENCHMARK=0
 bash scripts/run_vds2raw_background.sh smoke
 ```
 
-TIR smoke 使用 batch 32 跑完整210样本的一轮（7个显存微批、1次 optimizer step），
-不再使用只含2个样本的截断 batch；这样才能同时验证平衡采样和整轮梯度累积。
+TIR smoke 使用batch 32跑完整210样本的一轮（7次mini-batch optimizer step），不再使用
+只含2个样本的截断batch；这样可验证自然采样、类别权重和学习率调度的完整执行路径。
 
 只运行一种方法可设置 `VDS2RAW_METHOD_ORDER="mcft3"` 或
 `VDS2RAW_METHOD_ORDER="tir"`。GPU 门槛默认分别为 6144 MiB 与 14336 MiB，启动器会
