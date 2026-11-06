@@ -21,7 +21,7 @@ RUN_INVARIANTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
 BATCH_SIZE=32
 PROJECTION_DIM=64
 SVD_BATCH_SIZE=128
-EXPECTED_CODE_FINGERPRINT="90f74dbbad2a858e"
+EXPECTED_CODE_FINGERPRINT="36d680f39138a9ba"
 
 if ! [[ "$EPOCHS" =~ ^[1-9][0-9]*$ ]] || (( EPOCHS < 25 )); then
   echo "完整流程至少需要25轮（10轮源域预热+10轮Tensor/SVD+5轮OT爬升）: $EPOCHS"
@@ -136,7 +136,7 @@ SUPPORT="$(
     --lr_feature 5e-6 \
     --lr_other 2e-4 \
     --weight_decay 5e-4 \
-    --visual_finetuning_mode legacy_supervised \
+    --visual_finetuning_mode layer2_4 \
     --no_sync_discriminator_lr \
     --report_strategy best \
     --checkpoint_dir "$CHECKPOINT_ROOT" \

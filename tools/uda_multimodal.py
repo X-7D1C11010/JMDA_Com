@@ -337,6 +337,106 @@ class CyclingDataIterator:
             return next(self.iterator)
 
 
+class _UnpairedDomainDataset(torch.utils.data.Dataset):
+    """Index-addressable source/target wrapper for strict label-free UDA."""
+
+    def __init__(self, source_dataset, target_dataset):
+        if len(source_dataset) < 1 or len(target_dataset) < 1:
+            raise ValueError('source and target datasets must both be non-empty')
+        self.source_dataset = source_dataset
+        self.target_dataset = target_dataset
+
+    def __len__(self):
+        return max(len(self.source_dataset), len(self.target_dataset))
+
+    def __getitem__(self, index_pair):
+        source_index, target_index = index_pair
+        return (self.source_dataset[source_index],
+                self.target_dataset[target_index])
+
+
+class UnpairedDomainIndexBatchSampler(torch.utils.data.Sampler):
+    """JMDA strict-UDA domain sampler.
+
+    An epoch covers the larger domain once, while the smaller domain is
+    reshuffled and cycled.  Every optimizer update therefore receives a full,
+    equally sized source and target batch without reading target labels.
+    """
+
+    def __init__(self, source_count, target_count, batch_size, seed):
+        if source_count < 1 or target_count < 1:
+            raise ValueError('source_count and target_count must be positive')
+        if batch_size < 2:
+            raise ValueError('strict UDA domain batches require batch_size >= 2')
+        self.source_count = int(source_count)
+        self.target_count = int(target_count)
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.epoch = 0
+        self.n_batches = math.ceil(
+            max(self.source_count, self.target_count) / self.batch_size)
+
+    @staticmethod
+    def _take(indices, position, count, rng):
+        selected = []
+        while len(selected) < count:
+            if position >= len(indices):
+                rng.shuffle(indices)
+                position = 0
+            take = min(count - len(selected), len(indices) - position)
+            selected.extend(indices[position:position + take])
+            position += take
+        return selected, position
+
+    def __iter__(self):
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+        source_order = list(range(self.source_count))
+        target_order = list(range(self.target_count))
+        rng.shuffle(source_order)
+        rng.shuffle(target_order)
+        source_position = 0
+        target_position = 0
+        for _ in range(self.n_batches):
+            source_indices, source_position = self._take(
+                source_order, source_position, self.batch_size, rng)
+            target_indices, target_position = self._take(
+                target_order, target_position, self.batch_size, rng)
+            yield list(zip(source_indices, target_indices))
+
+    def __len__(self):
+        return self.n_batches
+
+
+def unpaired_domain_loader(source_dataset, target_dataset, batch_size, seed,
+                           **loader_kwargs):
+    """Build the same larger-domain epoch used by JMDA strict UDA."""
+    dataset = _UnpairedDomainDataset(source_dataset, target_dataset)
+    batch_sampler = UnpairedDomainIndexBatchSampler(
+        len(source_dataset), len(target_dataset), batch_size, seed)
+    generator = torch.Generator()
+    generator.manual_seed(int(seed))
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_sampler=batch_sampler,
+        generator=generator,
+        **loader_kwargs,
+    )
+
+
+def gradient_l2_norm(parameters):
+    """Return the global L2 norm of currently accumulated gradients."""
+    squared = None
+    for parameter in parameters:
+        if parameter.grad is None:
+            continue
+        value = parameter.grad.detach().float().pow(2).sum()
+        squared = value if squared is None else squared + value
+    if squared is None:
+        return 0.0
+    return float(squared.sqrt().item())
+
+
 class FullCoverageBatchSampler(torch.utils.data.Sampler):
     """Shuffle all indices while preventing a final singleton covariance batch."""
 
@@ -395,10 +495,13 @@ def describe_pairing(name, dataset):
 
 __all__ = [
     'CyclingDataIterator', 'FullCoverageBatchSampler',
+    'UnpairedDomainIndexBatchSampler',
     'UdaLabelFreePairedDataset',
     'JmdaInfraredEncoder', 'JmdaMultimodalEncoder',
     'JmdaTllibBackbone', 'JmdaVisualEncoder', 'UdaPairedImageListDataset',
     'configure_jmda_visual_finetuning', 'describe_pairing',
+    'gradient_l2_norm',
     'ir_transform_from_vis', 'jmda_train_transform', 'jmda_val_transform',
     'label_free_target_paired_dataset', 'paired_dataset', 'split_modalities',
+    'unpaired_domain_loader',
 ]

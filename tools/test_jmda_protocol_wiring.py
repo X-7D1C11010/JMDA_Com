@@ -62,7 +62,7 @@ class JmdaProtocolWiringTests(unittest.TestCase):
         )
         self.assertIn("tools/read_target_class_support.py", oracle_block)
         self.assertIn("--uda_pseudo_class_pairing", oracle_block)
-        self.assertIn("--visual_finetuning_mode legacy_supervised", oracle_block)
+        self.assertIn("--visual_finetuning_mode layer2_4", oracle_block)
         self.assertIn("--no_sync_discriminator_lr", oracle_block)
         self.assertIn("--no_adaptive_sinkhorn", oracle_block)
         self.assertIn("--svd_projection_mode legacy_supervised", oracle_block)

@@ -48,8 +48,8 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             with self.subTest(method=relative):
                 with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
                     trainer = f.read()
-                self.assertIn("n_batches = len(src_loader)", trainer)
-                self.assertIn("CyclingDataIterator(tgt_loader)", trainer)
+                self.assertIn("n_batches = len(train_loader)", trainer)
+                self.assertIn("unpaired_domain_loader", trainer)
                 self.assertNotIn("n_batches = min(len(src_loader), len(tgt_loader))", trainer)
 
     def test_mcc_source_warmup_precedes_target_confusion(self):
@@ -293,16 +293,20 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         with open(os.path.join(ROOT, "DANN", "train_dann.py"),
                   encoding="utf-8") as f:
             dann = f.read()
-        self.assertGreaterEqual(dann.count("drop_last=True"), 2)
+        self.assertIn("unpaired_domain_loader", dann)
+        self.assertIn("mode='layer2_4'", dann)
         self.assertIn("avg_domain=", dann)
         self.assertIn("domain_acc=", dann)
+        self.assertIn("grad_VIS=", dann)
 
         with open(os.path.join(ROOT, "DeepCORAL", "train_deepcoral.py"),
                   encoding="utf-8") as f:
             coral = f.read()
-        self.assertGreaterEqual(coral.count("drop_last=True"), 2)
+        self.assertIn("unpaired_domain_loader", coral)
+        self.assertIn("mode='layer2_4'", coral)
         self.assertIn("avg_weighted_coral=", coral)
         self.assertIn("target_conf=", coral)
+        self.assertIn("grad_VIS=", coral)
 
         for relative in ("MDD/train_mdd.py", "MCC/train_mcc.py"):
             with self.subTest(method=relative):
@@ -310,6 +314,9 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                     trainer = f.read()
                 self.assertIn("target_entropy=", trainer)
                 self.assertIn("target_class_hist=", trainer)
+                self.assertIn("unpaired_domain_loader", trainer)
+                self.assertIn("mode='layer2_4'", trainer)
+                self.assertIn("grad_VIS=", trainer)
 
         with open(os.path.join(ROOT, "CDAN", "train_cdan.py"),
                   encoding="utf-8") as f:
@@ -317,6 +324,9 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("domain_acc=", cdan)
         self.assertIn("target_entropy=", cdan)
         self.assertIn("target_class_hist=", cdan)
+        self.assertIn("unpaired_domain_loader", cdan)
+        self.assertIn("mode='layer2_4'", cdan)
+        self.assertIn("grad_VIS=", cdan)
 
     def test_source_label_smoothing_is_explicit_and_launcher_controlled(self):
         with open(os.path.join(ROOT, "DeepCORAL", "train_deepcoral.py"),
@@ -434,7 +444,8 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             self.assertIn("jmda_train_transform", trainer)
             self.assertIn("jmda_val_transform", trainer)
             self.assertIn("configure_jmda_visual_finetuning", trainer)
-            self.assertIn("legacy train-mode BN", trainer)
+            self.assertIn("mode='layer2_4'", trainer)
+            self.assertIn("unpaired_domain_loader", trainer)
 
 
 if __name__ == "__main__":

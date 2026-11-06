@@ -22,6 +22,7 @@ from uda_multimodal import (  # noqa: E402
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
+    unpaired_domain_loader,
 )
 
 
@@ -88,6 +89,35 @@ class JmdaMultimodalArchitectureTests(unittest.TestCase):
         for module in model.vis_encoder.features.modules():
             if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
                 self.assertTrue(module.training)
+
+    def test_layer2_4_mode_unfreezes_actual_sequential_resnet_stages(self):
+        model = JmdaMultimodalEncoder(modality_dim=16, pretrained_vis=False)
+        details = configure_jmda_visual_finetuning(model, 'layer2_4')
+        self.assertGreater(details['vis_trainable'], 16 * 512)
+        self.assertTrue(all(parameter.requires_grad
+                            for parameter in model.vis_encoder.features[5].parameters()))
+        self.assertTrue(all(parameter.requires_grad
+                            for parameter in model.vis_encoder.features[6].parameters()))
+        self.assertTrue(all(parameter.requires_grad
+                            for parameter in model.vis_encoder.features[7].parameters()))
+        self.assertTrue(all(not parameter.requires_grad
+                            for parameter in model.vis_encoder.features[4].parameters()))
+
+    def test_unpaired_domain_loader_matches_jmda_larger_domain_epoch(self):
+        source = TensorDataset(torch.arange(10), torch.arange(10))
+        target = TensorDataset(torch.arange(3), -torch.ones(3, dtype=torch.long))
+        loader = unpaired_domain_loader(
+            source, target, batch_size=4, seed=42, num_workers=0)
+        batches = list(loader)
+        self.assertEqual(len(batches), 3)
+        source_seen, target_seen = [], []
+        for source_batch, target_batch in batches:
+            self.assertEqual(source_batch[0].numel(), 4)
+            self.assertEqual(target_batch[0].numel(), 4)
+            source_seen.extend(source_batch[0].tolist())
+            target_seen.extend(target_batch[0].tolist())
+        self.assertEqual(set(source_seen), set(range(10)))
+        self.assertEqual(set(target_seen), set(range(3)))
 
     def test_target_pair_manifest_does_not_expose_target_truth(self):
         with tempfile.TemporaryDirectory() as temp_dir:

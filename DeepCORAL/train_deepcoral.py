@@ -66,14 +66,15 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
-    CyclingDataIterator,
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
+    gradient_l2_norm,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
     paired_dataset,
     describe_pairing,
+    unpaired_domain_loader,
 )
 
 
@@ -329,19 +330,13 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    # Covariance from the old 2-sample target tail was too noisy and repeated
-    # four times in every source-driven epoch.  Do not delete fixed examples:
-    # shuffle every epoch and omit only that epoch's random incomplete tail.
-    src_loader = DataLoader(
-        src_ds, batch_size=args.source_batch_size, shuffle=True,
-        drop_last=True, **loader_kwargs,
-    )
+    if args.source_batch_size != args.target_batch_size:
+        raise ValueError(
+            'JMDA strict-UDA sampling requires equal source/target batch sizes')
+    train_loader = unpaired_domain_loader(
+        src_ds, tgt_ds, args.source_batch_size, args.seed, **loader_kwargs)
     src_eval_loader = DataLoader(src_eval_ds, batch_size=args.test_batch_size,
                                  shuffle=False, **eval_loader_kwargs)
-    tgt_loader = DataLoader(
-        tgt_ds, batch_size=args.target_batch_size, shuffle=True,
-        drop_last=True, **loader_kwargs,
-    )
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
                                 shuffle=False, **eval_loader_kwargs)
 
@@ -354,9 +349,8 @@ def main():
                                 multimodal=args.multimodal).to(device)
         if args.multimodal:
             tuning = configure_jmda_visual_finetuning(
-                model.encoder, mode='legacy_supervised')
-            print('JMDA VIS fine-tuning: projection only; frozen ResNet '
-                  'parameters with legacy train-mode BN; '
+                model.encoder, mode='layer2_4')
+            print('JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; '
                   f'VIS trainable={tuning["vis_trainable"]:,}/'
                   f'{tuning["vis_total"]:,}; IR fully trainable')
         print('DeepCORAL architecture: '
@@ -413,9 +407,7 @@ def main():
                                 modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
-    # Cover every labelled source sample in each epoch.  CORAL supports
-    # unequal source/target batch sizes, and the short target loader cycles.
-    n_batches = len(src_loader)
+    n_batches = len(train_loader)
     if n_batches < 1:
         raise ValueError('DeepCORAL requires at least one full source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
@@ -429,9 +421,8 @@ def main():
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     print(f'DeepCORAL optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
-    print(f'DeepCORAL domain sampling: full source pass '
-          f'({len(src_loader)} batches/epoch); target loader '
-          f'({len(tgt_loader)} batches) cycles when exhausted')
+    print(f'DeepCORAL domain sampling: JMDA strict-UDA larger-domain epoch; '
+          f'{n_batches} full paired batches/epoch')
     print(f'DeepCORAL LR schedule: {args.lr_scheduler}; '
           f'head multiplier={args.head_lr_mult}; min ratio={args.min_lr_ratio}')
     global_step = 0
@@ -446,22 +437,23 @@ def main():
         alignment_updates = max(planned_updates - warmup_updates, 1)
         alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
         _lambda = args.coral_max_weight * min(alignment_progress, 1.0)
-        src_iter = iter(src_loader)
-        tgt_iter = CyclingDataIterator(tgt_loader)
+        train_iter = iter(train_loader)
         batches_this_epoch = min(n_batches, planned_updates - global_step)
         epoch_cls_loss = 0.0
         epoch_coral_loss = 0.0
         epoch_weighted_coral = 0.0
         epoch_source_confidence = 0.0
         epoch_target_confidence = 0.0
+        epoch_vis_grad = 0.0
+        epoch_ir_grad = 0.0
+        epoch_head_grad = 0.0
 
         for i in range(batches_this_epoch):
             alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
             _lambda = args.coral_max_weight * min(alignment_progress, 1.0)
             if eff:
                 eff.step_start()
-            src_imgs, src_labels = next(src_iter)
-            tgt_imgs, _ = next(tgt_iter)
+            (src_imgs, src_labels), (tgt_imgs, _) = next(train_iter)
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
             tgt_imgs = tgt_imgs.to(device)
@@ -491,6 +483,12 @@ def main():
 
             optimizer.zero_grad()
             loss.backward()
+            if args.multimodal:
+                epoch_vis_grad += gradient_l2_norm(
+                    model.encoder.vis_encoder.parameters())
+                epoch_ir_grad += gradient_l2_norm(
+                    model.encoder.ir_encoder.parameters())
+                epoch_head_grad += gradient_l2_norm(model.fc.parameters())
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
@@ -513,6 +511,10 @@ def main():
             f'avg_weighted_coral={epoch_weighted_coral / batches_this_epoch:.4f} '
             f'source_conf={epoch_source_confidence / batches_this_epoch:.4f} '
             f'target_conf={epoch_target_confidence / batches_this_epoch:.4f} '
+            + (f'grad_VIS={epoch_vis_grad / batches_this_epoch:.4e} '
+               f'grad_IR={epoch_ir_grad / batches_this_epoch:.4e} '
+               f'grad_head={epoch_head_grad / batches_this_epoch:.4e} '
+               if args.multimodal else '') +
             f'lambda={_lambda:.4f}',
             flush=True,
         )

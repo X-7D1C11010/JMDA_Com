@@ -73,7 +73,7 @@ def _log(iterations=2, final_accuracy=0.30, min_cosine=0.80):
         "target_train_samples": 8,
         "target_training_data_source": "label_free_pair_manifest",
         "target_pair_manifest_sha256": "0" * 64,
-        "visual_finetuning_mode": "legacy_supervised",
+        "visual_finetuning_mode": "layer2_4",
         "adaptive_sinkhorn": False,
         "transport_mode": "sinkhorn",
         "ot_sinkhorn_iterations": 50,

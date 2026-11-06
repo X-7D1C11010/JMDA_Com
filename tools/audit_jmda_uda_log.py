@@ -964,7 +964,7 @@ def audit_text(
                 "the separately reported oracle shared-label protocol"
             )
         expected_parity_fields = {
-            "visual_finetuning_mode": "legacy_supervised",
+            "visual_finetuning_mode": "layer2_4",
             "adaptive_sinkhorn": False,
             "svd_projection_mode": "legacy_supervised",
             "basis_transport_mode": "legacy_supervised",

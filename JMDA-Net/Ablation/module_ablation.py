@@ -4151,7 +4151,7 @@ def main():
         require_parity('svd_max_sweeps', args.svd_max_sweeps, 10)
         require_parity('svd_tolerance', args.svd_tolerance, 1e-3)
         require_parity('visual_finetuning_mode', args.visual_finetuning_mode,
-                       'legacy_supervised')
+                       'layer2_4')
         require_parity('transport_mode', args.transport_mode, 'sinkhorn')
         require_parity('ot_epsilon', args.ot_epsilon, 0.1)
         require_parity('ot_sinkhorn_iterations',

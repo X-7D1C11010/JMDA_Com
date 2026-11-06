@@ -55,14 +55,15 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
-    CyclingDataIterator,
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
+    gradient_l2_norm,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
     paired_dataset,
     describe_pairing,
+    unpaired_domain_loader,
 )
 
 
@@ -273,15 +274,8 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    # Domain adversarial updates require equal, representative batches from
-    # both domains.  With 113 target samples and batch 16, keeping the final
-    # singleton made four highly imbalanced domain updates per source pass.
-    # Shuffling plus drop_last omits a different sample each pass; it never
-    # permanently removes a target example from the dataset.
-    src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
-    tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
+    train_loader = unpaired_domain_loader(
+        src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, **eval_loader_kwargs)
 
@@ -294,9 +288,8 @@ def main():
                            multimodal=args.multimodal).to(device)
         if args.multimodal:
             tuning = configure_jmda_visual_finetuning(
-                model.encoder, mode='legacy_supervised')
-            print('JMDA VIS fine-tuning: projection only; frozen ResNet '
-                  'parameters with legacy train-mode BN; '
+                model.encoder, mode='layer2_4')
+            print('JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; '
                   f'VIS trainable={tuning["vis_trainable"]:,}/'
                   f'{tuning["vis_total"]:,}; IR fully trainable')
         print('DANN architecture: '
@@ -343,9 +336,9 @@ def main():
                                 modalities='VIS+IR' if args.multimodal else 'VIS')
         print(f'Efficiency logging -> {eff.run_dir}')
 
-    # One epoch means one shuffled, full-batch source pass.  The shorter target
-    # loader is cycled as needed while preserving equal domain batch sizes.
-    n_batches = len(src_loader)
+    # Match JMDA strict UDA exactly: cover the larger domain and independently
+    # reshuffle/cycle the smaller domain, with a full equal batch on both sides.
+    n_batches = len(train_loader)
     if n_batches < 1:
         raise ValueError('DANN requires at least one source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
@@ -360,8 +353,8 @@ def main():
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     print(f'DANN optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
-    print(f'DANN domain sampling: full source pass ({len(src_loader)} batches/epoch); '
-          f'target loader ({len(tgt_loader)} batches) cycles when exhausted')
+    print(f'DANN domain sampling: JMDA strict-UDA larger-domain epoch; '
+          f'{n_batches} full paired batches/epoch')
     print(f'DANN GRL ramp length: {grl_max_iterations} updates')
     print(f'DANN LR schedule: {args.lr_scheduler}; min ratio={args.min_lr_ratio}')
     global_step = 0
@@ -369,8 +362,7 @@ def main():
         if eff:
             eff.epoch_start(epoch)
         model.train()
-        src_iter = iter(src_loader)
-        tgt_iter = CyclingDataIterator(tgt_loader)
+        train_iter = iter(train_loader)
         batches_this_epoch = min(n_batches, planned_updates - global_step)
         epoch_cls_loss = 0.0
         epoch_domain_loss = 0.0
@@ -378,6 +370,9 @@ def main():
         epoch_source_samples = 0
         epoch_domain_correct = 0
         epoch_domain_samples = 0
+        epoch_vis_grad = 0.0
+        epoch_ir_grad = 0.0
+        epoch_head_grad = 0.0
 
         for i in range(batches_this_epoch):
             # 原参考实现 main.py:100-101：逐迭代调度 α（0 基 i 与 epoch）
@@ -385,8 +380,7 @@ def main():
             alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
             if eff:
                 eff.step_start()
-            src_imgs, src_labels = next(src_iter)
-            tgt_imgs, _ = next(tgt_iter)
+            (src_imgs, src_labels), (tgt_imgs, _) = next(train_iter)
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
             tgt_imgs = tgt_imgs.to(device)
@@ -421,6 +415,14 @@ def main():
                                             tgt_domain_label.numel())
             optimizer.zero_grad()
             loss.backward()
+            if args.multimodal:
+                epoch_vis_grad += gradient_l2_norm(
+                    model.encoder.vis_encoder.parameters())
+                epoch_ir_grad += gradient_l2_norm(
+                    model.encoder.ir_encoder.parameters())
+                epoch_head_grad += gradient_l2_norm(
+                    list(model.class_classifier.parameters()) +
+                    list(model.domain_classifier.parameters()))
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
@@ -441,6 +443,10 @@ def main():
             f'avg_domain={epoch_domain_loss / batches_this_epoch:.4f} '
             f'source_acc={epoch_source_correct / max(epoch_source_samples, 1):.4f} '
             f'domain_acc={epoch_domain_correct / max(epoch_domain_samples, 1):.4f} '
+            + (f'grad_VIS={epoch_vis_grad / batches_this_epoch:.4e} '
+               f'grad_IR={epoch_ir_grad / batches_this_epoch:.4e} '
+               f'grad_heads={epoch_head_grad / batches_this_epoch:.4e} '
+               if args.multimodal else '') +
             f'alpha={alpha:.4f}',
             flush=True,
         )

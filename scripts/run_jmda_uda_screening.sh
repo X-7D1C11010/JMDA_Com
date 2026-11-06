@@ -17,7 +17,7 @@ SVD_BATCH_SIZE="${JMDA_SVD_STAT_BATCH_SIZE:-128}"
 PREFETCH_FACTOR="${JMDA_PREFETCH_FACTOR:-2}"
 PIN_MEMORY="${JMDA_PIN_MEMORY:-1}"
 RUN_INVARIANTS="${JMDA_RUN_INVARIANT_TESTS:-1}"
-EXPECTED_CODE_FINGERPRINT="90f74dbbad2a858e"
+EXPECTED_CODE_FINGERPRINT="36d680f39138a9ba"
 RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
 RUN_ROOT="$HERE/server_logs/jmda_uda_screening/$RUN_ID"
 LIST_ROOT="$HERE/prepared_lists/jmda_uda_screening_$RUN_ID"
@@ -113,7 +113,7 @@ COMMON_ARGS=(
   --target_label_ratio 0
   --target_cls_weight 0
   --label_space_mode oracle_shared
-  --visual_finetuning_mode legacy_supervised
+  --visual_finetuning_mode layer2_4
   --no_sync_discriminator_lr
   --report_strategy last
   --diagnostic_screening

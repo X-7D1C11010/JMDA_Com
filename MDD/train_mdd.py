@@ -39,7 +39,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 '..', 'Transfer-Learning-Library'))
 from tllib.alignment.mdd import ClassificationMarginDisparityDiscrepancy \
     as MarginDisparityDiscrepancy, ImageClassifier
-from tllib.utils.data import ForeverDataIterator
 from tllib.utils.metric import accuracy
 from tllib.vision.models import resnet18, resnet50
 
@@ -65,10 +64,12 @@ from uda_multimodal import (
     JmdaTllibBackbone,
     configure_jmda_visual_finetuning,
     describe_pairing,
+    gradient_l2_norm,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
     paired_dataset,
+    unpaired_domain_loader,
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -122,7 +123,7 @@ def validate(val_loader, classifier, num_classes):
     return classification_metrics(all_labels, all_predictions, num_classes=num_classes)
 
 
-def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
+def train_epoch(train_iter, classifier, mdd,
                 optimizer, lr_scheduler, epoch, args, eff=None):
     classifier.train()
     mdd.train()
@@ -133,12 +134,14 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
     target_confidence_sum = 0.0
     target_entropy_sum = 0.0
     target_class_counts = None
+    vis_grad_sum = 0.0
+    ir_grad_sum = 0.0
+    head_grad_sum = 0.0
     for i in range(args.iters_per_epoch):
         if eff:
             eff.step_start()
         optimizer.zero_grad()
-        x_s, labels_s = next(train_source_iter)[:2]
-        x_t, = next(train_target_iter)[:1]
+        (x_s, labels_s), (x_t, _) = next(train_iter)
         x_s, x_t = x_s.to(device), x_t.to(device)
         labels_s = labels_s.to(device)
 
@@ -179,6 +182,15 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
                                    else target_class_counts + batch_counts)
         classifier.step()
         loss.backward()
+        if args.multimodal:
+            vis_grad_sum += gradient_l2_norm(
+                classifier.backbone.vis_encoder.parameters())
+            ir_grad_sum += gradient_l2_norm(
+                classifier.backbone.ir_encoder.parameters())
+            head_grad_sum += gradient_l2_norm(
+                list(classifier.bottleneck.parameters()) +
+                list(classifier.head.parameters()) +
+                list(classifier.adv_head.parameters()))
         optimizer.step()
         lr_scheduler.step()
         if eff:
@@ -202,6 +214,9 @@ def train_epoch(train_source_iter, train_target_iter, classifier, mdd,
         'target_class_coverage': int((target_class_counts > 0).sum().item()),
         'target_class_hist': target_class_counts.tolist(),
         'transfer_weight': transfer_weight,
+        'grad_VIS': vis_grad_sum / args.iters_per_epoch,
+        'grad_IR': ir_grad_sum / args.iters_per_epoch,
+        'grad_heads': head_grad_sum / args.iters_per_epoch,
     }
 
 
@@ -287,25 +302,24 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
-    tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
+    train_loader = unpaired_domain_loader(
+        src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, **eval_loader_kwargs)
-    train_source_iter = ForeverDataIterator(src_loader)
-    train_target_iter = ForeverDataIterator(tgt_loader)
+    if args.iters_per_epoch != len(train_loader):
+        print('MDD update budget aligned to JMDA strict UDA: '
+              f'{args.iters_per_epoch} -> {len(train_loader)} iterations/epoch')
+    args.iters_per_epoch = len(train_loader)
 
     if args.multimodal:
         if args.backbone != 'jmda':
             raise ValueError('--multimodal requires --backbone jmda')
         backbone = JmdaTllibBackbone()
         tuning = configure_jmda_visual_finetuning(
-            backbone, mode='legacy_supervised')
+            backbone, mode='layer2_4')
         print('MDD encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
               '512+512 direct concatenation')
-        print('JMDA VIS fine-tuning: projection only; frozen ResNet '
-              'parameters with legacy train-mode BN; '
+        print('JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; '
               f'VIS trainable={tuning["vis_trainable"]:,}/'
               f'{tuning["vis_total"]:,}; IR fully trainable')
     else:
@@ -359,7 +373,7 @@ def main():
         if eff:
             eff.epoch_start(epoch)
         train_diagnostics = train_epoch(
-            train_source_iter, train_target_iter, classifier, mdd,
+            iter(train_loader), classifier, mdd,
             optimizer, lr_scheduler, epoch, args, eff=eff)
         print(
             f'Epoch [{epoch}/{args.epochs}] train summary: '
@@ -370,7 +384,10 @@ def main():
             f'target_entropy={train_diagnostics["target_entropy"]:.4f} '
             f'target_class_coverage={train_diagnostics["target_class_coverage"]}/{num_classes} '
             f'target_class_hist={train_diagnostics["target_class_hist"]} '
-            f'transfer_weight={train_diagnostics["transfer_weight"]:.4f}',
+            f'transfer_weight={train_diagnostics["transfer_weight"]:.4f} '
+            f'grad_VIS={train_diagnostics["grad_VIS"]:.4e} '
+            f'grad_IR={train_diagnostics["grad_IR"]:.4e} '
+            f'grad_heads={train_diagnostics["grad_heads"]:.4e}',
             flush=True,
         )
         val_metrics = validate(tgt_val_loader, classifier, num_classes)

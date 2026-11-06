@@ -61,10 +61,12 @@ from uda_multimodal import (
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
     describe_pairing,
+    gradient_l2_norm,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
     paired_dataset,
+    unpaired_domain_loader,
 )
 
 
@@ -283,10 +285,8 @@ def main():
                      else 'official CDAN 10-crop')
     print(f'DataLoader settings: train={loader_kwargs}, '
           f'eval={eval_protocol}, workers/view={args.eval_num_workers}')
-    src_loader = DataLoader(src_ds, batch_size=args.batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
-    tgt_loader = DataLoader(tgt_ds, batch_size=args.batch_size, shuffle=True,
-                            drop_last=True, **loader_kwargs)
+    train_loader = unpaired_domain_loader(
+        src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
 
     if args.multimodal:
         if args.backbone != 'JMDA':
@@ -294,9 +294,8 @@ def main():
         model = DualResNetFc(num_classes,
                              head_lr_mult=args.head_lr_mult).to(device)
         tuning = configure_jmda_visual_finetuning(
-            model.encoder, mode='legacy_supervised')
-        print('JMDA VIS fine-tuning: projection only; frozen ResNet '
-              'parameters with legacy train-mode BN; '
+            model.encoder, mode='layer2_4')
+        print('JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; '
               f'VIS trainable={tuning["vis_trainable"]:,}/'
               f'{tuning["vis_total"]:,}; IR fully trainable')
         print('CDAN-MM encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, '
@@ -368,10 +367,10 @@ def main():
     #   for i in range(100004)，迭代器耗尽即重建（:168-171），
     #   每个 iteration 开头 inv 调 lr（:166，0 基迭代号），
     #   源/目标分别前向后拼接 features/outputs（:175-178）。
-    len_train_source = len(src_loader)
-    len_train_target = len(tgt_loader)
-    iter_source = iter(src_loader)
-    iter_target = iter(tgt_loader)
+    updates_per_domain_epoch = len(train_loader)
+    train_iterator = iter(train_loader)
+    print('CDAN domain sampling: JMDA strict-UDA larger-domain epoch; '
+          f'{updates_per_domain_epoch} full paired batches/domain epoch')
     block = 0
     for iter_num in range(args.num_iterations):
         if iter_num == 0 and eff:
@@ -382,14 +381,11 @@ def main():
         optimizer = inv_lr_scheduler(optimizer, iter_num,
                                      gamma=args.lr_gamma, power=args.lr_decay,
                                      lr=args.lr, weight_decay=5e-4)
-        if iter_num % len_train_source == 0:
-            iter_source = iter(src_loader)
-        if iter_num % len_train_target == 0:
-            iter_target = iter(tgt_loader)
+        if iter_num % updates_per_domain_epoch == 0:
+            train_iterator = iter(train_loader)
         if eff:
             eff.step_start()
-        src_imgs, src_labels = next(iter_source)
-        tgt_imgs, _ = next(iter_target)
+        (src_imgs, src_labels), (tgt_imgs, _) = next(train_iterator)
         src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
         tgt_imgs = tgt_imgs.to(device)
         if eff:
@@ -446,6 +442,14 @@ def main():
         loss = loss_cls + transfer_weight * loss_transfer
         optimizer.zero_grad()
         loss.backward()
+        if args.multimodal:
+            vis_grad = gradient_l2_norm(model.encoder.vis_encoder.parameters())
+            ir_grad = gradient_l2_norm(model.encoder.ir_encoder.parameters())
+            head_grad = gradient_l2_norm(
+                list(model.bottleneck.parameters()) + list(model.fc.parameters()))
+            adversary_grad = gradient_l2_norm(ad_net.parameters())
+        else:
+            vis_grad = ir_grad = head_grad = adversary_grad = float('nan')
         optimizer.step()
         if eff:
             eff.step_end()
@@ -463,6 +467,8 @@ def main():
                   f'target_entropy={target_entropy:.4f} '
                   f'target_class_coverage={target_class_coverage}/{num_classes} '
                   f'target_class_hist={target_class_hist} '
+                  f'grad_VIS={vis_grad:.4e} grad_IR={ir_grad:.4e} '
+                  f'grad_head={head_grad:.4e} grad_ad={adversary_grad:.4e} '
                   f'lr={optimizer.param_groups[0]["lr"]:.2e}')
 
         # Diagnostic target evaluation is periodic, but never controls

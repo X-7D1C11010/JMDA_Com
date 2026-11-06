@@ -142,17 +142,16 @@ class TokenImportanceRecalibration(nn.Module):
         else:
             # The paper appendix explicitly generalises TIR to K-way tasks by
             # assigning Sum=K weight 0 and Sum=1 a weight greater than 1.
-            # VDS2Raw has only three classes, where unbounded extreme weights
-            # made the recalibration unnecessarily brittle. Preserve the
-            # ordering of the paper rule while preventing complete token
-            # deletion or a 2x amplification.
+            # VDS2Raw has only three classes. Keep the paper's simplified
+            # K-way extremes by default, while exposing explicit bounds for
+            # controlled ablations.
             weights = torch.ones_like(sum_scores)
             weights = torch.where(sum_scores.eq(1), weights.new_tensor(2.0), weights)
             weights = torch.where(
                 sum_scores.eq(class_count), weights.new_tensor(0.0), weights
             )
-            min_weight = float(getattr(params, "tir_min_weight", 0.25))
-            max_weight = float(getattr(params, "tir_max_weight", 1.75))
+            min_weight = float(getattr(params, "tir_min_weight", 0.0))
+            max_weight = float(getattr(params, "tir_max_weight", 2.0))
             if not 0.0 <= min_weight <= max_weight:
                 raise ValueError(
                     "TIR K-way weight bounds must satisfy "
@@ -226,8 +225,8 @@ class TIRRuntime:
     topk_ratio: float = 0.3
     temper_rate: float = 0.5
     text_layer: int = 10
-    tir_min_weight: float = 0.25
-    tir_max_weight: float = 1.75
+    tir_min_weight: float = 0.0
+    tir_max_weight: float = 2.0
     aux_container: dict = field(default_factory=dict)
 
     def as_namespace(self):
@@ -251,17 +250,17 @@ class TIRVDS2Raw(nn.Module):
         topk_ratio: float = 0.3,
         temper_rate: float = 0.5,
         text_layer: int = 10,
-        tir_min_weight: float = 0.25,
-        tir_max_weight: float = 1.75,
-        lora_rank: int = 8,
-        lora_alpha: int = 4,
+        tir_min_weight: float = 0.0,
+        tir_max_weight: float = 2.0,
+        lora_rank: int = 16,
+        lora_alpha: int = 8,
         lora_dropout: float = 0.25,
-        lora_encoder: str = "vision",
+        lora_encoder: str = "both",
         lora_position: str = "all",
-        lora_params: Sequence[str] = ("q", "v"),
+        lora_params: Sequence[str] = ("q", "k", "v"),
         ais_dropout_probability: float = 0.3,
-        nir_initial_scale: float = 0.1,
-        ais_initial_scale: float = 0.1,
+        nir_initial_scale: float = 0.01,
+        ais_initial_scale: float = 0.01,
         logit_scale: float = 4.0,
     ):
         super().__init__()

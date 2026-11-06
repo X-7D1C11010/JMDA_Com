@@ -251,7 +251,7 @@ class TIRCoreTests(unittest.TestCase):
         )
         torch.testing.assert_close(
             runtime.aux_container["tir_last_weights"],
-            torch.tensor([[1.75, 1.75, 1.75, 1.0]]),
+            torch.tensor([[2.0, 2.0, 2.0, 1.0]]),
         )
         self.assertEqual(
             runtime.aux_container["tir_weight_rule"],
@@ -276,7 +276,7 @@ class TIRCoreTests(unittest.TestCase):
         )
         torch.testing.assert_close(
             runtime.aux_container["tir_last_weights"],
-            torch.tensor([[0.25, 1.0, 1.0, 1.0]]),
+            torch.tensor([[0.0, 1.0, 1.0, 1.0]]),
         )
 
     def test_five_way_rule_stays_identical_to_released_linear_rule(self):
@@ -329,9 +329,22 @@ class LauncherAndSamplingTests(unittest.TestCase):
         target = _LabelOnlyDataset([0, 0, 1, 1, 2])
         weights, counts = mild_class_weights(source, target, power=0.5)
         self.assertEqual(counts, [5, 3, 2])
-        self.assertAlmostEqual(float(weights.mean()), 1.0, places=6)
+        weighted_mean = sum(w * c for w, c in zip(weights.tolist(), counts)) / sum(
+            counts
+        )
+        self.assertAlmostEqual(weighted_mean, 1.0, places=6)
         self.assertLess(float(weights[0]), float(weights[1]))
         self.assertLess(float(weights[1]), float(weights[2]))
+
+    def test_tir_domain_specific_weights_do_not_hide_target_minority(self):
+        source = _LabelOnlyDataset([0] + [1] * 2 + [2] * 5)
+        target = _LabelOnlyDataset([0] * 5 + [1] * 2 + [2])
+        source_weights, source_counts = mild_class_weights(source, power=0.5)
+        target_weights, target_counts = mild_class_weights(target, power=0.5)
+        self.assertEqual(source_counts, [1, 2, 5])
+        self.assertEqual(target_counts, [5, 2, 1])
+        self.assertGreater(float(target_weights[2]), float(target_weights[0]))
+        self.assertLess(float(source_weights[2]), float(source_weights[0]))
 
     def test_tir_warmup_cosine_scheduler(self):
         values = [warmup_cosine_multiplier(i, 60, 5, 0.1) for i in range(61)]
@@ -360,23 +373,25 @@ class LauncherAndSamplingTests(unittest.TestCase):
             self.assertNotIn("train_dsne", source.lower())
         linux = (root / "scripts/run_vds2raw_methods.sh").read_text(encoding="utf-8")
         self.assertIn('METHOD_ORDER:-tir', linux)
-        self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-60}"', linux)
+        self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"', linux)
         self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"', linux)
         self.assertIn('--eval-frequency 1', linux)
-        self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.00005}"', linux)
-        self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-8}"', linux)
-        self.assertIn('--scheduler cosine', linux)
+        self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0002}"', linux)
+        self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-16}"', linux)
+        self.assertIn('--scheduler none', linux)
         self.assertIn('--natural-train-sampling', linux)
-        self.assertIn('--minibatch-updates', linux)
-        self.assertIn('--lora-encoder vision --lora-params q v', linux)
+        self.assertIn('--accumulate-full-epoch', linux)
+        self.assertIn('--lora-encoder both --lora-params q k v', linux)
         self.assertIn('MCFT_BATCH=2; TIR_BATCH=32', linux)
         self.assertIn('MCFT_MAX_BATCH_ARGS=(--max-train-batches 1)', linux)
         self.assertNotIn('TIR_MAX_BATCH_ARGS=(--max-train-batches 1)', linux)
-        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-12}"', linux)
+        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
         tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
         self.assertIn("domain_class_balanced_train=False", tir_train)
-        self.assertIn("accumulate_full_epoch=False", tir_train)
-        self.assertIn("train_data = ConcatDataset((source, target))", tir_train)
+        self.assertIn("accumulate_full_epoch=True", tir_train)
+        self.assertIn("DomainTaggedDataset(source, 0)", tir_train)
+        self.assertIn("DomainTaggedDataset(target, 1)", tir_train)
+        self.assertIn('"domain_separated_supervised_loss": True', tir_train)
         self.assertIn('"target_label_budget": "all available target_train labels"', tir_train)
         self.assertNotIn("save_checkpoint(", tir_train)
 

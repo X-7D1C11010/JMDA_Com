@@ -139,7 +139,7 @@ fi
 # Version lock: the lightweight gate recomputes the same portable fingerprint
 # from all JMDA core files.  Update this constant only together with reviewed
 # source changes; it is intentionally not overridable from the environment.
-JMDA_EXPECTED_CODE_FINGERPRINT="90f74dbbad2a858e"
+JMDA_EXPECTED_CODE_FINGERPRINT="36d680f39138a9ba"
 JMDA_MIN_FREE_GPU_MEMORY_MIB="${JMDA_MIN_FREE_GPU_MEMORY_MIB:-}"
 JMDA_GPU_SCHEDULER="${JMDA_GPU_SCHEDULER:-1}"
 JMDA_GPU_MAX_UTIL_PERCENT="${JMDA_GPU_MAX_UTIL_PERCENT:-10}"
@@ -570,7 +570,7 @@ elif [ "$PROTOCOL" = "jmda_uda" ]; then
          --class_conditional_ot --balance_svd_classes \
          --target_label_ratio 0 --target_cls_weight 0 \
          --label_space_mode partial_set \
-         --visual_finetuning_mode legacy_supervised \
+         --visual_finetuning_mode layer2_4 \
          --no_sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_uda_$t'"
@@ -619,7 +619,7 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
          --oracle_shared_labels '$oracle_shared_labels' \
          --target_train_pair_list '$FAIR_LIST_DIR/${t}_train_pairs.tsv' \
          --uda_pseudo_class_pairing \
-         --visual_finetuning_mode legacy_supervised \
+         --visual_finetuning_mode layer2_4 \
          --no_sync_discriminator_lr \
          --report_strategy last --base_seed '$SEED' \
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_oracle_shared_uda_$t'"
