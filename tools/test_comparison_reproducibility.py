@@ -44,6 +44,21 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn("in-memory best state; no model files retained", train)
         self.assertNotIn("torch.save(", train)
 
+    def test_weather_mcft_supervised_protocol_passes_common_preflight(self):
+        preflight = (ROOT / "tools" / "preflight_server.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("'uda', 'vlm', 'supervised'", preflight)
+        self.assertIn(
+            "[SUPERVISED] full sunny_train and every selected target_train",
+            preflight,
+        )
+        runner = (ROOT / "scripts" / "run_server.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('--protocol "$PROTOCOL"', runner)
+        self.assertIn('"$HERE/MCFT/train_mcft.py"', runner)
+
     def test_vds2raw_launchers_are_mcft_tir_only(self):
         for relative in (
             "scripts/run_vds2raw_methods.sh",

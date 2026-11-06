@@ -228,7 +228,7 @@ def parse_args():
         '--protocol',
         choices=(
             'sda', 'jmda_uda', 'jmda_oracle_shared_uda',
-            'jmda_label_guided_da', 'uda', 'vlm'
+            'jmda_label_guided_da', 'uda', 'vlm', 'supervised'
         ),
                         required=True)
     parser.add_argument('--data-root', required=True)
@@ -321,7 +321,7 @@ def main():
             lists.append(list_dir / f'{target}_train.txt')
         elif args.protocol in (
             'jmda_uda', 'jmda_oracle_shared_uda',
-            'jmda_label_guided_da', 'uda', 'vlm'
+            'jmda_label_guided_da', 'uda', 'vlm', 'supervised'
         ):
             lists.append(list_dir / f'{target}_train.txt')
     validated = {}
@@ -459,6 +459,11 @@ def main():
             '[LABEL-GUIDED] target-training labels are available only to '
             'Tensor pairing/SVD and class-conditional OT; target '
             'classification CE is disabled.'
+        )
+    elif args.protocol == 'supervised':
+        print(
+            '[SUPERVISED] full sunny_train and every selected target_train '
+            'label are available to MCFT; target_val remains evaluation-only.'
         )
 
     if args.protocol in (
