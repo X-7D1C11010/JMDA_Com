@@ -1,7 +1,7 @@
 param(
     [string]$Target = 'backlight',
     [int]$Seed = 42,
-    [int]$BatchSize = 16,
+    [int]$BatchSize = 32,
     [string[]]$IncludeMethods = @('DANN', 'DeepCORAL', 'CDAN', 'MDD', 'MCC'),
     [string]$Python = 'D:\Anaconda\envs\pytorch\python.exe',
     [string]$OutDir = '',
@@ -35,18 +35,10 @@ if (-not $OutDir) {
     $OutDir = Join-Path $Repo "efficiency_results\uda_tuned_${Target}_seed${Seed}_$stamp"
 }
 
-# Method-specific recalibration for the shared JMDA multimodal front end.
-# These values come from the first unified-protocol backlight/seed42 curves:
-# - DANN: keep the successful lower LR, but restore moderate domain pressure
-#   and a longer budget so adaptation, rather than source-only fitting, grows.
-# - DeepCORAL: place the classifier between the two previous learning speeds,
-#   use two source-only epochs, then restore the gentler 0->0.3 CORAL ramp.
-# - CDAN: retain the 300-update source warmup and raise only transfer weight;
-#   discriminator LR stays fixed so this round isolates the changed pressure.
-# - MDD: its last epoch was still improving, so extend the same 60-update
-#   schedule without changing its already useful loss balance.
-# - MCC: preserve 40 updates/epoch, restore 200 absolute warmup updates, reduce
-#   confidence-suppressing smoothing and make the MCC term non-negligible.
+# Every multimodal trainer now enforces JMDA's shared optimization envelope:
+# exact paired augmentation, 10 source-only epochs, VIS/IR differential LR,
+# AdamW, epoch-wise cosine decay and gradient clipping.  Values below retain
+# only each baseline's own loss strength and total training budget.
 $env:JMDA_DETERMINISTIC = '1'
 $env:CUBLAS_WORKSPACE_CONFIG = ':4096:8'
 $arguments = @{
@@ -68,7 +60,7 @@ $arguments = @{
     DeepCoralLearningRate = 0.0004
     DeepCoralEpochs = 30
     DeepCoralMaxWeight = 0.3
-    DeepCoralWarmupEpochs = 2
+    DeepCoralWarmupEpochs = 10
     DeepCoralWeightDecay = 0.0005
     DeepCoralLabelSmoothing = 0.05
     DeepCoralTargetEvalInterval = 1
@@ -82,7 +74,7 @@ $arguments = @{
     CDANHeadLearningRateMultiplier = 3.0
     CDANAdLearningRateMultiplier = 3.0
     CDANTradeOff = 0.6
-    CDANSourceWarmupIterations = 300
+    CDANSourceWarmupIterations = 0
     CDANLabelSmoothing = 0.05
     CDANCoeffMaxIterations = 6000
     CDANCoeffAlpha = 10.0
@@ -97,7 +89,7 @@ $arguments = @{
     MCCIterationsPerEpoch = 40
     MCCTradeOff = 0.05
     MCCTradeOffWarmupEpochs = 10
-    MCCSourceWarmupEpochs = 5
+    MCCSourceWarmupEpochs = 10
     MCCLabelSmoothing = 0.10
     SkipBenchmark = $true
 }

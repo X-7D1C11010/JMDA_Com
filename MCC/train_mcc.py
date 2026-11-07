@@ -33,7 +33,7 @@ import sys
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from torch.optim import SGD
+from torch.optim import AdamW, SGD
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
@@ -64,10 +64,16 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
+    JMDA_GRAD_CLIP_NORM,
+    JMDA_OTHER_LR,
+    JMDA_SOURCE_WARMUP_EPOCHS,
+    JMDA_VIS_LR,
+    JMDA_WEIGHT_DECAY,
     JmdaTllibBackbone,
     configure_jmda_visual_finetuning,
     describe_pairing,
     gradient_l2_norm,
+    jmda_cosine_lr_multiplier,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
@@ -206,8 +212,17 @@ def train_epoch(train_iter, classifier, mcc,
             head_grad_sum += gradient_l2_norm(
                 list(classifier.bottleneck.parameters()) +
                 list(classifier.head.parameters()))
+            torch.nn.utils.clip_grad_norm_(
+                classifier.backbone.vis_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.backbone.ir_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.bottleneck.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.head.parameters(), JMDA_GRAD_CLIP_NORM)
         optimizer.step()
-        lr_scheduler.step()
+        if not args.multimodal:
+            lr_scheduler.step()
         if eff:
             eff.step_end()
 
@@ -337,6 +352,11 @@ def main():
         print('MCC update budget aligned to JMDA strict UDA: '
               f'{args.iters_per_epoch} -> {len(train_loader)} iterations/epoch')
     args.iters_per_epoch = len(train_loader)
+    if args.multimodal:
+        args.source_warmup_epochs = JMDA_SOURCE_WARMUP_EPOCHS
+        args.label_smoothing = 0.1
+        if args.epochs <= args.source_warmup_epochs:
+            raise ValueError('JMDA staged training requires more than 10 epochs')
 
     if args.multimodal:
         if args.backbone != 'jmda':
@@ -361,16 +381,33 @@ def main():
     mcc = MinimumClassConfusionLoss(temperature=args.temperature)
     if args.multimodal:
         parameter_groups = [
-            {'params': backbone.vis_encoder.parameters(), 'lr': 0.1},
-            {'params': backbone.ir_encoder.parameters(), 'lr': 1.0},
-            {'params': classifier.bottleneck.parameters(), 'lr': 1.0},
-            {'params': classifier.head.parameters(), 'lr': 1.0},
+            {'params': [p for p in backbone.vis_encoder.parameters()
+                        if p.requires_grad], 'lr': JMDA_VIS_LR},
+            {'params': list(backbone.ir_encoder.parameters()) +
+                       list(classifier.bottleneck.parameters()) +
+                       list(classifier.head.parameters()),
+             'lr': JMDA_OTHER_LR},
         ]
+        optimizer = AdamW(parameter_groups, weight_decay=JMDA_WEIGHT_DECAY)
+        lr_scheduler = LambdaLR(
+            optimizer,
+            lambda epoch_index: jmda_cosine_lr_multiplier(
+                epoch_index, args.epochs),
+        )
     else:
         parameter_groups = classifier.get_parameters()
-    optimizer = SGD(parameter_groups, args.lr, momentum=args.momentum,
-                    weight_decay=args.wd, nesterov=True)
-    lr_scheduler = LambdaLR(optimizer, lambda x: args.lr * (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
+        optimizer = SGD(parameter_groups, args.lr, momentum=args.momentum,
+                        weight_decay=args.wd, nesterov=True)
+        lr_scheduler = LambdaLR(
+            optimizer,
+            lambda x: args.lr *
+            (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
+    print('MCC multimodal staged training: '
+          f'source-only warmup={args.source_warmup_epochs} epochs; '
+          f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
+          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+          f'grad clip={JMDA_GRAD_CLIP_NORM:g}; '
+          f'label smoothing={args.label_smoothing}')
 
     best_acc = -float('inf')
     best_epoch = 0
@@ -402,6 +439,8 @@ def main():
         train_diagnostics = train_epoch(
             iter(train_loader), classifier, mcc,
             optimizer, lr_scheduler, epoch, args, eff=eff)
+        if args.multimodal:
+            lr_scheduler.step()
         print(
             f'Epoch [{epoch}/{args.epochs}] train summary: '
             f'avg_cls={train_diagnostics["avg_cls"]:.4f} '

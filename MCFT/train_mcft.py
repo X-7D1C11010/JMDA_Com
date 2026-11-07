@@ -102,7 +102,7 @@ def evaluate(model, loader, device, num_classes):
     return classification_metrics(labels_all, predictions_all, num_classes=num_classes)
 
 
-def build_model(num_classes):
+def build_model(num_classes, dropout=0.2, emb_dropout=0.2):
     """Released H2013 token geometry with 96x96 pre-token convolution."""
     return MViT(
         patch_size=PATCH_SIZE,
@@ -112,8 +112,8 @@ def build_model(num_classes):
         depth=6,
         heads=4,
         mlp_dim=32,
-        dropout=0.1,
-        emb_dropout=0.1,
+        dropout=dropout,
+        emb_dropout=emb_dropout,
         mode='MViT',
     )
 
@@ -126,28 +126,39 @@ def main():
                         help='Released MCFT budget: 500 epochs.')
     parser.add_argument('--batch-size', type=int, default=64)
     parser.add_argument('--eval-frequency', type=int, default=10)
-    parser.add_argument('--lr', type=float, default=5e-4)
-    parser.add_argument('--weight-decay', type=float, default=0.0)
+    parser.add_argument('--lr', type=float, default=3e-4)
+    parser.add_argument('--weight-decay', type=float, default=1e-4)
     parser.add_argument('--step-size', type=int, default=20)
     parser.add_argument('--gamma', type=float, default=0.9)
     parser.add_argument('--loss-ita-weight', type=float, default=0.1)
-    parser.add_argument('--horizontal-flip', action='store_true',
-                        help='Optional VIS/IR augmentation; off in the release-equivalent default.')
+    parser.add_argument('--label-smoothing', type=float, default=0.05)
+    parser.add_argument('--dropout', type=float, default=0.2)
+    parser.add_argument('--emb-dropout', type=float, default=0.2)
+    parser.add_argument('--horizontal-flip', dest='horizontal_flip',
+                        action='store_true',
+                        help='Enable paired VIS/IR horizontal flips.')
+    parser.add_argument('--no-horizontal-flip', dest='horizontal_flip',
+                        action='store_false')
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--max-train-batches', type=int, default=0,
                         help='Smoke-test only: cap batches per epoch; 0 uses all data.')
-    parser.add_argument('--early-stopping-patience', type=int, default=30)
-    parser.add_argument('--early-stopping-min-epochs', type=int, default=50)
+    parser.add_argument('--early-stopping-patience', type=int, default=15)
+    parser.add_argument('--early-stopping-min-epochs', type=int, default=100)
     parser.add_argument('--data-dir', default=os.path.join(ROOT, 'data_lists'))
     parser.add_argument('--save-dir', default=os.path.join(os.path.dirname(__file__), 'output'))
     parser.add_argument('--efficiency_output_dir', default=None)
     parser.add_argument('--seed', type=int, default=42)
+    parser.set_defaults(horizontal_flip=True)
     args = parser.parse_args()
 
     if args.eval_frequency <= 0:
         raise ValueError('--eval-frequency must be positive')
     if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
         raise ValueError('early stopping settings cannot be negative')
+    if not 0 <= args.label_smoothing < 1:
+        raise ValueError('--label-smoothing must be in [0, 1)')
+    if not 0 <= args.dropout < 1 or not 0 <= args.emb_dropout < 1:
+        raise ValueError('dropout settings must be in [0, 1)')
     args.seed = seed_everything(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -209,8 +220,12 @@ def main():
         num_workers=args.num_workers, drop_last=False,
     )
 
-    model = build_model(num_classes).to(device)
-    criterion = nn.CrossEntropyLoss()
+    model = build_model(
+        num_classes,
+        dropout=args.dropout,
+        emb_dropout=args.emb_dropout,
+    ).to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -331,6 +346,19 @@ def main():
             'token_grid_size': PATCH_SIZE,
             'spatial_adapter': '96x96 convolution then adaptive pooling to 15x15',
             'official_modality_adaptation': 'HSI->VIS; LiDAR->IR',
+            'optimizer': {
+                'name': 'Adam',
+                'lr': args.lr,
+                'weight_decay': args.weight_decay,
+                'step_size': args.step_size,
+                'gamma': args.gamma,
+            },
+            'regularization': {
+                'label_smoothing': args.label_smoothing,
+                'dropout': args.dropout,
+                'emb_dropout': args.emb_dropout,
+                'paired_horizontal_flip': args.horizontal_flip,
+            },
             'max_train_batches': args.max_train_batches,
             'checkpoint_policy': 'in-memory best state; no model files retained',
             'completed_epochs': completed_epoch,
@@ -359,6 +387,7 @@ def main():
     print(f'Last-epoch target val accuracy: {last_metrics["accuracy"]:.4f}')
     print(f'Final target val accuracy (selected epoch {best_epoch}): '
           f'{final_metrics["accuracy"]:.4f}')
+    print(f'  {format_classification_metrics(final_metrics)}')
     print(f'Metrics CSV: {metrics_csv}')
     print(f'Metrics JSON: {metrics_json}')
 

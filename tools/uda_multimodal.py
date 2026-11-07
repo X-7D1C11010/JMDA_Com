@@ -27,6 +27,26 @@ from data_paths import exact_ir_partner, remap_data_path
 from uda_data import read_image_list
 
 
+# Shared optimization envelope from JMDA strict UDA.  Each comparison method
+# keeps its own adaptation loss; these values make the common VIS/IR encoders
+# enter that loss under the same staged training protocol.
+JMDA_SOURCE_WARMUP_EPOCHS = 10
+JMDA_VIS_LR = 5e-6
+JMDA_OTHER_LR = 2e-4
+JMDA_WEIGHT_DECAY = 5e-4
+JMDA_GRAD_CLIP_NORM = 1.0
+JMDA_MIN_LR_RATIO = 0.1
+
+
+def jmda_cosine_lr_multiplier(epoch_index, total_epochs,
+                              min_ratio=JMDA_MIN_LR_RATIO):
+    """JMDA epoch-wise cosine multiplier with a non-zero final floor."""
+    progress = min(max(float(epoch_index) / max(int(total_epochs), 1), 0.0), 1.0)
+    return min_ratio + (1.0 - min_ratio) * 0.5 * (
+        1.0 + math.cos(math.pi * progress)
+    )
+
+
 class UdaPairedImageListDataset(torch.utils.data.Dataset):
     """Target-driven exact VIS/IR pairs with synchronized augmentation."""
 
@@ -494,6 +514,8 @@ def describe_pairing(name, dataset):
 
 
 __all__ = [
+    'JMDA_GRAD_CLIP_NORM', 'JMDA_MIN_LR_RATIO', 'JMDA_OTHER_LR',
+    'JMDA_SOURCE_WARMUP_EPOCHS', 'JMDA_VIS_LR', 'JMDA_WEIGHT_DECAY',
     'CyclingDataIterator', 'FullCoverageBatchSampler',
     'UnpairedDomainIndexBatchSampler',
     'UdaLabelFreePairedDataset',
@@ -501,7 +523,8 @@ __all__ = [
     'JmdaTllibBackbone', 'JmdaVisualEncoder', 'UdaPairedImageListDataset',
     'configure_jmda_visual_finetuning', 'describe_pairing',
     'gradient_l2_norm',
-    'ir_transform_from_vis', 'jmda_train_transform', 'jmda_val_transform',
+    'ir_transform_from_vis', 'jmda_cosine_lr_multiplier',
+    'jmda_train_transform', 'jmda_val_transform',
     'label_free_target_paired_dataset', 'paired_dataset', 'split_modalities',
     'unpaired_domain_loader',
 ]

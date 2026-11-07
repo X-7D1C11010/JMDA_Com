@@ -6,7 +6,7 @@ param(
     [string]$OutDir = '',
     [string]$DataDir = '',
     [int]$CdanIterations = 2000,
-    [int]$ImageBatchSize = 16,
+    [int]$ImageBatchSize = 32,
     [int]$Epochs = 0,
     [double]$DANNLearningRate = 0.001,
     [double]$DeepCoralLearningRate = 0.001,

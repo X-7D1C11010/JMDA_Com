@@ -215,7 +215,7 @@ def main():
     )
     parser.add_argument("--ais-dropout-probability", type=float, default=0.3)
     parser.add_argument("--nir-initial-scale", type=float, default=0.01)
-    parser.add_argument("--ais-initial-scale", type=float, default=0.01)
+    parser.add_argument("--ais-initial-scale", type=float, default=0.10)
     parser.add_argument(
         "--logit-scale",
         type=float,
@@ -285,8 +285,8 @@ def main():
         raise ValueError("TIR weight bounds must satisfy 0 <= min <= max")
     if not -1.0 < args.nir_initial_scale < 1.0:
         raise ValueError("nir-initial-scale must be in (-1, 1)")
-    if not -1.0 < args.ais_initial_scale < 1.0:
-        raise ValueError("ais-initial-scale must be in (-1, 1)")
+    if not 0.0 < args.ais_initial_scale < 1.0:
+        raise ValueError("ais-initial-scale must be in (0, 1)")
     if args.text_layer not in range(12):
         raise ValueError("text-layer must be between 0 and 11")
     if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
@@ -528,6 +528,7 @@ def main():
             "nir": args.nir_initial_scale,
             "ais": args.ais_initial_scale,
         },
+        "ais_fusion_constraint": "sigmoid_positive_(0,1)",
         "clip_checkpoint": str(Path(args.clip_checkpoint).expanduser().resolve()),
         "normalization": statistics.to_dict(),
         "configured_batch_size": args.batch_size,
@@ -714,7 +715,7 @@ def main():
                 / max(tir_tokens, 1),
                 "tir_clipped_fraction": tir_clipped / max(tir_tokens, 1),
                 "nir_scale": float(torch.tanh(model.nir_scale).detach().cpu()),
-                "ais_scale": float(torch.tanh(model.ais_scale).detach().cpu()),
+                "ais_scale": float(model.effective_ais_scale().detach().cpu()),
             }
         )
         print(

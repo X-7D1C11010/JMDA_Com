@@ -67,8 +67,9 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             coral = f.read()
         self.assertIn("--vis-lr-mult", coral)
         self.assertIn("--ir-lr-mult", coral)
-        self.assertIn("args.vis_lr_mult * args.lr", coral)
-        self.assertIn("args.ir_lr_mult * args.lr", coral)
+        self.assertIn("'lr': JMDA_VIS_LR", coral)
+        self.assertIn("'lr': JMDA_OTHER_LR", coral)
+        self.assertIn("source_warmup_epochs = (JMDA_SOURCE_WARMUP_EPOCHS", coral)
 
         with open(os.path.join(ROOT, "CDAN", "train_cdan.py"),
                   encoding="utf-8") as f:
@@ -77,6 +78,8 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("source_warmup = iter_num < args.source_warmup_iterations", cdan)
         self.assertIn("transfer_weight = 0.0", cdan)
         self.assertIn("CrossEntropyLoss(label_smoothing=args.label_smoothing)", cdan)
+        self.assertIn("JMDA_SOURCE_WARMUP_EPOCHS * updates_per_domain_epoch", cdan)
+        self.assertIn("optim.AdamW", cdan)
 
         with open(os.path.join(ROOT, "scripts", "run_uda_sunny.ps1"),
                   encoding="utf-8-sig") as f:
@@ -243,7 +246,7 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             "DANNTargetEvalInterval = 1",
             "DeepCoralLearningRate = 0.0004",
             "DeepCoralEpochs = 30",
-            "DeepCoralWarmupEpochs = 2",
+            "DeepCoralWarmupEpochs = 10",
             "DeepCoralWeightDecay = 0.0005",
             "DeepCoralLabelSmoothing = 0.05",
             "DeepCoralVisualLearningRateMultiplier = 0.1",
@@ -254,7 +257,7 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             "CDANHeadLearningRateMultiplier = 3.0",
             "CDANAdLearningRateMultiplier = 3.0",
             "CDANTradeOff = 0.6",
-            "CDANSourceWarmupIterations = 300",
+            "CDANSourceWarmupIterations = 0",
             "CDANCoeffMaxIterations = 6000",
             "CDANTestInterval = 100",
             "MDDEpochs = 40",
@@ -266,7 +269,7 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             "MCCIterationsPerEpoch = 40",
             "MCCTradeOff = 0.05",
             "MCCTradeOffWarmupEpochs = 10",
-            "MCCSourceWarmupEpochs = 5",
+            "MCCSourceWarmupEpochs = 10",
             "MCCLabelSmoothing = 0.10",
         ):
             self.assertIn(expected, tuned)
@@ -446,6 +449,25 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             self.assertIn("configure_jmda_visual_finetuning", trainer)
             self.assertIn("mode='layer2_4'", trainer)
             self.assertIn("unpaired_domain_loader", trainer)
+
+    def test_multimodal_baselines_share_jmda_staged_optimizer_protocol(self):
+        for relative in (
+            "DANN/train_dann.py",
+            "DeepCORAL/train_deepcoral.py",
+            "CDAN/train_cdan.py",
+            "MDD/train_mdd.py",
+            "MCC/train_mcc.py",
+        ):
+            with self.subTest(method=relative):
+                with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
+                    trainer = f.read()
+                self.assertIn("JMDA_SOURCE_WARMUP_EPOCHS", trainer)
+                self.assertIn("JMDA_VIS_LR", trainer)
+                self.assertIn("JMDA_OTHER_LR", trainer)
+                self.assertIn("JMDA_WEIGHT_DECAY", trainer)
+                self.assertIn("JMDA_GRAD_CLIP_NORM", trainer)
+                self.assertIn("jmda_cosine_lr_multiplier", trainer)
+                self.assertIn("AdamW", trainer)
 
 
 if __name__ == "__main__":

@@ -44,6 +44,26 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn("in-memory best state; no model files retained", train)
         self.assertNotIn("torch.save(", train)
 
+    def test_weather_mcft_regularization_and_best_metric_reporting(self):
+        train = (ROOT / "MCFT" / "train_mcft.py").read_text(encoding="utf-8")
+        self.assertIn("default=3e-4", train)
+        self.assertIn("default=1e-4", train)
+        self.assertIn("--label-smoothing", train)
+        self.assertIn("default=0.2", train)
+        self.assertIn("parser.set_defaults(horizontal_flip=True)", train)
+        self.assertIn("CrossEntropyLoss(label_smoothing=args.label_smoothing)", train)
+        self.assertIn("format_classification_metrics(final_metrics)", train)
+
+        runner = (ROOT / "scripts" / "run_server.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('SUPERVISED_MCFT_LR="${SUPERVISED_MCFT_LR:-0.0003}"', runner)
+        self.assertIn(
+            'SUPERVISED_MCFT_EARLY_PATIENCE="${SUPERVISED_MCFT_EARLY_PATIENCE:-15}"',
+            runner,
+        )
+        self.assertIn('--horizontal-flip', runner)
+
     def test_weather_mcft_supervised_protocol_passes_common_preflight(self):
         preflight = (ROOT / "tools" / "preflight_server.py").read_text(
             encoding="utf-8"

@@ -66,9 +66,15 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
+    JMDA_GRAD_CLIP_NORM,
+    JMDA_OTHER_LR,
+    JMDA_SOURCE_WARMUP_EPOCHS,
+    JMDA_VIS_LR,
+    JMDA_WEIGHT_DECAY,
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
     gradient_l2_norm,
+    jmda_cosine_lr_multiplier,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
@@ -363,21 +369,24 @@ def main():
         model = DeepCORAL(num_classes=num_classes).to(device)
         load_pretrained_alexnet(model.sharedNet, args.alexnet_weights)
         print('DeepCORAL architecture: official DeepCORAL/models.py AlexNet')
-    # The released recipe uses a 10x head. Keep that as the default while
-    # allowing small target datasets to slow the head independently.
-    optimizer_groups = [{
-        'params': model.sharedNet.parameters(),
-        'lr': args.vis_lr_mult * args.lr,
-    }]
-    if getattr(model, 'irNet', None) is not None:
-        optimizer_groups.append({
-            'params': model.irNet.parameters(),
-            'lr': args.ir_lr_mult * args.lr,
-        })
-    optimizer_groups.append({'params': model.fc.parameters(),
-                             'lr': args.head_lr_mult * args.lr})
-    optimizer = optim.SGD(optimizer_groups, lr=args.lr, momentum=0.9,
-                          weight_decay=args.weight_decay)
+    if args.multimodal:
+        optimizer_groups = [
+            {'params': [p for p in model.encoder.vis_encoder.parameters()
+                        if p.requires_grad], 'lr': JMDA_VIS_LR},
+            {'params': list(model.encoder.ir_encoder.parameters()) +
+                       list(model.fc.parameters()), 'lr': JMDA_OTHER_LR},
+        ]
+        optimizer = optim.AdamW(
+            optimizer_groups, weight_decay=JMDA_WEIGHT_DECAY)
+        args.label_smoothing = 0.1
+    else:
+        optimizer_groups = [{
+            'params': model.sharedNet.parameters(),
+            'lr': args.vis_lr_mult * args.lr,
+        }, {'params': model.fc.parameters(),
+            'lr': args.head_lr_mult * args.lr}]
+        optimizer = optim.SGD(optimizer_groups, lr=args.lr, momentum=0.9,
+                              weight_decay=args.weight_decay)
     print(f'DeepCORAL optimizer group learning rates: '
           f'{[group["lr"] for group in optimizer.param_groups]}')
     print(f'DeepCORAL LR multipliers: VIS={args.vis_lr_mult}, '
@@ -412,19 +421,32 @@ def main():
         raise ValueError('DeepCORAL requires at least one full source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
     outer_epochs = math.ceil(planned_updates / n_batches)
+    source_warmup_epochs = (JMDA_SOURCE_WARMUP_EPOCHS
+                            if args.multimodal else args.coral_warmup_epochs)
+    if args.multimodal and outer_epochs <= source_warmup_epochs:
+        raise ValueError('JMDA staged training requires more than 10 epochs')
     scheduler = None
-    if args.lr_scheduler == 'cosine':
-        def lr_factor(step):
-            progress = min(float(step) / max(planned_updates, 1), 1.0)
-            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
-            return args.min_lr_ratio + (1.0 - args.min_lr_ratio) * cosine
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
+    if args.multimodal:
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda epoch_index: jmda_cosine_lr_multiplier(
+                epoch_index, outer_epochs),
+        )
+    elif args.lr_scheduler == 'cosine':
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: jmda_cosine_lr_multiplier(
+                step, planned_updates, args.min_lr_ratio),
+        )
     print(f'DeepCORAL optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
     print(f'DeepCORAL domain sampling: JMDA strict-UDA larger-domain epoch; '
           f'{n_batches} full paired batches/epoch')
-    print(f'DeepCORAL LR schedule: {args.lr_scheduler}; '
-          f'head multiplier={args.head_lr_mult}; min ratio={args.min_lr_ratio}')
+    print('DeepCORAL multimodal staged training: '
+          f'source-only warmup={source_warmup_epochs} epochs; '
+          f'VIS lr={JMDA_VIS_LR:g}; IR+head lr={JMDA_OTHER_LR:g}; '
+          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+          f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
     global_step = 0
     for epoch in range(outer_epochs):
         if eff:
@@ -432,7 +454,7 @@ def main():
         model.train()
         # Small target datasets can benefit from a source-only warmup before
         # CORAL alignment. Defaults preserve the released no-warmup behavior.
-        warmup_updates = min(args.coral_warmup_epochs * n_batches,
+        warmup_updates = min(source_warmup_epochs * n_batches,
                              max(planned_updates - 1, 0))
         alignment_updates = max(planned_updates - warmup_updates, 1)
         alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
@@ -447,6 +469,7 @@ def main():
         epoch_vis_grad = 0.0
         epoch_ir_grad = 0.0
         epoch_head_grad = 0.0
+        source_warmup = args.multimodal and epoch < source_warmup_epochs
 
         for i in range(batches_this_epoch):
             alignment_progress = max(global_step + 1 - warmup_updates, 0) / alignment_updates
@@ -456,21 +479,30 @@ def main():
             (src_imgs, src_labels), (tgt_imgs, _) = next(train_iter)
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
-            tgt_imgs = tgt_imgs.to(device)
+            if not source_warmup:
+                tgt_imgs = tgt_imgs.to(device)
 
             if eff:
                 eff.dataloader_done()
 
-            src_outputs, tgt_outputs = model(src_imgs, tgt_imgs)
+            if source_warmup:
+                src_outputs = model.predict_components(src_imgs)
+                tgt_outputs = None
+            else:
+                src_outputs, tgt_outputs = model(src_imgs, tgt_imgs)
             # The bundled official AlexNet returns raw tensors, while the
             # ResNet wrapper returns a named fused output.
             if not isinstance(src_outputs, dict):
                 src_outputs = {'fused': src_outputs}
-                tgt_outputs = {'fused': tgt_outputs}
+                if tgt_outputs is not None:
+                    tgt_outputs = {'fused': tgt_outputs}
 
             loss_cls = criterion(src_outputs['fused'], src_labels)
             # 原参考实现 main.py:46：CORAL 作用于 fc 输出（softmax 前 logits）。
-            loss_coral = CORAL(src_outputs['fused'], tgt_outputs['fused'])
+            loss_coral = (loss_cls.new_zeros(()) if source_warmup else
+                          CORAL(src_outputs['fused'], tgt_outputs['fused']))
+            if source_warmup:
+                _lambda = 0.0
             loss = loss_cls + _lambda * loss_coral
             with torch.no_grad():
                 epoch_cls_loss += loss_cls.item()
@@ -478,8 +510,9 @@ def main():
                 epoch_weighted_coral += _lambda * loss_coral.item()
                 epoch_source_confidence += torch.softmax(
                     src_outputs['fused'], dim=1).max(dim=1).values.mean().item()
-                epoch_target_confidence += torch.softmax(
-                    tgt_outputs['fused'], dim=1).max(dim=1).values.mean().item()
+                if not source_warmup:
+                    epoch_target_confidence += torch.softmax(
+                        tgt_outputs['fused'], dim=1).max(dim=1).values.mean().item()
 
             optimizer.zero_grad()
             loss.backward()
@@ -489,8 +522,14 @@ def main():
                 epoch_ir_grad += gradient_l2_norm(
                     model.encoder.ir_encoder.parameters())
                 epoch_head_grad += gradient_l2_norm(model.fc.parameters())
+                torch.nn.utils.clip_grad_norm_(
+                    model.encoder.vis_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+                torch.nn.utils.clip_grad_norm_(
+                    model.encoder.ir_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+                torch.nn.utils.clip_grad_norm_(
+                    model.fc.parameters(), JMDA_GRAD_CLIP_NORM)
             optimizer.step()
-            if scheduler is not None:
+            if scheduler is not None and not args.multimodal:
                 scheduler.step()
             global_step += 1
             if eff:
@@ -499,7 +538,7 @@ def main():
             if (i + 1) % 10 == 0 or i + 1 == batches_this_epoch:
                 print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
                       f'update [{global_step}/{planned_updates}] '
-                      f'lambda={_lambda:.4f} '
+                      f'warmup={source_warmup} lambda={_lambda:.4f} '
                       f'loss_cls={loss_cls.item():.4f} '
                       f'loss_coral={loss_coral.item():.4f} '
                       f'lr={[round(group["lr"], 8) for group in optimizer.param_groups]}')
@@ -510,7 +549,7 @@ def main():
             f'avg_coral={epoch_coral_loss / batches_this_epoch:.4f} '
             f'avg_weighted_coral={epoch_weighted_coral / batches_this_epoch:.4f} '
             f'source_conf={epoch_source_confidence / batches_this_epoch:.4f} '
-            f'target_conf={epoch_target_confidence / batches_this_epoch:.4f} '
+            f'target_conf={(float("nan") if source_warmup else epoch_target_confidence / batches_this_epoch):.4f} '
             + (f'grad_VIS={epoch_vis_grad / batches_this_epoch:.4e} '
                f'grad_IR={epoch_ir_grad / batches_this_epoch:.4e} '
                f'grad_head={epoch_head_grad / batches_this_epoch:.4e} '
@@ -518,6 +557,8 @@ def main():
             f'lambda={_lambda:.4f}',
             flush=True,
         )
+        if scheduler is not None and args.multimodal:
+            scheduler.step()
 
         source_metrics = evaluate(model, src_eval_loader, device, num_classes)
         source_fused_acc = source_metrics['fused']['accuracy']

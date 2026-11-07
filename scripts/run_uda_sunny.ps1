@@ -79,7 +79,7 @@ param(
     [int]$WindowsWorkerCap = 2,
     [int]$BenchRepeats = 5,
     [string]$ImageBackbone = '',
-    [int]$ImageBatchSize = 16,
+    [int]$ImageBatchSize = 32,
     [switch]$EnhancedAugmentation,
     [switch]$Multimodal,
     [switch]$IncludePausedMethods,

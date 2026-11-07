@@ -29,7 +29,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import SGD
+from torch.optim import AdamW, SGD
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
@@ -61,10 +61,16 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
+    JMDA_GRAD_CLIP_NORM,
+    JMDA_OTHER_LR,
+    JMDA_SOURCE_WARMUP_EPOCHS,
+    JMDA_VIS_LR,
+    JMDA_WEIGHT_DECAY,
     JmdaTllibBackbone,
     configure_jmda_visual_finetuning,
     describe_pairing,
     gradient_l2_norm,
+    jmda_cosine_lr_multiplier,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
@@ -137,26 +143,39 @@ def train_epoch(train_iter, classifier, mdd,
     vis_grad_sum = 0.0
     ir_grad_sum = 0.0
     head_grad_sum = 0.0
+    target_steps = 0
+    source_warmup = args.multimodal and epoch <= args.source_warmup_epochs
     for i in range(args.iters_per_epoch):
         if eff:
             eff.step_start()
         optimizer.zero_grad()
         (x_s, labels_s), (x_t, _) = next(train_iter)
-        x_s, x_t = x_s.to(device), x_t.to(device)
+        x_s = x_s.to(device)
+        if not source_warmup:
+            x_t = x_t.to(device)
         labels_s = labels_s.to(device)
 
         if eff:
             eff.dataloader_done()
 
-        x = torch.cat((x_s, x_t), dim=0)
-        outputs, outputs_adv = classifier(x)
-        y_s, y_t = outputs.chunk(2, dim=0)
-        y_s_adv, y_t_adv = outputs_adv.chunk(2, dim=0)
+        if source_warmup:
+            y_s, _ = classifier(x_s)
+            y_t = None
+            transfer_loss = y_s.new_zeros(())
+        else:
+            x = torch.cat((x_s, x_t), dim=0)
+            outputs, outputs_adv = classifier(x)
+            y_s, y_t = outputs.chunk(2, dim=0)
+            y_s_adv, y_t_adv = outputs_adv.chunk(2, dim=0)
+            transfer_loss = -mdd(y_s, y_s_adv, y_t, y_t_adv)
 
-        cls_loss = F.cross_entropy(y_s, labels_s)
-        transfer_loss = -mdd(y_s, y_s_adv, y_t, y_t_adv)
-        if args.trade_off_warmup_epochs > 0:
-            completed_updates = (epoch - 1) * args.iters_per_epoch + i + 1
+        cls_loss = F.cross_entropy(
+            y_s, labels_s, label_smoothing=0.1 if args.multimodal else 0.0)
+        if source_warmup:
+            transfer_weight = 0.0
+        elif args.trade_off_warmup_epochs > 0:
+            completed_updates = ((epoch - args.source_warmup_epochs - 1) *
+                                 args.iters_per_epoch + i + 1)
             warmup_updates = args.trade_off_warmup_epochs * args.iters_per_epoch
             transfer_weight = args.trade_off * min(
                 1.0, completed_updates / warmup_updates
@@ -169,18 +188,21 @@ def train_epoch(train_iter, classifier, mdd,
             transfer_loss_sum += transfer_loss.item()
             source_correct += int(y_s.argmax(dim=1).eq(labels_s).sum().item())
             source_samples += int(labels_s.numel())
-            target_probabilities = F.softmax(y_t, dim=1)
-            target_confidence_sum += target_probabilities.max(
-                dim=1).values.mean().item()
-            target_entropy_sum += (-(target_probabilities *
-                                     target_probabilities.clamp_min(1e-8).log())
-                                   .sum(dim=1).mean().item())
-            batch_counts = torch.bincount(
-                target_probabilities.argmax(dim=1),
-                minlength=target_probabilities.size(1)).cpu()
-            target_class_counts = (batch_counts if target_class_counts is None
-                                   else target_class_counts + batch_counts)
-        classifier.step()
+            if y_t is not None:
+                target_probabilities = F.softmax(y_t, dim=1)
+                target_confidence_sum += target_probabilities.max(
+                    dim=1).values.mean().item()
+                target_entropy_sum += (-(target_probabilities *
+                                         target_probabilities.clamp_min(1e-8).log())
+                                       .sum(dim=1).mean().item())
+                target_steps += 1
+                batch_counts = torch.bincount(
+                    target_probabilities.argmax(dim=1),
+                    minlength=target_probabilities.size(1)).cpu()
+                target_class_counts = (batch_counts if target_class_counts is None
+                                       else target_class_counts + batch_counts)
+        if not source_warmup:
+            classifier.step()
         loss.backward()
         if args.multimodal:
             vis_grad_sum += gradient_l2_norm(
@@ -191,8 +213,19 @@ def train_epoch(train_iter, classifier, mdd,
                 list(classifier.bottleneck.parameters()) +
                 list(classifier.head.parameters()) +
                 list(classifier.adv_head.parameters()))
+            torch.nn.utils.clip_grad_norm_(
+                classifier.backbone.vis_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.backbone.ir_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.bottleneck.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.head.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                classifier.adv_head.parameters(), JMDA_GRAD_CLIP_NORM)
         optimizer.step()
-        lr_scheduler.step()
+        if not args.multimodal:
+            lr_scheduler.step()
         if eff:
             eff.step_end()
 
@@ -209,10 +242,14 @@ def train_epoch(train_iter, classifier, mdd,
         'avg_cls': cls_loss_sum / args.iters_per_epoch,
         'avg_mdd': transfer_loss_sum / args.iters_per_epoch,
         'source_acc': source_correct / max(source_samples, 1),
-        'target_conf': target_confidence_sum / args.iters_per_epoch,
-        'target_entropy': target_entropy_sum / args.iters_per_epoch,
-        'target_class_coverage': int((target_class_counts > 0).sum().item()),
-        'target_class_hist': target_class_counts.tolist(),
+        'target_conf': (target_confidence_sum / target_steps
+                        if target_steps else float('nan')),
+        'target_entropy': (target_entropy_sum / target_steps
+                           if target_steps else float('nan')),
+        'target_class_coverage': (int((target_class_counts > 0).sum().item())
+                                  if target_class_counts is not None else 0),
+        'target_class_hist': (target_class_counts.tolist()
+                              if target_class_counts is not None else []),
         'transfer_weight': transfer_weight,
         'grad_VIS': vis_grad_sum / args.iters_per_epoch,
         'grad_IR': ir_grad_sum / args.iters_per_epoch,
@@ -236,6 +273,9 @@ def main():
     parser.add_argument('--trade-off', default=1., type=float)
     parser.add_argument('--trade-off-warmup-epochs', default=0, type=int,
                         help='linearly ramp MDD weight during the first N epochs')
+    parser.add_argument('--source-warmup-epochs',
+                        default=JMDA_SOURCE_WARMUP_EPOCHS, type=int,
+                        help='multimodal source-only warm-up (JMDA: 10 epochs)')
     parser.add_argument('--bottleneck-dim', default=1024, type=int)
     parser.add_argument('-p', '--print-freq', default=100, type=int)
     parser.add_argument('-i', '--iters-per-epoch', default=1000, type=int,
@@ -259,7 +299,8 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
-    if args.trade_off < 0 or args.trade_off_warmup_epochs < 0:
+    if (args.trade_off < 0 or args.trade_off_warmup_epochs < 0 or
+            args.source_warmup_epochs < 0):
         raise ValueError('invalid MDD trade-off/warmup setting')
     if args.early_stop_patience < 0:
         raise ValueError('--early-stop-patience must be >= 0')
@@ -310,6 +351,10 @@ def main():
         print('MDD update budget aligned to JMDA strict UDA: '
               f'{args.iters_per_epoch} -> {len(train_loader)} iterations/epoch')
     args.iters_per_epoch = len(train_loader)
+    if args.multimodal:
+        args.source_warmup_epochs = JMDA_SOURCE_WARMUP_EPOCHS
+        if args.epochs <= args.source_warmup_epochs:
+            raise ValueError('JMDA staged training requires more than 10 epochs')
 
     if args.multimodal:
         if args.backbone != 'jmda':
@@ -333,17 +378,33 @@ def main():
     mdd = MarginDisparityDiscrepancy(args.margin).to(device)
     if args.multimodal:
         parameter_groups = [
-            {'params': backbone.vis_encoder.parameters(), 'lr': 0.1},
-            {'params': backbone.ir_encoder.parameters(), 'lr': 1.0},
-            {'params': classifier.bottleneck.parameters(), 'lr': 1.0},
-            {'params': classifier.head.parameters(), 'lr': 1.0},
-            {'params': classifier.adv_head.parameters(), 'lr': 1.0},
+            {'params': [p for p in backbone.vis_encoder.parameters()
+                        if p.requires_grad], 'lr': JMDA_VIS_LR},
+            {'params': list(backbone.ir_encoder.parameters()) +
+                       list(classifier.bottleneck.parameters()) +
+                       list(classifier.head.parameters()) +
+                       list(classifier.adv_head.parameters()),
+             'lr': JMDA_OTHER_LR},
         ]
+        optimizer = AdamW(parameter_groups, weight_decay=JMDA_WEIGHT_DECAY)
+        lr_scheduler = LambdaLR(
+            optimizer,
+            lambda epoch_index: jmda_cosine_lr_multiplier(
+                epoch_index, args.epochs),
+        )
     else:
         parameter_groups = classifier.get_parameters()
-    optimizer = SGD(parameter_groups, args.lr, momentum=args.momentum,
-                    weight_decay=args.wd, nesterov=True)
-    lr_scheduler = LambdaLR(optimizer, lambda x: args.lr * (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
+        optimizer = SGD(parameter_groups, args.lr, momentum=args.momentum,
+                        weight_decay=args.wd, nesterov=True)
+        lr_scheduler = LambdaLR(
+            optimizer,
+            lambda x: args.lr *
+            (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
+    print('MDD multimodal staged training: '
+          f'source-only warmup={args.source_warmup_epochs} epochs; '
+          f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
+          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+          f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
 
     best_acc = -float('inf')
     best_epoch = 0
@@ -375,6 +436,8 @@ def main():
         train_diagnostics = train_epoch(
             iter(train_loader), classifier, mdd,
             optimizer, lr_scheduler, epoch, args, eff=eff)
+        if args.multimodal:
+            lr_scheduler.step()
         print(
             f'Epoch [{epoch}/{args.epochs}] train summary: '
             f'avg_cls={train_diagnostics["avg_cls"]:.4f} '

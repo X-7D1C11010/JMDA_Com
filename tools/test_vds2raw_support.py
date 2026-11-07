@@ -9,7 +9,7 @@ from torch import nn
 
 from MCFT.mcft_model import MViT
 from TIR.loralib.layers import LinearLoRA
-from TIR.vds2raw_adapter import TokenImportanceRecalibration
+from TIR.vds2raw_adapter import TIRVDS2Raw, TokenImportanceRecalibration
 from vds2raw.common import capture_selected_state, restore_selected_state
 from vds2raw.dataset import (
     CLASS_NAMES,
@@ -233,6 +233,25 @@ class TIRCoreTests(unittest.TestCase):
                 "visual_projection": torch.eye(3),
             }
         )
+
+    def test_ais_gate_is_positive_trainable_and_preserves_initial_value(self):
+        model = TIRVDS2Raw.__new__(TIRVDS2Raw)
+        nn.Module.__init__(model)
+        initial = 0.10
+        model.ais_scale = nn.Parameter(
+            torch.tensor(np.log(initial / (1.0 - initial)), dtype=torch.float32)
+        )
+        gate = model.effective_ais_scale()
+        self.assertAlmostEqual(float(gate.detach()), initial, places=6)
+        (-gate).backward()
+        self.assertIsNotNone(model.ais_scale.grad)
+        self.assertNotEqual(float(model.ais_scale.grad), 0.0)
+        with torch.no_grad():
+            model.ais_scale.sub_(model.ais_scale.grad)
+        updated = float(model.effective_ais_scale().detach())
+        self.assertGreater(updated, initial)
+        self.assertGreater(updated, 0.0)
+        self.assertLess(updated, 1.0)
 
     def test_three_way_rule_uses_paper_generalized_extremes(self):
         tokens = torch.tensor(

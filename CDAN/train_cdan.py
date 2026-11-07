@@ -31,6 +31,7 @@ Usage:
 import os
 import sys
 import argparse
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -58,10 +59,16 @@ from uda_data import (
 )
 from data_loader_options import add_data_loader_args, data_loader_kwargs
 from uda_multimodal import (
+    JMDA_GRAD_CLIP_NORM,
+    JMDA_OTHER_LR,
+    JMDA_SOURCE_WARMUP_EPOCHS,
+    JMDA_VIS_LR,
+    JMDA_WEIGHT_DECAY,
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
     describe_pairing,
     gradient_l2_norm,
+    jmda_cosine_lr_multiplier,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
@@ -226,7 +233,6 @@ def main():
             args.source_warmup_iterations >= args.num_iterations or
             not 0 <= args.label_smoothing < 1 or args.coeff_alpha <= 0):
         raise ValueError('invalid CDAN iteration/evaluation/lr-mult/ramp setting')
-    coeff_max_iter = args.coeff_max_iter or args.num_iterations
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
 
@@ -318,28 +324,28 @@ def main():
         random_layer = None
         ad_net = AdversarialNetwork(in_feature=256 * num_classes,
                                     hidden_size=1024).to(device)
-    ad_net.max_iter = float(coeff_max_iter)
     ad_net.alpha = float(args.coeff_alpha)
     print(f'Random projection (--random): {args.random}; '
           f'ad_net input dim={256 * num_classes if not args.random else 1024}')
 
-    # 原参考实现把带 lr_mult/decay_mult 的参数组直接交给 SGD，再由 inv 调度逐步
-    # 按 lr_mult 缩放学习率、按 decay_mult 缩放权重衰减；PyTorch 允许参数组携带
-    # 这两个自定义字段，故这里保持原样而不预先 materialize。
-    ad_parameters = ad_net.get_parameters()
-    for group in ad_parameters:
-        group['lr_mult'] = args.ad_lr_mult
-    optimizer = optim.SGD(model.get_parameters() + ad_parameters,
-                          lr=args.lr, momentum=0.9, weight_decay=5e-4, nesterov=True)
-    print(
-        'CDAN optimizer group lr_mult: '
-        f'{[group.get("lr_mult") for group in optimizer.param_groups]}'
-    )
+    if args.multimodal:
+        optimizer = optim.AdamW([
+            {'params': [p for p in model.encoder.vis_encoder.parameters()
+                        if p.requires_grad], 'lr': JMDA_VIS_LR},
+            {'params': list(model.encoder.ir_encoder.parameters()) +
+                       list(model.bottleneck.parameters()) +
+                       list(model.fc.parameters()) +
+                       list(ad_net.parameters()), 'lr': JMDA_OTHER_LR},
+        ], weight_decay=JMDA_WEIGHT_DECAY)
+        args.label_smoothing = 0.1
+    else:
+        ad_parameters = ad_net.get_parameters()
+        for group in ad_parameters:
+            group['lr_mult'] = args.ad_lr_mult
+        optimizer = optim.SGD(
+            model.get_parameters() + ad_parameters, lr=args.lr,
+            momentum=0.9, weight_decay=5e-4, nesterov=True)
     criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
-    print(f'CDAN schedule: source-only warmup={args.source_warmup_iterations} '
-          f'updates; adaptation updates='
-          f'{args.num_iterations - args.source_warmup_iterations}; '
-          f'label smoothing={args.label_smoothing}')
 
     best_acc = -float('inf')
     best_iteration = 0
@@ -368,6 +374,32 @@ def main():
     #   每个 iteration 开头 inv 调 lr（:166，0 基迭代号），
     #   源/目标分别前向后拼接 features/outputs（:175-178）。
     updates_per_domain_epoch = len(train_loader)
+    total_domain_epochs = math.ceil(args.num_iterations /
+                                    updates_per_domain_epoch)
+    if args.multimodal:
+        args.source_warmup_iterations = (
+            JMDA_SOURCE_WARMUP_EPOCHS * updates_per_domain_epoch)
+        if args.source_warmup_iterations >= args.num_iterations:
+            raise ValueError(
+                'JMDA staged training requires more than 10 domain epochs')
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda epoch_index: jmda_cosine_lr_multiplier(
+                epoch_index, total_domain_epochs),
+        )
+    else:
+        scheduler = None
+    coeff_max_iter = (args.coeff_max_iter or
+                      max(args.num_iterations -
+                          args.source_warmup_iterations, 1))
+    ad_net.max_iter = float(coeff_max_iter)
+    print('CDAN multimodal staged training: '
+          f'source-only warmup={JMDA_SOURCE_WARMUP_EPOCHS} epochs/'
+          f'{args.source_warmup_iterations} updates; '
+          f'VIS lr={JMDA_VIS_LR:g}; IR+heads+ad lr={JMDA_OTHER_LR:g}; '
+          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+          f'grad clip={JMDA_GRAD_CLIP_NORM:g}; '
+          f'label smoothing={args.label_smoothing}')
     train_iterator = iter(train_loader)
     print('CDAN domain sampling: JMDA strict-UDA larger-domain epoch; '
           f'{updates_per_domain_epoch} full paired batches/domain epoch')
@@ -377,17 +409,19 @@ def main():
             eff.epoch_start(block)
         model.train()
         ad_net.train()
-        # 原参考实现 train_image.py:166：逐迭代 inv 调度（0 基迭代号）
-        optimizer = inv_lr_scheduler(optimizer, iter_num,
-                                     gamma=args.lr_gamma, power=args.lr_decay,
-                                     lr=args.lr, weight_decay=5e-4)
+        if not args.multimodal:
+            optimizer = inv_lr_scheduler(
+                optimizer, iter_num, gamma=args.lr_gamma,
+                power=args.lr_decay, lr=args.lr, weight_decay=5e-4)
         if iter_num % updates_per_domain_epoch == 0:
             train_iterator = iter(train_loader)
         if eff:
             eff.step_start()
         (src_imgs, src_labels), (tgt_imgs, _) = next(train_iterator)
         src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
-        tgt_imgs = tgt_imgs.to(device)
+        source_warmup = iter_num < args.source_warmup_iterations
+        if not source_warmup:
+            tgt_imgs = tgt_imgs.to(device)
         if eff:
             eff.dataloader_done()
 
@@ -395,7 +429,6 @@ def main():
         # its discriminator on target predictions. Target labels stay unused.
         features_source, outputs_source = model(src_imgs)
         loss_cls = criterion(outputs_source, src_labels)
-        source_warmup = iter_num < args.source_warmup_iterations
         if source_warmup:
             loss_transfer = loss_cls.new_zeros(())
             transfer_weight = 0.0
@@ -448,9 +481,23 @@ def main():
             head_grad = gradient_l2_norm(
                 list(model.bottleneck.parameters()) + list(model.fc.parameters()))
             adversary_grad = gradient_l2_norm(ad_net.parameters())
+            torch.nn.utils.clip_grad_norm_(
+                model.encoder.vis_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                model.encoder.ir_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                model.bottleneck.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                model.fc.parameters(), JMDA_GRAD_CLIP_NORM)
+            torch.nn.utils.clip_grad_norm_(
+                ad_net.parameters(), JMDA_GRAD_CLIP_NORM)
         else:
             vis_grad = ir_grad = head_grad = adversary_grad = float('nan')
         optimizer.step()
+        if (scheduler is not None and
+                ((iter_num + 1) % updates_per_domain_epoch == 0 or
+                 iter_num == args.num_iterations - 1)):
+            scheduler.step()
         if eff:
             eff.step_end()
 

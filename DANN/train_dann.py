@@ -29,6 +29,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms, models
 
@@ -55,9 +56,15 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
+    JMDA_GRAD_CLIP_NORM,
+    JMDA_OTHER_LR,
+    JMDA_SOURCE_WARMUP_EPOCHS,
+    JMDA_VIS_LR,
+    JMDA_WEIGHT_DECAY,
     JmdaMultimodalEncoder,
     configure_jmda_visual_finetuning,
     gradient_l2_norm,
+    jmda_cosine_lr_multiplier,
     jmda_train_transform,
     jmda_val_transform,
     label_free_target_paired_dataset,
@@ -65,6 +72,13 @@ from uda_multimodal import (
     describe_pairing,
     unpaired_domain_loader,
 )
+
+
+def label_smoothed_nll_loss(log_probabilities, targets, smoothing=0.1):
+    """JMDA's source label smoothing for DANN's log-softmax classifier."""
+    nll = F.nll_loss(log_probabilities, targets)
+    smooth = -log_probabilities.mean(dim=1).mean()
+    return (1.0 - smoothing) * nll + smoothing * smooth
 
 
 class ResNetDANN(nn.Module):
@@ -190,6 +204,9 @@ def main():
                         help='final/base LR ratio for cosine scheduling')
     parser.add_argument('--domain-loss-weight', type=float, default=1.0,
                         help='maximum weight of the source+target domain loss')
+    parser.add_argument('--source-warmup-epochs', type=int,
+                        default=JMDA_SOURCE_WARMUP_EPOCHS,
+                        help='multimodal source-only warm-up (JMDA: 10 epochs)')
     parser.add_argument('--target-eval-interval', type=int, default=0,
                         help='diagnostic target-val interval in epochs; 0 evaluates only the final model')
     parser.add_argument('--print-freq', type=int, default=10)
@@ -230,6 +247,7 @@ def main():
     if args.epochs < 1 or args.max_iterations < 0:
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
     if (args.domain_loss_weight < 0 or args.target_eval_interval < 0 or
+            args.source_warmup_epochs < 0 or
             args.grl_max_iterations < 0 or
             args.print_freq < 1 or not 0 <= args.min_lr_ratio <= 1):
         raise ValueError('domain loss weight/evaluation interval/print frequency is invalid')
@@ -301,20 +319,30 @@ def main():
             raise ValueError('--multimodal requires --backbone jmda')
         model = CNNModel(num_classes=num_classes).to(device)
         print('DANN architecture: official DANN/models/model.py CNNModel (28x28 input)')
-    # 原参考实现 DANN/train/main.py:76 使用 Adam(lr=1e-3)（无 momentum/weight_decay）
+    # Multimodal comparisons share JMDA's optimizer envelope.  Single-modal
+    # runs retain the released DANN optimizer.
     if args.backbone in {'resnet50', 'jmda'}:
-        parameter_groups = [
-            {'params': model.backbone.parameters(), 'lr': args.lr * 0.1},
-            {'params': model.class_classifier.parameters(), 'lr': args.lr},
-            {'params': model.domain_classifier.parameters(), 'lr': args.lr},
-        ]
-        if model.ir_backbone is not None:
-            parameter_groups.insert(
-                1, {'params': model.ir_backbone.parameters(), 'lr': args.lr})
-        optimizer = optim.Adam(parameter_groups)
+        if args.multimodal:
+            parameter_groups = [
+                {'params': [p for p in model.encoder.vis_encoder.parameters()
+                            if p.requires_grad], 'lr': JMDA_VIS_LR},
+                {'params': list(model.encoder.ir_encoder.parameters()) +
+                           list(model.class_classifier.parameters()) +
+                           list(model.domain_classifier.parameters()),
+                 'lr': JMDA_OTHER_LR},
+            ]
+            optimizer = optim.AdamW(
+                parameter_groups, weight_decay=JMDA_WEIGHT_DECAY)
+        else:
+            optimizer = optim.Adam([
+                {'params': model.backbone.parameters(), 'lr': args.lr * 0.1},
+                {'params': model.class_classifier.parameters(), 'lr': args.lr},
+                {'params': model.domain_classifier.parameters(), 'lr': args.lr},
+            ])
     else:
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = torch.nn.NLLLoss()
+    domain_criterion = torch.nn.NLLLoss()
 
     best_acc = -float('inf')
     best_epoch = 0
@@ -344,19 +372,33 @@ def main():
     planned_updates = args.max_iterations or args.epochs * n_batches
     grl_max_iterations = args.grl_max_iterations or planned_updates
     outer_epochs = math.ceil(planned_updates / n_batches)
+    source_warmup_epochs = (JMDA_SOURCE_WARMUP_EPOCHS
+                            if args.multimodal else args.source_warmup_epochs)
+    if args.multimodal and outer_epochs <= source_warmup_epochs:
+        raise ValueError('JMDA staged training requires more than 10 epochs')
     scheduler = None
-    if args.lr_scheduler == 'cosine':
-        def lr_factor(step):
-            progress = min(float(step) / max(planned_updates, 1), 1.0)
-            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
-            return args.min_lr_ratio + (1.0 - args.min_lr_ratio) * cosine
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
+    if args.multimodal:
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda epoch_index: jmda_cosine_lr_multiplier(
+                epoch_index, outer_epochs),
+        )
+    elif args.lr_scheduler == 'cosine':
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: jmda_cosine_lr_multiplier(
+                step, planned_updates, args.min_lr_ratio),
+        )
     print(f'DANN optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
     print(f'DANN domain sampling: JMDA strict-UDA larger-domain epoch; '
           f'{n_batches} full paired batches/epoch')
     print(f'DANN GRL ramp length: {grl_max_iterations} updates')
-    print(f'DANN LR schedule: {args.lr_scheduler}; min ratio={args.min_lr_ratio}')
+    print('DANN multimodal staged training: '
+          f'source-only warmup={source_warmup_epochs} epochs; '
+          f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
+          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+          f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
     global_step = 0
     for epoch in range(outer_epochs):
         if eff:
@@ -373,46 +415,62 @@ def main():
         epoch_vis_grad = 0.0
         epoch_ir_grad = 0.0
         epoch_head_grad = 0.0
+        source_warmup = args.multimodal and epoch < source_warmup_epochs
 
         for i in range(batches_this_epoch):
             # 原参考实现 main.py:100-101：逐迭代调度 α（0 基 i 与 epoch）
-            p = min(float(global_step) / max(grl_max_iterations, 1), 1.0)
+            adaptation_step = max(
+                global_step - source_warmup_epochs * n_batches, 0)
+            adaptation_budget = max(
+                planned_updates - source_warmup_epochs * n_batches, 1)
+            p = min(float(adaptation_step) /
+                    max(min(grl_max_iterations, adaptation_budget), 1), 1.0)
             alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
             if eff:
                 eff.step_start()
             (src_imgs, src_labels), (tgt_imgs, _) = next(train_iter)
 
             src_imgs, src_labels = src_imgs.to(device), src_labels.to(device)
-            tgt_imgs = tgt_imgs.to(device)
+            if not source_warmup:
+                tgt_imgs = tgt_imgs.to(device)
 
             if eff:
                 eff.dataloader_done()
 
             # Source classification loss
-            src_class_out, src_domain_out = model(src_imgs, alpha)
-            loss_cls = criterion(src_class_out, src_labels)
+            src_class_out, src_domain_out = model(
+                src_imgs, 0.0 if source_warmup else alpha)
+            loss_cls = (label_smoothed_nll_loss(src_class_out, src_labels)
+                        if args.multimodal else criterion(src_class_out, src_labels))
 
-            # Domain adversarial loss
-            src_domain_label = torch.zeros(src_imgs.size(0), dtype=torch.long).to(device)
-            tgt_domain_label = torch.ones(tgt_imgs.size(0), dtype=torch.long).to(device)
-            _, tgt_domain_out = model(tgt_imgs, alpha)
-
-            loss_domain = criterion(src_domain_out, src_domain_label) + \
-                          criterion(tgt_domain_out, tgt_domain_label)
-
-            loss = loss_cls + args.domain_loss_weight * loss_domain
+            if source_warmup:
+                loss_domain = loss_cls.new_zeros(())
+                loss = loss_cls
+                src_domain_label = tgt_domain_label = tgt_domain_out = None
+            else:
+                src_domain_label = torch.zeros(
+                    src_imgs.size(0), dtype=torch.long, device=device)
+                tgt_domain_label = torch.ones(
+                    tgt_imgs.size(0), dtype=torch.long, device=device)
+                _, tgt_domain_out = model(tgt_imgs, alpha)
+                loss_domain = (
+                    domain_criterion(src_domain_out, src_domain_label) +
+                    domain_criterion(tgt_domain_out, tgt_domain_label)
+                )
+                loss = loss_cls + args.domain_loss_weight * loss_domain
             with torch.no_grad():
                 epoch_cls_loss += loss_cls.item()
                 epoch_domain_loss += loss_domain.item()
                 epoch_source_correct += int(
                     src_class_out.argmax(dim=1).eq(src_labels).sum().item())
                 epoch_source_samples += int(src_labels.numel())
-                epoch_domain_correct += int(
-                    src_domain_out.argmax(dim=1).eq(src_domain_label).sum().item())
-                epoch_domain_correct += int(
-                    tgt_domain_out.argmax(dim=1).eq(tgt_domain_label).sum().item())
-                epoch_domain_samples += int(src_domain_label.numel() +
-                                            tgt_domain_label.numel())
+                if not source_warmup:
+                    epoch_domain_correct += int(
+                        src_domain_out.argmax(dim=1).eq(src_domain_label).sum().item())
+                    epoch_domain_correct += int(
+                        tgt_domain_out.argmax(dim=1).eq(tgt_domain_label).sum().item())
+                    epoch_domain_samples += int(src_domain_label.numel() +
+                                                tgt_domain_label.numel())
             optimizer.zero_grad()
             loss.backward()
             if args.multimodal:
@@ -423,8 +481,16 @@ def main():
                 epoch_head_grad += gradient_l2_norm(
                     list(model.class_classifier.parameters()) +
                     list(model.domain_classifier.parameters()))
+                torch.nn.utils.clip_grad_norm_(
+                    model.encoder.vis_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+                torch.nn.utils.clip_grad_norm_(
+                    model.encoder.ir_encoder.parameters(), JMDA_GRAD_CLIP_NORM)
+                torch.nn.utils.clip_grad_norm_(
+                    model.class_classifier.parameters(), JMDA_GRAD_CLIP_NORM)
+                torch.nn.utils.clip_grad_norm_(
+                    model.domain_classifier.parameters(), JMDA_GRAD_CLIP_NORM)
             optimizer.step()
-            if scheduler is not None:
+            if scheduler is not None and not args.multimodal:
                 scheduler.step()
             global_step += 1
             if eff:
@@ -434,7 +500,8 @@ def main():
                 print(f'  Epoch [{epoch+1}/{outer_epochs}] batch [{i+1}/{batches_this_epoch}] '
                       f'update [{global_step}/{planned_updates}] '
                       f'loss_cls={loss_cls.item():.4f} loss_domain={loss_domain.item():.4f} '
-                      f'domain_weight={args.domain_loss_weight:.3f} alpha={alpha:.4f} '
+                      f'domain_weight={0.0 if source_warmup else args.domain_loss_weight:.3f} '
+                      f'warmup={source_warmup} alpha={alpha:.4f} '
                       f'lr={[round(group["lr"], 8) for group in optimizer.param_groups]}')
 
         print(
@@ -450,6 +517,8 @@ def main():
             f'alpha={alpha:.4f}',
             flush=True,
         )
+        if scheduler is not None and args.multimodal:
+            scheduler.step()
 
         is_final = global_step >= planned_updates
         should_evaluate = is_final or (
