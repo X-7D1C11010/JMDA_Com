@@ -1,0 +1,193 @@
+[GPU-WAIT] mdd_backlight: require free >= 20000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-07T03:20:08+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=20%; GPU 1: free=31142 MiB, util=27%
+[GPU-WAIT] 2026-11-07T03:20:38+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=0%; GPU 1: free=31142 MiB, util=26%
+[GPU-WAIT] 2026-11-07T03:21:08+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=52%; GPU 1: free=31204 MiB, util=24%
+[GPU-WAIT] 2026-11-07T03:21:38+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=0%; GPU 1: free=31204 MiB, util=19%
+[GPU-WAIT] 2026-11-07T03:22:08+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=27%; GPU 1: free=31326 MiB, util=22%
+[GPU-WAIT] 2026-11-07T03:22:39+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=19%; GPU 1: free=31326 MiB, util=19%
+[GPU-WAIT] 2026-11-07T03:23:09+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=0%; GPU 1: free=31326 MiB, util=22%
+[GPU-WAIT] 2026-11-07T03:23:39+08:00 mdd_backlight: GPU 0: free=26440 MiB, util=0%; GPU 1: free=31376 MiB, util=1%
+[GPU-SELECT] mdd_backlight: physical GPU 0; free=26440 MiB, util=0%; launching: /home/lixiang/envs/lx_pytorch/bin/python /home/lixiang/lx/JMDA_Com/MDD/train_mdd.py --target backlight --epochs 40 --lr 0.0025 --iters-per-epoch 60 --trade-off 0.35 --trade-off-warmup-epochs 16 --backbone jmda --batch-size 16 --seed 42 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_012813_2448535 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261107_012813_2448535 --num-workers 8 --prefetch-factor 4 --multimodal --enhanced-augmentation --no-save-model --pin-memory --persistent-workers
+Deterministic kernels: True
+Controlled random seed: 42
+Namespace(target='backlight', epochs=40, batch_size=16, lr=0.0025, lr_gamma=0.0002, lr_decay=0.75, momentum=0.9, wd=0.0005, margin=4.0, trade_off=0.35, trade_off_warmup_epochs=16, bottleneck_dim=1024, print_freq=100, iters_per_epoch=60, backbone='jmda', enhanced_augmentation=True, multimodal=True, save_model=False, early_stop_patience=0, early_stop_min_delta=0.0, data_dir='/home/lixiang/lx/JMDA_Com/prepared_lists/20261107_012813_2448535', save_dir='/home/lixiang/lx/JMDA_Com/checkpoints/uda/20261107_012813_2448535', efficiency_output_dir='/home/lixiang/lx/JMDA_Com/efficiency_results/uda', seed=42, num_workers=8, prefetch_factor=4, eval_num_workers=0, worker_timeout_seconds=300, pin_memory=True, persistent_workers=True)
+Multimodal preprocessing: JMDA paired Resize(256) + RandomCrop(224) + HFlip; validation Resize(224)
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515, target train: 113, target val: 36
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+Target val: exact VIS/IR pairs=36, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 8, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, eval={'num_workers': 0, 'pin_memory': True}
+MDD update budget aligned to JMDA strict UDA: 60 -> 33 iterations/epoch
+MDD encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, 512+512 direct concatenation
+JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; VIS trainable=11,281,664/11,439,168; IR fully trainable
+WARNING: labelled target validation is evaluated after every epoch and the highest-accuracy epoch is selected. Training remains target-label-free, but reporting is target-validation-selected UDA.
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/MDD-MM/20f52dc7b89a
+  Epoch [1/40] iter [33/33] loss=1.3452 cls=1.1641 mdd=8.2761 transfer_weight=0.0219 src_acc=75.00 lr=[2.488e-04,2.488e-03]
+Epoch [1/40] train summary: avg_cls=1.7720 avg_mdd=8.6137 source_acc=0.4015 target_conf=0.1817 target_entropy=2.1384 target_class_coverage=9/9 target_class_hist=[354, 18, 41, 56, 30, 2, 4, 19, 4] transfer_weight=0.0219 grad_VIS=2.2138e+00 grad_IR=1.7554e+00 grad_heads=5.8198e+00
+Epoch [1/40] target val accuracy: 0.2222
+Val Precision (Macro): 0.1307 | Val Recall (Macro): 0.1667 | Val F1 (Macro): 0.1074 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [2/40] iter [33/33] loss=0.5541 cls=0.2205 mdd=7.6268 transfer_weight=0.0437 src_acc=100.00 lr=[2.476e-04,2.476e-03]
+Epoch [2/40] train summary: avg_cls=0.6554 avg_mdd=8.1286 source_acc=0.8731 target_conf=0.3373 target_entropy=1.8772 target_class_coverage=9/9 target_class_hist=[156, 49, 74, 56, 34, 24, 36, 91, 8] transfer_weight=0.0437 grad_VIS=3.4031e+00 grad_IR=2.1172e+00 grad_heads=4.9900e+00
+Epoch [2/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5852 | Val Recall (Macro): 0.5435 | Val F1 (Macro): 0.5125 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [3/40] iter [33/33] loss=0.5609 cls=0.1178 mdd=6.7512 transfer_weight=0.0656 src_acc=100.00 lr=[2.464e-04,2.464e-03]
+Epoch [3/40] train summary: avg_cls=0.1698 avg_mdd=7.1435 source_acc=0.9773 target_conf=0.4686 target_entropy=1.5731 target_class_coverage=9/9 target_class_hist=[153, 40, 68, 56, 36, 35, 31, 94, 15] transfer_weight=0.0656 grad_VIS=3.1125e+00 grad_IR=1.7749e+00 grad_heads=3.3790e+00
+Epoch [3/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.5889 | Val Recall (Macro): 0.5537 | Val F1 (Macro): 0.5204 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [4/40] iter [33/33] loss=0.5252 cls=0.1538 mdd=4.2444 transfer_weight=0.0875 src_acc=93.75 lr=[2.452e-04,2.452e-03]
+Epoch [4/40] train summary: avg_cls=0.0688 avg_mdd=5.1570 source_acc=0.9924 target_conf=0.5240 target_entropy=1.4219 target_class_coverage=9/9 target_class_hist=[142, 45, 78, 51, 26, 53, 33, 77, 23] transfer_weight=0.0875 grad_VIS=2.2823e+00 grad_IR=1.0699e+00 grad_heads=2.5027e+00
+Epoch [4/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.6253 | Val Recall (Macro): 0.5241 | Val F1 (Macro): 0.4878 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [5/40] iter [33/33] loss=0.2891 cls=0.0586 mdd=2.1075 transfer_weight=0.1094 src_acc=100.00 lr=[2.440e-04,2.440e-03]
+Epoch [5/40] train summary: avg_cls=0.0552 avg_mdd=2.9268 source_acc=0.9943 target_conf=0.5348 target_entropy=1.3957 target_class_coverage=9/9 target_class_hist=[139, 44, 78, 59, 23, 42, 45, 75, 23] transfer_weight=0.1094 grad_VIS=2.3702e+00 grad_IR=1.0445e+00 grad_heads=2.5433e+00
+Epoch [5/40] target val accuracy: 0.4722
+Val Precision (Macro): 0.4810 | Val Recall (Macro): 0.4704 | Val F1 (Macro): 0.4182 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [6/40] iter [33/33] loss=0.2188 cls=0.0258 mdd=1.4709 transfer_weight=0.1312 src_acc=100.00 lr=[2.428e-04,2.428e-03]
+Epoch [6/40] train summary: avg_cls=0.0444 avg_mdd=1.7332 source_acc=0.9924 target_conf=0.5365 target_entropy=1.3856 target_class_coverage=9/9 target_class_hist=[140, 48, 77, 47, 31, 49, 29, 77, 30] transfer_weight=0.1312 grad_VIS=2.2908e+00 grad_IR=1.2010e+00 grad_heads=2.3738e+00
+Epoch [6/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.6532 | Val Recall (Macro): 0.5759 | Val F1 (Macro): 0.5179 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [7/40] iter [33/33] loss=0.1807 cls=0.0111 mdd=1.1075 transfer_weight=0.1531 src_acc=100.00 lr=[2.417e-04,2.417e-03]
+Epoch [7/40] train summary: avg_cls=0.0302 avg_mdd=1.1956 source_acc=0.9981 target_conf=0.5655 target_entropy=1.2997 target_class_coverage=9/9 target_class_hist=[129, 47, 81, 65, 20, 55, 33, 69, 29] transfer_weight=0.1531 grad_VIS=1.6379e+00 grad_IR=6.1341e-01 grad_heads=1.7819e+00
+Epoch [7/40] target val accuracy: 0.6389
+Val Precision (Macro): 0.6556 | Val Recall (Macro): 0.5981 | Val F1 (Macro): 0.5547 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [8/40] iter [33/33] loss=0.1468 cls=0.0073 mdd=0.7976 transfer_weight=0.1750 src_acc=100.00 lr=[2.405e-04,2.405e-03]
+Epoch [8/40] train summary: avg_cls=0.0286 avg_mdd=1.1015 source_acc=0.9981 target_conf=0.5792 target_entropy=1.2631 target_class_coverage=9/9 target_class_hist=[112, 55, 86, 68, 28, 54, 44, 53, 28] transfer_weight=0.1750 grad_VIS=1.7543e+00 grad_IR=6.7297e-01 grad_heads=1.8747e+00
+Epoch [8/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5375 | Val Recall (Macro): 0.5352 | Val F1 (Macro): 0.5098 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [9/40] iter [33/33] loss=0.2060 cls=0.0134 mdd=0.9785 transfer_weight=0.1969 src_acc=100.00 lr=[2.394e-04,2.394e-03]
+Epoch [9/40] train summary: avg_cls=0.0204 avg_mdd=1.0308 source_acc=0.9981 target_conf=0.5939 target_entropy=1.2262 target_class_coverage=9/9 target_class_hist=[129, 51, 84, 60, 21, 43, 52, 60, 28] transfer_weight=0.1969 grad_VIS=1.5574e+00 grad_IR=6.0307e-01 grad_heads=1.7157e+00
+Epoch [9/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5875 | Val Recall (Macro): 0.5213 | Val F1 (Macro): 0.5365 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [10/40] iter [33/33] loss=0.2094 cls=0.0063 mdd=0.9282 transfer_weight=0.2188 src_acc=100.00 lr=[2.383e-04,2.383e-03]
+Epoch [10/40] train summary: avg_cls=0.0166 avg_mdd=0.9936 source_acc=0.9981 target_conf=0.6149 target_entropy=1.1720 target_class_coverage=9/9 target_class_hist=[124, 52, 86, 65, 16, 61, 45, 52, 27] transfer_weight=0.2188 grad_VIS=1.2702e+00 grad_IR=5.0232e-01 grad_heads=1.6605e+00
+Epoch [10/40] target val accuracy: 0.5000
+Val Precision (Macro): 0.5605 | Val Recall (Macro): 0.4981 | Val F1 (Macro): 0.4565 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [11/40] iter [33/33] loss=0.2105 cls=0.0066 mdd=0.8471 transfer_weight=0.2406 src_acc=100.00 lr=[2.372e-04,2.372e-03]
+Epoch [11/40] train summary: avg_cls=0.0118 avg_mdd=0.9449 source_acc=0.9981 target_conf=0.6158 target_entropy=1.1748 target_class_coverage=9/9 target_class_hist=[142, 55, 84, 61, 18, 49, 37, 57, 25] transfer_weight=0.2406 grad_VIS=1.0535e+00 grad_IR=3.3986e-01 grad_heads=1.5951e+00
+Epoch [11/40] target val accuracy: 0.5000
+Val Precision (Macro): 0.5093 | Val Recall (Macro): 0.4843 | Val F1 (Macro): 0.4446 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [12/40] iter [33/33] loss=0.1873 cls=0.0013 mdd=0.7085 transfer_weight=0.2625 src_acc=100.00 lr=[2.361e-04,2.361e-03]
+Epoch [12/40] train summary: avg_cls=0.0088 avg_mdd=0.8618 source_acc=1.0000 target_conf=0.6064 target_entropy=1.1843 target_class_coverage=9/9 target_class_hist=[114, 68, 87, 65, 23, 52, 34, 58, 27] transfer_weight=0.2625 grad_VIS=7.3995e-01 grad_IR=2.9897e-01 grad_heads=1.4549e+00
+Epoch [12/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.5074 | Val Recall (Macro): 0.5074 | Val F1 (Macro): 0.4843 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [13/40] iter [33/33] loss=0.3010 cls=0.0040 mdd=1.0445 transfer_weight=0.2844 src_acc=100.00 lr=[2.350e-04,2.350e-03]
+Epoch [13/40] train summary: avg_cls=0.0121 avg_mdd=0.9070 source_acc=0.9981 target_conf=0.6099 target_entropy=1.1702 target_class_coverage=9/9 target_class_hist=[105, 65, 86, 78, 19, 40, 48, 61, 26] transfer_weight=0.2844 grad_VIS=9.1126e-01 grad_IR=3.0125e-01 grad_heads=1.7625e+00
+Epoch [13/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.5849 | Val Recall (Macro): 0.5713 | Val F1 (Macro): 0.5426 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [14/40] iter [33/33] loss=0.2084 cls=0.0025 mdd=0.6724 transfer_weight=0.3062 src_acc=100.00 lr=[2.340e-04,2.340e-03]
+Epoch [14/40] train summary: avg_cls=0.0084 avg_mdd=0.8905 source_acc=1.0000 target_conf=0.6280 target_entropy=1.1262 target_class_coverage=9/9 target_class_hist=[107, 56, 83, 84, 24, 52, 41, 56, 25] transfer_weight=0.3062 grad_VIS=7.2915e-01 grad_IR=2.5914e-01 grad_heads=1.7509e+00
+Epoch [14/40] target val accuracy: 0.5000
+Val Precision (Macro): 0.5037 | Val Recall (Macro): 0.4944 | Val F1 (Macro): 0.4825 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [15/40] iter [33/33] loss=0.2108 cls=0.0017 mdd=0.6375 transfer_weight=0.3281 src_acc=100.00 lr=[2.329e-04,2.329e-03]
+Epoch [15/40] train summary: avg_cls=0.0052 avg_mdd=0.8612 source_acc=1.0000 target_conf=0.6279 target_entropy=1.1192 target_class_coverage=9/9 target_class_hist=[119, 62, 85, 70, 23, 47, 38, 65, 19] transfer_weight=0.3281 grad_VIS=3.9023e-01 grad_IR=1.2323e-01 grad_heads=1.7724e+00
+Epoch [15/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5981 | Val Recall (Macro): 0.5352 | Val F1 (Macro): 0.5235 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [16/40] iter [33/33] loss=0.3465 cls=0.0010 mdd=0.9871 transfer_weight=0.3500 src_acc=100.00 lr=[2.319e-04,2.319e-03]
+Epoch [16/40] train summary: avg_cls=0.0039 avg_mdd=0.8601 source_acc=1.0000 target_conf=0.6422 target_entropy=1.0768 target_class_coverage=9/9 target_class_hist=[118, 59, 83, 72, 20, 51, 52, 55, 18] transfer_weight=0.3500 grad_VIS=3.6062e-01 grad_IR=1.3069e-01 grad_heads=1.7717e+00
+Epoch [16/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.5130 | Val Recall (Macro): 0.5074 | Val F1 (Macro): 0.4839 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [17/40] iter [33/33] loss=0.4755 cls=0.0033 mdd=1.3491 transfer_weight=0.3500 src_acc=100.00 lr=[2.308e-04,2.308e-03]
+Epoch [17/40] train summary: avg_cls=0.0055 avg_mdd=0.9038 source_acc=1.0000 target_conf=0.6669 target_entropy=1.0093 target_class_coverage=9/9 target_class_hist=[136, 51, 81, 74, 17, 50, 49, 53, 17] transfer_weight=0.3500 grad_VIS=3.9012e-01 grad_IR=1.5155e-01 grad_heads=1.9363e+00
+Epoch [17/40] target val accuracy: 0.4722
+Val Precision (Macro): 0.4762 | Val Recall (Macro): 0.4796 | Val F1 (Macro): 0.4504 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [18/40] iter [33/33] loss=0.2503 cls=0.0027 mdd=0.7075 transfer_weight=0.3500 src_acc=100.00 lr=[2.298e-04,2.298e-03]
+Epoch [18/40] train summary: avg_cls=0.0056 avg_mdd=0.8097 source_acc=1.0000 target_conf=0.6579 target_entropy=1.0399 target_class_coverage=9/9 target_class_hist=[132, 49, 79, 72, 18, 47, 53, 58, 20] transfer_weight=0.3500 grad_VIS=5.6751e-01 grad_IR=2.4799e-01 grad_heads=1.8737e+00
+Epoch [18/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.6250 | Val Recall (Macro): 0.5620 | Val F1 (Macro): 0.5112 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [19/40] iter [33/33] loss=0.2347 cls=0.0021 mdd=0.6646 transfer_weight=0.3500 src_acc=100.00 lr=[2.288e-04,2.288e-03]
+Epoch [19/40] train summary: avg_cls=0.0076 avg_mdd=0.8878 source_acc=0.9981 target_conf=0.6797 target_entropy=0.9782 target_class_coverage=9/9 target_class_hist=[132, 41, 77, 68, 24, 57, 49, 58, 22] transfer_weight=0.3500 grad_VIS=7.9538e-01 grad_IR=3.9946e-01 grad_heads=2.2883e+00
+Epoch [19/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.5357 | Val Recall (Macro): 0.5167 | Val F1 (Macro): 0.5026 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [20/40] iter [33/33] loss=0.2151 cls=0.0147 mdd=0.5724 transfer_weight=0.3500 src_acc=100.00 lr=[2.278e-04,2.278e-03]
+Epoch [20/40] train summary: avg_cls=0.0107 avg_mdd=0.8506 source_acc=0.9981 target_conf=0.6718 target_entropy=1.0097 target_class_coverage=9/9 target_class_hist=[137, 55, 59, 69, 22, 55, 46, 61, 24] transfer_weight=0.3500 grad_VIS=1.1706e+00 grad_IR=3.5001e-01 grad_heads=2.3006e+00
+Epoch [20/40] target val accuracy: 0.4722
+Val Precision (Macro): 0.4730 | Val Recall (Macro): 0.4657 | Val F1 (Macro): 0.4341 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [21/40] iter [33/33] loss=0.2094 cls=0.0030 mdd=0.5897 transfer_weight=0.3500 src_acc=100.00 lr=[2.268e-04,2.268e-03]
+Epoch [21/40] train summary: avg_cls=0.0148 avg_mdd=0.8662 source_acc=0.9962 target_conf=0.6739 target_entropy=0.9982 target_class_coverage=9/9 target_class_hist=[134, 53, 64, 77, 24, 54, 47, 53, 22] transfer_weight=0.3500 grad_VIS=1.4034e+00 grad_IR=3.9384e-01 grad_heads=2.3887e+00
+Epoch [21/40] target val accuracy: 0.4722
+Val Precision (Macro): 0.4946 | Val Recall (Macro): 0.4796 | Val F1 (Macro): 0.4542 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [22/40] iter [33/33] loss=0.4328 cls=0.0047 mdd=1.2229 transfer_weight=0.3500 src_acc=100.00 lr=[2.258e-04,2.258e-03]
+Epoch [22/40] train summary: avg_cls=0.0106 avg_mdd=0.9245 source_acc=0.9981 target_conf=0.6972 target_entropy=0.9445 target_class_coverage=9/9 target_class_hist=[145, 49, 68, 60, 30, 61, 45, 51, 19] transfer_weight=0.3500 grad_VIS=1.0321e+00 grad_IR=2.9919e-01 grad_heads=2.4045e+00
+Epoch [22/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.5744 | Val Recall (Macro): 0.5204 | Val F1 (Macro): 0.4873 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [23/40] iter [33/33] loss=0.3435 cls=0.0050 mdd=0.9672 transfer_weight=0.3500 src_acc=100.00 lr=[2.249e-04,2.249e-03]
+Epoch [23/40] train summary: avg_cls=0.0083 avg_mdd=0.9017 source_acc=0.9981 target_conf=0.7073 target_entropy=0.9045 target_class_coverage=9/9 target_class_hist=[144, 45, 73, 71, 22, 58, 44, 51, 20] transfer_weight=0.3500 grad_VIS=1.0290e+00 grad_IR=3.0928e-01 grad_heads=2.3482e+00
+Epoch [23/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5389 | Val Recall (Macro): 0.5259 | Val F1 (Macro): 0.4826 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [24/40] iter [33/33] loss=0.1988 cls=0.0016 mdd=0.5633 transfer_weight=0.3500 src_acc=100.00 lr=[2.239e-04,2.239e-03]
+Epoch [24/40] train summary: avg_cls=0.0042 avg_mdd=0.9038 source_acc=1.0000 target_conf=0.7291 target_entropy=0.8430 target_class_coverage=9/9 target_class_hist=[136, 46, 71, 74, 20, 53, 46, 57, 25] transfer_weight=0.3500 grad_VIS=3.8820e-01 grad_IR=1.2293e-01 grad_heads=2.0826e+00
+Epoch [24/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5745 | Val Recall (Macro): 0.5343 | Val F1 (Macro): 0.4921 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [25/40] iter [33/33] loss=0.2971 cls=0.0041 mdd=0.8373 transfer_weight=0.3500 src_acc=100.00 lr=[2.229e-04,2.229e-03]
+Epoch [25/40] train summary: avg_cls=0.0040 avg_mdd=0.9451 source_acc=1.0000 target_conf=0.7346 target_entropy=0.8138 target_class_coverage=9/9 target_class_hist=[141, 47, 75, 65, 17, 63, 50, 52, 18] transfer_weight=0.3500 grad_VIS=3.7638e-01 grad_IR=1.0533e-01 grad_heads=2.2225e+00
+Epoch [25/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.5995 | Val Recall (Macro): 0.5481 | Val F1 (Macro): 0.5234 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [26/40] iter [33/33] loss=0.4542 cls=0.0083 mdd=1.2741 transfer_weight=0.3500 src_acc=100.00 lr=[2.220e-04,2.220e-03]
+Epoch [26/40] train summary: avg_cls=0.0091 avg_mdd=1.0254 source_acc=0.9962 target_conf=0.7373 target_entropy=0.8138 target_class_coverage=9/9 target_class_hist=[130, 45, 69, 83, 22, 56, 43, 52, 28] transfer_weight=0.3500 grad_VIS=9.5113e-01 grad_IR=2.5259e-01 grad_heads=2.5286e+00
+Epoch [26/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.4773 | Val Recall (Macro): 0.5120 | Val F1 (Macro): 0.4548 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [27/40] iter [33/33] loss=0.4078 cls=0.0037 mdd=1.1547 transfer_weight=0.3500 src_acc=100.00 lr=[2.211e-04,2.211e-03]
+Epoch [27/40] train summary: avg_cls=0.0039 avg_mdd=1.0565 source_acc=1.0000 target_conf=0.7419 target_entropy=0.7855 target_class_coverage=9/9 target_class_hist=[115, 34, 72, 88, 20, 55, 63, 59, 22] transfer_weight=0.3500 grad_VIS=4.3767e-01 grad_IR=1.4676e-01 grad_heads=2.2970e+00
+Epoch [27/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5680 | Val Recall (Macro): 0.5343 | Val F1 (Macro): 0.4934 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [28/40] iter [33/33] loss=0.5066 cls=0.0019 mdd=1.4421 transfer_weight=0.3500 src_acc=100.00 lr=[2.201e-04,2.201e-03]
+Epoch [28/40] train summary: avg_cls=0.0049 avg_mdd=1.1984 source_acc=1.0000 target_conf=0.7349 target_entropy=0.7950 target_class_coverage=9/9 target_class_hist=[110, 56, 71, 84, 21, 57, 50, 49, 30] transfer_weight=0.3500 grad_VIS=5.3500e-01 grad_IR=1.5732e-01 grad_heads=2.7460e+00
+Epoch [28/40] target val accuracy: 0.5000
+Val Precision (Macro): 0.4870 | Val Recall (Macro): 0.4898 | Val F1 (Macro): 0.4516 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [29/40] iter [33/33] loss=0.6912 cls=0.0022 mdd=1.9687 transfer_weight=0.3500 src_acc=100.00 lr=[2.192e-04,2.192e-03]
+Epoch [29/40] train summary: avg_cls=0.0045 avg_mdd=1.1948 source_acc=1.0000 target_conf=0.7518 target_entropy=0.7444 target_class_coverage=9/9 target_class_hist=[125, 44, 67, 96, 21, 60, 42, 52, 21] transfer_weight=0.3500 grad_VIS=6.6494e-01 grad_IR=2.1644e-01 grad_heads=2.6042e+00
+Epoch [29/40] target val accuracy: 0.5278
+Val Precision (Macro): 0.5568 | Val Recall (Macro): 0.5037 | Val F1 (Macro): 0.4881 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [30/40] iter [33/33] loss=0.3061 cls=0.0007 mdd=0.8726 transfer_weight=0.3500 src_acc=100.00 lr=[2.183e-04,2.183e-03]
+Epoch [30/40] train summary: avg_cls=0.0038 avg_mdd=1.2502 source_acc=1.0000 target_conf=0.7644 target_entropy=0.7194 target_class_coverage=9/9 target_class_hist=[121, 43, 75, 93, 10, 53, 59, 48, 26] transfer_weight=0.3500 grad_VIS=4.9143e-01 grad_IR=1.7630e-01 grad_heads=2.6445e+00
+Epoch [30/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5444 | Val Recall (Macro): 0.5259 | Val F1 (Macro): 0.5064 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [31/40] iter [33/33] loss=0.2908 cls=0.0012 mdd=0.8274 transfer_weight=0.3500 src_acc=100.00 lr=[2.174e-04,2.174e-03]
+Epoch [31/40] train summary: avg_cls=0.0067 avg_mdd=1.2867 source_acc=0.9981 target_conf=0.7701 target_entropy=0.7007 target_class_coverage=9/9 target_class_hist=[112, 48, 79, 100, 21, 50, 53, 42, 23] transfer_weight=0.3500 grad_VIS=7.5227e-01 grad_IR=2.2513e-01 grad_heads=2.6292e+00
+Epoch [31/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5259 | Val Recall (Macro): 0.5259 | Val F1 (Macro): 0.4985 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [32/40] iter [33/33] loss=0.4667 cls=0.0150 mdd=1.2904 transfer_weight=0.3500 src_acc=100.00 lr=[2.165e-04,2.165e-03]
+Epoch [32/40] train summary: avg_cls=0.0046 avg_mdd=1.3669 source_acc=1.0000 target_conf=0.7901 target_entropy=0.6442 target_class_coverage=9/9 target_class_hist=[111, 30, 65, 107, 19, 56, 67, 45, 28] transfer_weight=0.3500 grad_VIS=5.1960e-01 grad_IR=1.5672e-01 grad_heads=2.6429e+00
+Epoch [32/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.5384 | Val Recall (Macro): 0.5259 | Val F1 (Macro): 0.5015 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [33/40] iter [33/33] loss=0.6576 cls=0.0097 mdd=1.8509 transfer_weight=0.3500 src_acc=100.00 lr=[2.157e-04,2.157e-03]
+Epoch [33/40] train summary: avg_cls=0.0034 avg_mdd=1.4391 source_acc=1.0000 target_conf=0.7958 target_entropy=0.6118 target_class_coverage=9/9 target_class_hist=[114, 31, 75, 106, 17, 57, 66, 42, 20] transfer_weight=0.3500 grad_VIS=3.3911e-01 grad_IR=1.1338e-01 grad_heads=2.6833e+00
+Epoch [33/40] target val accuracy: 0.6111
+Val Precision (Macro): 0.5397 | Val Recall (Macro): 0.5537 | Val F1 (Macro): 0.5245 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [34/40] iter [33/33] loss=0.4286 cls=0.0010 mdd=1.2217 transfer_weight=0.3500 src_acc=100.00 lr=[2.148e-04,2.148e-03]
+Epoch [34/40] train summary: avg_cls=0.0029 avg_mdd=1.4586 source_acc=1.0000 target_conf=0.8102 target_entropy=0.5863 target_class_coverage=9/9 target_class_hist=[105, 28, 71, 113, 19, 59, 68, 42, 23] transfer_weight=0.3500 grad_VIS=3.9574e-01 grad_IR=1.1403e-01 grad_heads=2.7616e+00
+Epoch [34/40] target val accuracy: 0.5556
+Val Precision (Macro): 0.4963 | Val Recall (Macro): 0.5176 | Val F1 (Macro): 0.4860 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [35/40] iter [33/33] loss=0.5660 cls=0.0036 mdd=1.6069 transfer_weight=0.3500 src_acc=100.00 lr=[2.139e-04,2.139e-03]
+Epoch [35/40] train summary: avg_cls=0.0038 avg_mdd=1.5258 source_acc=1.0000 target_conf=0.8307 target_entropy=0.5323 target_class_coverage=9/9 target_class_hist=[107, 37, 71, 109, 16, 57, 70, 39, 22] transfer_weight=0.3500 grad_VIS=4.2496e-01 grad_IR=1.3588e-01 grad_heads=2.7894e+00
+Epoch [35/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.4914 | Val Recall (Macro): 0.5269 | Val F1 (Macro): 0.4971 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [36/40] iter [33/33] loss=0.5651 cls=0.0036 mdd=1.6045 transfer_weight=0.3500 src_acc=100.00 lr=[2.131e-04,2.131e-03]
+Epoch [36/40] train summary: avg_cls=0.0044 avg_mdd=1.6172 source_acc=1.0000 target_conf=0.8312 target_entropy=0.5148 target_class_coverage=9/9 target_class_hist=[111, 32, 75, 108, 12, 54, 72, 45, 19] transfer_weight=0.3500 grad_VIS=5.0374e-01 grad_IR=1.5937e-01 grad_heads=3.2426e+00
+Epoch [36/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.5249 | Val Recall (Macro): 0.5315 | Val F1 (Macro): 0.5069 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [37/40] iter [33/33] loss=0.5827 cls=0.0029 mdd=1.6565 transfer_weight=0.3500 src_acc=100.00 lr=[2.122e-04,2.122e-03]
+Epoch [37/40] train summary: avg_cls=0.0053 avg_mdd=1.6815 source_acc=0.9981 target_conf=0.8615 target_entropy=0.4444 target_class_coverage=9/9 target_class_hist=[107, 31, 72, 114, 13, 56, 83, 38, 14] transfer_weight=0.3500 grad_VIS=6.9965e-01 grad_IR=2.3810e-01 grad_heads=3.2935e+00
+Epoch [37/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.5204 | Val Recall (Macro): 0.5546 | Val F1 (Macro): 0.5128 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [38/40] iter [33/33] loss=0.7672 cls=0.0027 mdd=2.1844 transfer_weight=0.3500 src_acc=100.00 lr=[2.114e-04,2.114e-03]
+Epoch [38/40] train summary: avg_cls=0.0050 avg_mdd=1.6792 source_acc=1.0000 target_conf=0.8612 target_entropy=0.4364 target_class_coverage=9/9 target_class_hist=[111, 38, 66, 128, 7, 56, 73, 38, 11] transfer_weight=0.3500 grad_VIS=5.8590e-01 grad_IR=1.9773e-01 grad_heads=3.2921e+00
+Epoch [38/40] target val accuracy: 0.5833
+Val Precision (Macro): 0.5147 | Val Recall (Macro): 0.5500 | Val F1 (Macro): 0.5104 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [39/40] iter [33/33] loss=0.5914 cls=0.0015 mdd=1.6856 transfer_weight=0.3500 src_acc=100.00 lr=[2.105e-04,2.105e-03]
+Epoch [39/40] train summary: avg_cls=0.0065 avg_mdd=1.8625 source_acc=0.9981 target_conf=0.8724 target_entropy=0.3974 target_class_coverage=9/9 target_class_hist=[102, 37, 68, 128, 12, 55, 79, 36, 11] transfer_weight=0.3500 grad_VIS=8.7953e-01 grad_IR=2.6285e-01 grad_heads=3.6560e+00
+Epoch [39/40] target val accuracy: 0.6667
+Val Precision (Macro): 0.5525 | Val Recall (Macro): 0.5963 | Val F1 (Macro): 0.5515 | Val class coverage: 9/9 | Val samples: 36
+  Epoch [40/40] iter [33/33] loss=0.6215 cls=0.0013 mdd=1.7719 transfer_weight=0.3500 src_acc=100.00 lr=[2.097e-04,2.097e-03]
+Epoch [40/40] train summary: avg_cls=0.0043 avg_mdd=1.9282 source_acc=1.0000 target_conf=0.8898 target_entropy=0.3524 target_class_coverage=9/9 target_class_hist=[96, 31, 68, 139, 10, 54, 82, 34, 14] transfer_weight=0.3500 grad_VIS=4.5564e-01 grad_IR=1.5244e-01 grad_heads=3.5107e+00
+Epoch [40/40] target val accuracy: 0.6667
+Val Precision (Macro): 0.6444 | Val Recall (Macro): 0.5963 | Val F1 (Macro): 0.5824 | Val class coverage: 9/9 | Val samples: 36
+Best target val accuracy (backlight, selected): 0.6667 at epoch 40
+Selected target val metrics:
+Val Precision (Macro): 0.6444 | Val Recall (Macro): 0.5963 | Val F1 (Macro): 0.5824 | Val class coverage: 9/9 | Val samples: 36
+Last-epoch target val accuracy (backlight, epoch 40): 0.6667
+Final target val accuracy (backlight, selected epoch 40): 0.6667
+Peak timing diagnostic: peak_acc=0.6667; matching_epochs=[39,40]; last_peak_progress=100.0%; threshold=70.0%; status=late_peak_or_recovered
+{"timestamp": "2026-11-07T03:29:13", "suite_id": "20261107_012813_2448535", "run_tag": "mdd_backlight", "method": "mdd", "protocol": "UDA", "target": "backlight", "seed": 42, "epochs": 40, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "best_target_val_ACC_within_budget", "status": "success", "exit_code": 0, "duration_seconds": 545.0, "final_acc": 0.6667, "best_acc": 0.6667, "final_acc_std": null, "precision_macro": 0.6444, "precision_macro_std": null, "recall_macro": 0.5963, "recall_macro_std": null, "f1_macro": 0.5824, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 40, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/mdd_backlight_20261107_012813_2448535.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda", "error_type": null, "error_summary": null}
