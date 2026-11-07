@@ -215,7 +215,7 @@ def main():
     )
     parser.add_argument("--ais-dropout-probability", type=float, default=0.3)
     parser.add_argument("--nir-initial-scale", type=float, default=0.01)
-    parser.add_argument("--ais-initial-scale", type=float, default=0.10)
+    parser.add_argument("--ais-initial-scale", type=float, default=0.80)
     parser.add_argument(
         "--logit-scale",
         type=float,

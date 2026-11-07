@@ -237,7 +237,7 @@ class TIRCoreTests(unittest.TestCase):
     def test_ais_gate_is_positive_trainable_and_preserves_initial_value(self):
         model = TIRVDS2Raw.__new__(TIRVDS2Raw)
         nn.Module.__init__(model)
-        initial = 0.10
+        initial = 0.80
         model.ais_scale = nn.Parameter(
             torch.tensor(np.log(initial / (1.0 - initial)), dtype=torch.float32)
         )
