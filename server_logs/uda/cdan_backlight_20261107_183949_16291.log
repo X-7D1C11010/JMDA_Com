@@ -1,0 +1,87 @@
+[GPU-WAIT] cdan_backlight: require free >= 18000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-07T19:11:49+08:00 cdan_backlight: GPU 0: free=31181 MiB, util=10%; GPU 1: free=27352 MiB, util=9%
+[GPU-WAIT] 2026-11-07T19:12:28+08:00 cdan_backlight: GPU 0: free=23518 MiB, util=35%; GPU 1: free=27352 MiB, util=0%
+[GPU-SELECT] cdan_backlight: physical GPU 1; free=27352 MiB, util=0%; launching: /home/lixiang/envs/lx_pytorch/bin/python /home/lixiang/lx/JMDA_Com/CDAN/train_cdan.py --target backlight --num-iterations 2000 --test-interval 100 --lr 0.0005 --head-lr-mult 3.0 --ad-lr-mult 3.0 --trade-off 0.6 --source-warmup-iterations 300 --label-smoothing 0.05 --coeff-max-iter 6000 --backbone JMDA --batch-size 32 --seed 42 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_183949_16291 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261107_183949_16291 --num-workers 8 --prefetch-factor 4 --multimodal --enhanced-augmentation --no-save-model --pin-memory --persistent-workers
+Deterministic kernels: True
+Controlled random seed: 42
+Device: cuda, Method: CDAN+E
+Multimodal preprocessing: JMDA paired Resize(256) + RandomCrop(224) + HFlip; validation Resize(224)
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515 images
+Target train: 113 images
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 8, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, eval=JMDA deterministic single-view, workers/view=0
+JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; VIS trainable=11,281,664/11,439,168; IR fully trainable
+CDAN-MM encoder: JMDA non-tensor VIS ResNet-18 + IR U-Net, 512+512 direct concatenation; CDAN bottleneck=256
+Random projection (--random): False; ad_net input dim=2304
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/CDAN-MM/17a01cdd5db2
+CDAN multimodal staged training: source-only warmup=10 epochs/170 updates; VIS lr=5e-06; IR+heads+ad lr=0.0002; AdamW wd=0.0005; epoch cosine; grad clip=1; label smoothing=0.1
+CDAN domain sampling: JMDA strict-UDA larger-domain epoch; 17 full paired batches/domain epoch
+  iter [100/2000] loss_cls=0.6141 loss_transfer=0.0000 trade_off=0.000 warmup=True coeff=0.0000 domain_acc=nan domain_src_acc=nan domain_tgt_acc=nan target_conf=nan target_entropy=nan target_class_coverage=0/9 target_class_hist=[] grad_VIS=2.5998e+00 grad_IR=1.0995e+00 grad_head=1.0253e+00 grad_ad=0.0000e+00 lr=4.98e-06
+iter [100/2000] target val accuracy (JMDA deterministic single-view): 0.3611
+Val Precision (Macro): 0.4693 | Val Recall (Macro): 0.4065 | Val F1 (Macro): 0.4005 | Val class coverage: 9/9 | Val samples: 36
+  iter [200/2000] loss_cls=0.5585 loss_transfer=0.3090 trade_off=0.600 warmup=False coeff=0.0242 domain_acc=0.8906 domain_src_acc=0.8125 domain_tgt_acc=0.9688 target_conf=0.4696 target_entropy=1.5541 target_class_coverage=9/9 target_class_hist=[12, 2, 3, 2, 1, 2, 6, 3, 1] grad_VIS=2.4534e+00 grad_IR=9.0261e-01 grad_head=1.2343e+00 grad_ad=4.9029e-01 lr=4.90e-06
+iter [200/2000] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.4537 | Val Recall (Macro): 0.4444 | Val F1 (Macro): 0.3966 | Val class coverage: 9/9 | Val samples: 36
+  iter [300/2000] loss_cls=0.5260 loss_transfer=0.0761 trade_off=0.600 warmup=False coeff=0.1071 domain_acc=0.9688 domain_src_acc=0.9375 domain_tgt_acc=1.0000 target_conf=0.5050 target_entropy=1.4830 target_class_coverage=7/9 target_class_hist=[11, 2, 10, 2, 0, 4, 1, 2, 0] grad_VIS=1.4289e+00 grad_IR=4.0237e-01 grad_head=6.3876e-01 grad_ad=4.6123e-01 lr=4.77e-06
+iter [300/2000] target val accuracy (JMDA deterministic single-view): 0.5000
+Val Precision (Macro): 0.5587 | Val Recall (Macro): 0.5037 | Val F1 (Macro): 0.4796 | Val class coverage: 9/9 | Val samples: 36
+  iter [400/2000] loss_cls=0.6021 loss_transfer=14.4797 trade_off=0.600 warmup=False coeff=0.1886 domain_acc=0.7188 domain_src_acc=0.9688 domain_tgt_acc=0.4688 target_conf=0.6868 target_entropy=0.9445 target_class_coverage=8/9 target_class_hist=[9, 4, 7, 2, 4, 2, 3, 1, 0] grad_VIS=3.1566e+00 grad_IR=1.9174e+00 grad_head=1.2343e+00 grad_ad=1.4029e+00 lr=4.59e-06
+iter [400/2000] target val accuracy (JMDA deterministic single-view): 0.4167
+Val Precision (Macro): 0.4743 | Val Recall (Macro): 0.4676 | Val F1 (Macro): 0.4135 | Val class coverage: 9/9 | Val samples: 36
+  iter [500/2000] loss_cls=0.5214 loss_transfer=0.7596 trade_off=0.600 warmup=False coeff=0.2675 domain_acc=0.7656 domain_src_acc=0.7188 domain_tgt_acc=0.8125 target_conf=0.6185 target_entropy=1.1335 target_class_coverage=7/9 target_class_hist=[8, 0, 6, 6, 1, 4, 4, 3, 0] grad_VIS=1.2099e+00 grad_IR=6.9622e-01 grad_head=8.4927e-01 grad_ad=3.8139e+00 lr=4.36e-06
+iter [500/2000] target val accuracy (JMDA deterministic single-view): 0.5278
+Val Precision (Macro): 0.5699 | Val Recall (Macro): 0.5176 | Val F1 (Macro): 0.4988 | Val class coverage: 9/9 | Val samples: 36
+  iter [600/2000] loss_cls=0.5128 loss_transfer=0.4328 trade_off=0.600 warmup=False coeff=0.3430 domain_acc=0.8125 domain_src_acc=0.8750 domain_tgt_acc=0.7500 target_conf=0.6695 target_entropy=1.0162 target_class_coverage=9/9 target_class_hist=[7, 2, 5, 5, 2, 3, 3, 4, 1] grad_VIS=6.9298e-01 grad_IR=1.5079e-01 grad_head=5.7770e-01 grad_ad=1.8983e+00 lr=4.09e-06
+iter [600/2000] target val accuracy (JMDA deterministic single-view): 0.5278
+Val Precision (Macro): 0.4704 | Val Recall (Macro): 0.5278 | Val F1 (Macro): 0.4778 | Val class coverage: 9/9 | Val samples: 36
+  iter [700/2000] loss_cls=0.5510 loss_transfer=0.6424 trade_off=0.600 warmup=False coeff=0.4143 domain_acc=0.6875 domain_src_acc=0.7500 domain_tgt_acc=0.6250 target_conf=0.7128 target_entropy=0.8796 target_class_coverage=8/9 target_class_hist=[5, 6, 7, 2, 4, 5, 1, 2, 0] grad_VIS=2.8595e+00 grad_IR=6.1802e-01 grad_head=1.8421e+00 grad_ad=2.3058e+00 lr=3.79e-06
+iter [700/2000] target val accuracy (JMDA deterministic single-view): 0.5556
+Val Precision (Macro): 0.6093 | Val Recall (Macro): 0.6148 | Val F1 (Macro): 0.5523 | Val class coverage: 9/9 | Val samples: 36
+  iter [800/2000] loss_cls=0.5232 loss_transfer=0.7648 trade_off=0.600 warmup=False coeff=0.4809 domain_acc=0.5781 domain_src_acc=0.5000 domain_tgt_acc=0.6562 target_conf=0.7959 target_entropy=0.6720 target_class_coverage=9/9 target_class_hist=[5, 3, 6, 8, 1, 3, 4, 1, 1] grad_VIS=1.0316e+00 grad_IR=3.3157e-01 grad_head=1.9450e+00 grad_ad=3.6576e+00 lr=3.46e-06
+iter [800/2000] target val accuracy (JMDA deterministic single-view): 0.4722
+Val Precision (Macro): 0.5384 | Val Recall (Macro): 0.5639 | Val F1 (Macro): 0.5215 | Val class coverage: 9/9 | Val samples: 36
+  iter [900/2000] loss_cls=0.5309 loss_transfer=0.9236 trade_off=0.600 warmup=False coeff=0.5424 domain_acc=0.6094 domain_src_acc=0.5938 domain_tgt_acc=0.6250 target_conf=0.7278 target_entropy=0.8333 target_class_coverage=9/9 target_class_hist=[7, 4, 3, 6, 2, 2, 5, 2, 1] grad_VIS=1.6293e+00 grad_IR=7.6635e-01 grad_head=3.5885e+00 grad_ad=3.2219e+00 lr=3.17e-06
+iter [900/2000] target val accuracy (JMDA deterministic single-view): 0.5278
+Val Precision (Macro): 0.5500 | Val Recall (Macro): 0.6009 | Val F1 (Macro): 0.5416 | Val class coverage: 9/9 | Val samples: 36
+  iter [1000/2000] loss_cls=0.5138 loss_transfer=0.6517 trade_off=0.600 warmup=False coeff=0.5985 domain_acc=0.7188 domain_src_acc=0.6562 domain_tgt_acc=0.7812 target_conf=0.8340 target_entropy=0.5339 target_class_coverage=9/9 target_class_hist=[7, 4, 5, 5, 3, 3, 2, 2, 1] grad_VIS=1.1165e+00 grad_IR=3.1286e-01 grad_head=2.6553e+00 grad_ad=2.5264e+00 lr=2.81e-06
+iter [1000/2000] target val accuracy (JMDA deterministic single-view): 0.5556
+Val Precision (Macro): 0.6037 | Val Recall (Macro): 0.6380 | Val F1 (Macro): 0.5760 | Val class coverage: 9/9 | Val samples: 36
+  iter [1100/2000] loss_cls=0.5238 loss_transfer=0.6995 trade_off=0.600 warmup=False coeff=0.6493 domain_acc=0.5625 domain_src_acc=0.5312 domain_tgt_acc=0.5938 target_conf=0.7905 target_entropy=0.6697 target_class_coverage=8/9 target_class_hist=[9, 3, 4, 4, 2, 3, 5, 2, 0] grad_VIS=1.5743e+00 grad_IR=4.0508e-01 grad_head=3.7124e+00 grad_ad=2.5233e+00 lr=2.45e-06
+iter [1100/2000] target val accuracy (JMDA deterministic single-view): 0.6111
+Val Precision (Macro): 0.6680 | Val Recall (Macro): 0.7028 | Val F1 (Macro): 0.6174 | Val class coverage: 9/9 | Val samples: 36
+  iter [1200/2000] loss_cls=0.5225 loss_transfer=0.8130 trade_off=0.600 warmup=False coeff=0.6950 domain_acc=0.6094 domain_src_acc=0.5938 domain_tgt_acc=0.6250 target_conf=0.8958 target_entropy=0.3591 target_class_coverage=9/9 target_class_hist=[6, 2, 3, 7, 1, 5, 4, 2, 2] grad_VIS=1.0816e+00 grad_IR=3.5652e-01 grad_head=2.4765e+00 grad_ad=3.8190e+00 lr=2.10e-06
+iter [1200/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6509 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+  iter [1300/2000] loss_cls=0.5142 loss_transfer=0.7285 trade_off=0.600 warmup=False coeff=0.7356 domain_acc=0.5312 domain_src_acc=0.4688 domain_tgt_acc=0.5938 target_conf=0.9098 target_entropy=0.3299 target_class_coverage=9/9 target_class_hist=[10, 3, 4, 4, 2, 3, 2, 2, 2] grad_VIS=1.3356e+00 grad_IR=3.8576e-01 grad_head=1.4136e+00 grad_ad=3.0491e+00 lr=1.77e-06
+iter [1300/2000] target val accuracy (JMDA deterministic single-view): 0.5278
+Val Precision (Macro): 0.5717 | Val Recall (Macro): 0.6528 | Val F1 (Macro): 0.5617 | Val class coverage: 9/9 | Val samples: 36
+  iter [1400/2000] loss_cls=0.5147 loss_transfer=0.6633 trade_off=0.600 warmup=False coeff=0.7716 domain_acc=0.6094 domain_src_acc=0.6562 domain_tgt_acc=0.5625 target_conf=0.8935 target_entropy=0.3737 target_class_coverage=8/9 target_class_hist=[9, 4, 6, 5, 2, 2, 3, 1, 0] grad_VIS=1.2079e+00 grad_IR=2.8914e-01 grad_head=2.2076e+00 grad_ad=1.7739e+00 lr=1.46e-06
+iter [1400/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6509 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+  iter [1500/2000] loss_cls=0.5138 loss_transfer=0.7038 trade_off=0.600 warmup=False coeff=0.8032 domain_acc=0.5625 domain_src_acc=0.4688 domain_tgt_acc=0.6562 target_conf=0.8759 target_entropy=0.4234 target_class_coverage=8/9 target_class_hist=[5, 2, 5, 6, 2, 6, 3, 3, 0] grad_VIS=1.0627e+00 grad_IR=3.2760e-01 grad_head=1.5791e+00 grad_ad=2.3055e+00 lr=1.18e-06
+iter [1500/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6726 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5836 | Val class coverage: 9/9 | Val samples: 36
+  iter [1600/2000] loss_cls=0.5216 loss_transfer=0.6949 trade_off=0.600 warmup=False coeff=0.8308 domain_acc=0.5312 domain_src_acc=0.5000 domain_tgt_acc=0.5625 target_conf=0.9119 target_entropy=0.3289 target_class_coverage=8/9 target_class_hist=[6, 5, 3, 3, 5, 3, 4, 3, 0] grad_VIS=9.1370e-01 grad_IR=2.8860e-01 grad_head=1.6850e+00 grad_ad=2.0752e+00 lr=9.44e-07
+iter [1600/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6509 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+  iter [1700/2000] loss_cls=0.5125 loss_transfer=0.6711 trade_off=0.600 warmup=False coeff=0.8549 domain_acc=0.6250 domain_src_acc=0.5625 domain_tgt_acc=0.6875 target_conf=0.8801 target_entropy=0.4007 target_class_coverage=8/9 target_class_hist=[6, 6, 4, 4, 1, 4, 4, 3, 0] grad_VIS=1.3520e+00 grad_IR=2.9638e-01 grad_head=2.1938e+00 grad_ad=2.6836e+00 lr=7.53e-07
+iter [1700/2000] target val accuracy (JMDA deterministic single-view): 0.5556
+Val Precision (Macro): 0.6293 | Val Recall (Macro): 0.6620 | Val F1 (Macro): 0.5699 | Val class coverage: 9/9 | Val samples: 36
+  iter [1800/2000] loss_cls=0.5175 loss_transfer=0.7314 trade_off=0.600 warmup=False coeff=0.8758 domain_acc=0.5156 domain_src_acc=0.3125 domain_tgt_acc=0.7188 target_conf=0.9549 target_entropy=0.2051 target_class_coverage=9/9 target_class_hist=[6, 1, 8, 6, 3, 1, 2, 4, 1] grad_VIS=7.4742e-01 grad_IR=2.5753e-01 grad_head=1.0690e+00 grad_ad=2.4912e+00 lr=6.33e-07
+iter [1800/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6509 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+  iter [1900/2000] loss_cls=0.5070 loss_transfer=0.6724 trade_off=0.600 warmup=False coeff=0.8939 domain_acc=0.5469 domain_src_acc=0.3750 domain_tgt_acc=0.7188 target_conf=0.9617 target_entropy=0.1468 target_class_coverage=9/9 target_class_hist=[8, 5, 6, 3, 2, 3, 2, 2, 1] grad_VIS=1.0138e+00 grad_IR=5.5173e-01 grad_head=1.2986e+00 grad_ad=2.0133e+00 lr=5.39e-07
+iter [1900/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6509 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+  iter [2000/2000] loss_cls=0.5054 loss_transfer=0.7181 trade_off=0.600 warmup=False coeff=0.9094 domain_acc=0.5156 domain_src_acc=0.4375 domain_tgt_acc=0.5938 target_conf=0.9558 target_entropy=0.1562 target_class_coverage=9/9 target_class_hist=[6, 2, 4, 3, 3, 5, 5, 2, 2] grad_VIS=6.4915e-01 grad_IR=1.5185e-01 grad_head=7.1949e-01 grad_ad=3.0638e+00 lr=5.00e-07
+iter [2000/2000] target val accuracy (JMDA deterministic single-view): 0.5833
+Val Precision (Macro): 0.6509 | Val Recall (Macro): 0.6806 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+Best target val accuracy (backlight, selected): 0.6111 at iteration 1100
+Selected target val metrics:
+Val Precision (Macro): 0.6680 | Val Recall (Macro): 0.7028 | Val F1 (Macro): 0.6174 | Val class coverage: 9/9 | Val samples: 36
+Last-iteration target val accuracy (backlight): 0.5833
+Final target val accuracy (backlight, selected iteration 1100): 0.6111
+{"timestamp": "2026-11-07T19:21:15", "suite_id": "20261107_183949_16291", "run_tag": "cdan_backlight", "method": "cdan", "protocol": "UDA", "target": "backlight", "seed": 42, "epochs": 100, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "best_target_val_ACC_within_budget", "status": "success", "exit_code": 0, "duration_seconds": 566.0, "final_acc": 0.6111, "best_acc": 0.6111, "final_acc_std": null, "precision_macro": 0.668, "precision_macro_std": null, "recall_macro": 0.7028, "recall_macro_std": null, "f1_macro": 0.6174, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 20, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/cdan_backlight_20261107_183949_16291.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda", "error_type": null, "error_summary": null}

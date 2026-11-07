@@ -1,0 +1,65 @@
+[GPU-WAIT] complexity: require free >= 14336 MiB, util <= 10% for 3 checks; candidates=all
+[GPU-WAIT] 2026-11-07T19:26:09+08:00 complexity: GPU 0: free=31181 MiB, util=13%; GPU 1: free=13029 MiB, util=0%
+[GPU-WAIT] 2026-11-07T19:26:39+08:00 complexity: GPU 0: free=31181 MiB, util=0%; GPU 1: free=13029 MiB, util=0%
+[GPU-WAIT] 2026-11-07T19:27:09+08:00 complexity: GPU 0: free=31181 MiB, util=0%; GPU 1: free=13029 MiB, util=0%
+[GPU-SELECT] complexity: physical GPU 0; free=31181 MiB, util=0%; launching: /home/lixiang/envs/lx_pytorch/bin/python /home/lixiang/lx/JMDA_Com/tools/benchmark_efficiency.py --methods vds_tir --num-classes 3 --protocol benchmark --benchmark_train_batch_size 1 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261107_190725_83085/efficiency
+Device: cuda:0  GPU: NVIDIA GeForce RTX 5090
+Precision: fp32  Warmup: 100  Iters: 500  Repeats: 3
+Environment saved: {'python': '3.11.15', 'pytorch': '2.11.0+cu128', 'cuda': '12.8', 'cudnn': 91900, 'gpu_name': 'NVIDIA GeForce RTX 5090', 'platform': 'Linux-7.0.0-38-generic-x86_64-with-glibc2.39', 'device': 'cuda:0'}
+
+>>> vds_tir repeat 1/3
+
+============================================================
+  Benchmarking: VDS2Raw-TIR  (RGB+NIR+AIS)
+============================================================
+  total_params=151,164,270  trainable=1,543,533  buffer=0.43MB  state_dict=577.29MB
+  MACs=26,700,637,712  GFLOPs=53.4013  unsupported_ops=[]
+  latency: mean=5.9428ms  p50=5.9028ms  p95=6.3468ms  throughput=168.27 samples/s
+  infer mem: alloc=1.1634GB  reserved=1.2441GB
+  train step: mean=24.7778ms  fwd=12.291ms  bwd=11.6105ms  opt=0.8716ms
+  train mem: alloc=1.5609GB  reserved=1.5801GB
+/home/lixiang/envs/lx_pytorch/lib/python3.11/site-packages/torch/profiler/profiler.py:224: UserWarning: Warning: Profiler clears events at the end of each cycle.Only events from the current cycle will be reported.To keep events across cycles, set acc_events=True.
+  _warn_once(
+
+>>> vds_tir repeat 2/3
+
+============================================================
+  Benchmarking: VDS2Raw-TIR  (RGB+NIR+AIS)
+============================================================
+  total_params=151,164,270  trainable=1,543,533  buffer=0.43MB  state_dict=577.29MB
+  MACs=26,700,637,712  GFLOPs=53.4013  unsupported_ops=[]
+  latency: mean=6.5881ms  p50=6.5762ms  p95=6.6904ms  throughput=151.79 samples/s
+  infer mem: alloc=0.5996GB  reserved=0.6387GB
+  train step: mean=29.0548ms  fwd=14.195ms  bwd=13.7935ms  opt=1.0612ms
+  train mem: alloc=0.9891GB  reserved=1.0117GB
+
+>>> vds_tir repeat 3/3
+
+============================================================
+  Benchmarking: VDS2Raw-TIR  (RGB+NIR+AIS)
+============================================================
+  total_params=151,164,270  trainable=1,543,533  buffer=0.43MB  state_dict=577.29MB
+  MACs=26,700,637,712  GFLOPs=53.4013  unsupported_ops=[]
+  latency: mean=6.6075ms  p50=6.5812ms  p95=6.7674ms  throughput=151.34 samples/s
+  infer mem: alloc=0.5996GB  reserved=0.6387GB
+  train step: mean=37.0667ms  fwd=14.3053ms  bwd=21.7025ms  opt=1.0537ms
+  train mem: alloc=0.9891GB  reserved=1.0117GB
+
+============================================================
+  All benchmarks complete. Results in: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261107_190725_83085/efficiency
+  Methods tested: 1
+  Total runs: 3
+============================================================
+
+Method → Script → Model Class → Data Loader mapping:
+────────────────────────────────────────────────────────────────────────────────
+  Source-only        | benchmark adapter                          | resnet18+fc                  | ImageList (VIS)
+  DANN               | DANN/train_dann.py                         | DANN(nn.Module)              | ImageListDataset (VIS)
+  DeepCORAL          | DeepCORAL/train_deepcoral.py               | DeepCORAL(nn.Module)         | ImageListDataset (VIS)
+  CDAN               | CDAN/train_cdan.py                         | ResNetFc+AdversarialNet      | ImageListDataset (VIS)
+  MDD                | MDD/train_mdd.py                           | tllib ImageClassifier        | ImageListDataset (VIS)
+  MCC                | MCC/train_mcc.py                           | tllib ImageClassifier        | ImageListDataset (VIS)
+  MCFT               | MCFT/train_mcft.py                         | MViT (VIS+IR)                | Paired VIS/IR, 96x96 conv -> 15x15 tokens
+  VDS2Raw-MCFT3      | vds2raw/train_mcft.py                      | MViT + AIS late fusion       | VDS2Raw RGB+NIR+AIS
+  VDS2Raw-TIR        | vds2raw/train_tir.py                       | CLIP-LoRA + CoOp + TIR + adapters | VDS2Raw RGB+NIR+AIS
+  JMDA-Net           | /home/lixiang/lx/JMDA_Com/JMDA-Net/Ablation/module_ablation.py | VisFeat+IRFeat+TAL+OTGen     | MultiModalDomainDataset (VIS+IR)
