@@ -237,9 +237,9 @@ class TIRCoreTests(unittest.TestCase):
     def test_ais_gate_is_positive_trainable_and_preserves_initial_value(self):
         model = TIRVDS2Raw.__new__(TIRVDS2Raw)
         nn.Module.__init__(model)
-        initial = 0.80
+        initial = 1.20
         model.ais_scale = nn.Parameter(
-            torch.tensor(np.log(initial / (1.0 - initial)), dtype=torch.float32)
+            torch.tensor(np.log(np.expm1(initial)), dtype=torch.float32)
         )
         gate = model.effective_ais_scale()
         self.assertAlmostEqual(float(gate.detach()), initial, places=6)
@@ -251,7 +251,6 @@ class TIRCoreTests(unittest.TestCase):
         updated = float(model.effective_ais_scale().detach())
         self.assertGreater(updated, initial)
         self.assertGreater(updated, 0.0)
-        self.assertLess(updated, 1.0)
 
     def test_three_way_rule_uses_paper_generalized_extremes(self):
         tokens = torch.tensor(

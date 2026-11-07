@@ -75,8 +75,8 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 LoRA/CoOp/adapter学习率分别为 `2e-4`、`2e-3`、`1e-3`，task weight decay为
 `5e-4`，label smoothing为0。源域和目标域监督CE分开计算并以0.5/0.5等权合并；每个域
 分别根据自身类别计数使用平方根逆频率权重，避免源域Sailing样本掩盖目标域Sailing不足。
-自然无放回shuffle保证每轮全部210个样本各使用一次。NIR门控从0.01开始，AIS门控从0.80开始；
-AIS门控使用sigmoid约束在(0,1)，只允许正向贡献，同时兼顾首步
+自然无放回shuffle保证每轮全部210个样本各使用一次。NIR门控从0.01开始，AIS门控从1.20开始；
+AIS门控使用softplus约束在(0,+inf)，只允许正向贡献，同时兼顾首步
 梯度和预训练RGB稳定性；AIS dropout为0.3。默认增强恢复为RGB/NIR同步轻裁剪和水平/垂直
 翻转。每轮仍评估target_val和target_test，汇总记录完整100轮中的target_test ACC峰值并
 明确test-selection bias。逐轮额外记录源/目标训练ACC和加权CE、TIR sink/discriminative/

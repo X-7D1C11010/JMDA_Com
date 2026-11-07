@@ -260,7 +260,7 @@ class TIRVDS2Raw(nn.Module):
         lora_params: Sequence[str] = ("q", "k", "v"),
         ais_dropout_probability: float = 0.3,
         nir_initial_scale: float = 0.01,
-        ais_initial_scale: float = 0.80,
+        ais_initial_scale: float = 1.20,
         logit_scale: float = 4.0,
     ):
         super().__init__()
@@ -272,8 +272,8 @@ class TIRVDS2Raw(nn.Module):
             raise ValueError("TIR weight bounds must satisfy 0 <= min <= max")
         if not -1.0 < nir_initial_scale < 1.0:
             raise ValueError("nir_initial_scale must be in (-1, 1)")
-        if not 0.0 < ais_initial_scale < 1.0:
-            raise ValueError("ais_initial_scale must be in (0, 1)")
+        if not 0.0 < ais_initial_scale:
+            raise ValueError("ais_initial_scale must be positive")
         if not lora_params or any(name not in {"q", "k", "v"} for name in lora_params):
             raise ValueError("lora_params must contain one or more of: q, k, v")
         self.class_names = tuple(class_names)
@@ -316,9 +316,12 @@ class TIRVDS2Raw(nn.Module):
             nn.Dropout(0.3),
             nn.Linear(128, embed_dim),
         )
-        self.ais_scale = nn.Parameter(
-            torch.tensor(math.log(ais_initial_scale / (1.0 - ais_initial_scale)))
+        raw_ais_scale = (
+            ais_initial_scale
+            if ais_initial_scale > 20.0
+            else math.log(math.expm1(ais_initial_scale))
         )
+        self.ais_scale = nn.Parameter(torch.tensor(raw_ais_scale))
 
         for parameter in self.clip_model.parameters():
             parameter.requires_grad_(False)
@@ -358,9 +361,9 @@ class TIRVDS2Raw(nn.Module):
         return {"lora": lora, "prompt": prompt, "adapters": adapters}
 
     def effective_ais_scale(self) -> torch.Tensor:
-        """Return the trainable AIS contribution constrained to ``(0, 1)``."""
+        """Return the trainable AIS contribution constrained to be positive."""
 
-        return torch.sigmoid(self.ais_scale)
+        return F.softplus(self.ais_scale)
 
     def forward(
         self,

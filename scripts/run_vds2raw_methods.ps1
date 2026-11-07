@@ -120,7 +120,7 @@ foreach ($seed in $Seeds) {
                     '--lora-encoder', 'both', '--lora-params', 'q', 'k', 'v',
                     '--ais-dropout-probability', (Env-OrDefault 'VDS2RAW_TIR_AIS_DROPOUT' '0.3'),
                     '--nir-initial-scale', (Env-OrDefault 'VDS2RAW_TIR_NIR_INITIAL_SCALE' '0.01'),
-                    '--ais-initial-scale', (Env-OrDefault 'VDS2RAW_TIR_AIS_INITIAL_SCALE' '0.80'),
+                    '--ais-initial-scale', (Env-OrDefault 'VDS2RAW_TIR_AIS_INITIAL_SCALE' '1.20'),
                     '--tir-min-weight', (Env-OrDefault 'VDS2RAW_TIR_MIN_TOKEN_WEIGHT' '0.0'),
                     '--tir-max-weight', (Env-OrDefault 'VDS2RAW_TIR_MAX_TOKEN_WEIGHT' '2.0'),
                     '--class-weight-power', (Env-OrDefault 'VDS2RAW_TIR_CLASS_WEIGHT_POWER' '0.5'),
