@@ -1,0 +1,611 @@
+[GPU-WAIT] tir_seed42: require free >= 14336 MiB, util <= 10% for 3 checks; candidates=all
+[GPU-WAIT] 2026-11-08T10:50:14+08:00 tir_seed42: GPU 0: free=31181 MiB, util=0%; GPU 1: free=32094 MiB, util=0%
+[GPU-WAIT] 2026-11-08T10:50:44+08:00 tir_seed42: GPU 0: free=31181 MiB, util=0%; GPU 1: free=32094 MiB, util=0%
+[GPU-SELECT] tir_seed42: physical GPU 1; free=32094 MiB, util=0%; launching: python /home/lixiang/lx/JMDA_Com/vds2raw/train_tir.py --epochs 100 --batch-size 32 --eval-frequency 1 --clip-checkpoint /home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt --lora-lr 0.0002 --prompt-lr 0.002 --adapter-lr 0.001 --lora-weight-decay 0.01 --weight-decay 0.0005 --lora-rank 16 --lora-alpha 8 --lora-dropout 0.25 --lora-encoder both --lora-params q k v --ais-dropout-probability 0.3 --nir-initial-scale 0.01 --ais-initial-scale 1.50 --tir-min-weight 0.0 --tir-max-weight 2.0 --class-weight-power 0.5 --source-loss-weight 0.5 --target-loss-weight 0.5 --label-smoothing 0.0 --scheduler none --warmup-epochs 0 --min-lr-ratio 0.1 --augment --natural-train-sampling --accumulate-full-epoch --early-stopping-patience 0 --early-stopping-min-epochs 0 --stats-file /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261108_105010_1455258/normalization_stats.json --data-root /home/lixiang/lx/VDS2Raw/threeclass_ready --save-dir /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261108_105010_1455258/artifacts --seed 42 --num-workers 2 --skip-audit
+Deterministic kernels: False
+Normalization: {'rgb_mean': [104.1385773189484, 151.3651573867394, 202.25860718419312], 'rgb_std': [23.92844861235615, 24.27277502045296, 26.47277607798259], 'rgb_min': [0.0, 0.0, 0.0], 'rgb_max': [1094.0, 1062.0, 1057.0], 'nir_mean': [82.76378916583995], 'nir_std': [33.73508320680071], 'nir_min': [0.0], 'nir_max': [1028.0], 'fit_partitions': ['source_train', 'target_train'], 'fit_samples': 210, 'rule': 'statistics fitted only on: source_train + target_train'}
+Epoch [1/100] batch [5/7] domain_loss=0.1657
+Epoch [1/100] train accuracy=0.1905 source_accuracy=0.1638 target_accuracy=0.2234 source_ce=1.1541 target_ce=1.1456 weighted_ce=1.1499
+Epoch [1/100] target_val accuracy: 0.1429
+  Precision (Macro): 0.1389 | Recall (Macro): 0.1369 | F1 (Macro): 0.1365 | class coverage: 3/3 | samples: 28
+Epoch [1/100] target_test accuracy: 0.1818
+  Precision (Macro): 0.2143 | Recall (Macro): 0.1604 | F1 (Macro): 0.1834 | class coverage: 3/3 | samples: 33
+Epoch [2/100] batch [5/7] domain_loss=0.1780
+Epoch [2/100] train accuracy=0.2714 source_accuracy=0.2328 target_accuracy=0.3191 source_ce=1.1309 target_ce=1.1101 weighted_ce=1.1205
+Epoch [2/100] target_val accuracy: 0.3929
+  Precision (Macro): 0.2889 | Recall (Macro): 0.3095 | F1 (Macro): 0.2814 | class coverage: 3/3 | samples: 28
+Epoch [2/100] target_test accuracy: 0.4242
+  Precision (Macro): 0.3301 | Recall (Macro): 0.3387 | F1 (Macro): 0.3259 | class coverage: 3/3 | samples: 33
+Epoch [3/100] batch [5/7] domain_loss=0.1811
+Epoch [3/100] train accuracy=0.3476 source_accuracy=0.3707 target_accuracy=0.3191 source_ce=1.1015 target_ce=1.0988 weighted_ce=1.1001
+Epoch [3/100] target_val accuracy: 0.4286
+  Precision (Macro): 0.3714 | Recall (Macro): 0.3304 | F1 (Macro): 0.3260 | class coverage: 3/3 | samples: 28
+Epoch [3/100] target_test accuracy: 0.5758
+  Precision (Macro): 0.4222 | Recall (Macro): 0.4474 | F1 (Macro): 0.4295 | class coverage: 3/3 | samples: 33
+Epoch [4/100] batch [5/7] domain_loss=0.1717
+Epoch [4/100] train accuracy=0.3810 source_accuracy=0.3448 target_accuracy=0.4255 source_ce=1.0951 target_ce=1.0869 weighted_ce=1.0910
+Epoch [4/100] target_val accuracy: 0.5357
+  Precision (Macro): 0.4798 | Recall (Macro): 0.4387 | F1 (Macro): 0.4433 | class coverage: 3/3 | samples: 28
+Epoch [4/100] target_test accuracy: 0.6061
+  Precision (Macro): 0.4762 | Recall (Macro): 0.4670 | F1 (Macro): 0.4662 | class coverage: 3/3 | samples: 33
+Epoch [5/100] batch [5/7] domain_loss=0.1619
+Epoch [5/100] train accuracy=0.4571 source_accuracy=0.4569 target_accuracy=0.4574 source_ce=1.0577 target_ce=1.0656 weighted_ce=1.0617
+Epoch [5/100] target_val accuracy: 0.6071
+  Precision (Macro): 0.4722 | Recall (Macro): 0.4536 | F1 (Macro): 0.4606 | class coverage: 3/3 | samples: 28
+Epoch [5/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6333 | Recall (Macro): 0.6367 | F1 (Macro): 0.6127 | class coverage: 3/3 | samples: 33
+Epoch [6/100] batch [5/7] domain_loss=0.1598
+Epoch [6/100] train accuracy=0.4952 source_accuracy=0.5000 target_accuracy=0.4894 source_ce=1.0421 target_ce=1.0502 weighted_ce=1.0462
+Epoch [6/100] target_val accuracy: 0.7143
+  Precision (Macro): 0.6148 | Recall (Macro): 0.6536 | F1 (Macro): 0.6127 | class coverage: 3/3 | samples: 28
+Epoch [6/100] target_test accuracy: 0.6364
+  Precision (Macro): 0.6071 | Recall (Macro): 0.5957 | F1 (Macro): 0.5669 | class coverage: 3/3 | samples: 33
+Epoch [7/100] batch [5/7] domain_loss=0.1515
+Epoch [7/100] train accuracy=0.5762 source_accuracy=0.5948 target_accuracy=0.5532 source_ce=1.0067 target_ce=1.0244 weighted_ce=1.0156
+Epoch [7/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [7/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.7190 | Recall (Macro): 0.7291 | F1 (Macro): 0.6432 | class coverage: 3/3 | samples: 33
+Epoch [8/100] batch [5/7] domain_loss=0.1470
+Epoch [8/100] train accuracy=0.5571 source_accuracy=0.5948 target_accuracy=0.5106 source_ce=0.9975 target_ce=1.0086 weighted_ce=1.0031
+Epoch [8/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [8/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.7060 | Recall (Macro): 0.7291 | F1 (Macro): 0.6435 | class coverage: 3/3 | samples: 33
+Epoch [9/100] batch [5/7] domain_loss=0.1500
+Epoch [9/100] train accuracy=0.6190 source_accuracy=0.6379 target_accuracy=0.5957 source_ce=0.9690 target_ce=0.9629 weighted_ce=0.9659
+Epoch [9/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8182 | Recall (Macro): 0.7411 | F1 (Macro): 0.6791 | class coverage: 3/3 | samples: 28
+Epoch [9/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7740 | Recall (Macro): 0.7487 | F1 (Macro): 0.6660 | class coverage: 3/3 | samples: 33
+Epoch [10/100] batch [5/7] domain_loss=0.1368
+Epoch [10/100] train accuracy=0.6762 source_accuracy=0.6810 target_accuracy=0.6702 source_ce=0.9480 target_ce=0.9146 weighted_ce=0.9313
+Epoch [10/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8182 | Recall (Macro): 0.7411 | F1 (Macro): 0.6791 | class coverage: 3/3 | samples: 28
+Epoch [10/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7740 | Recall (Macro): 0.7487 | F1 (Macro): 0.6660 | class coverage: 3/3 | samples: 33
+Epoch [11/100] batch [5/7] domain_loss=0.1446
+Epoch [11/100] train accuracy=0.6381 source_accuracy=0.6466 target_accuracy=0.6277 source_ce=0.9352 target_ce=0.9109 weighted_ce=0.9230
+Epoch [11/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7411 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [11/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7740 | Recall (Macro): 0.7487 | F1 (Macro): 0.6660 | class coverage: 3/3 | samples: 33
+Epoch [12/100] batch [5/7] domain_loss=0.1493
+Epoch [12/100] train accuracy=0.5762 source_accuracy=0.5431 target_accuracy=0.6170 source_ce=0.8870 target_ce=0.9140 weighted_ce=0.9005
+Epoch [12/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7411 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [12/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7740 | Recall (Macro): 0.7487 | F1 (Macro): 0.6660 | class coverage: 3/3 | samples: 33
+Epoch [13/100] batch [5/7] domain_loss=0.1384
+Epoch [13/100] train accuracy=0.6143 source_accuracy=0.6121 target_accuracy=0.6170 source_ce=0.8761 target_ce=0.8660 weighted_ce=0.8711
+Epoch [13/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7411 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [13/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7857 | Recall (Macro): 0.7487 | F1 (Macro): 0.6657 | class coverage: 3/3 | samples: 33
+Epoch [14/100] batch [5/7] domain_loss=0.1343
+Epoch [14/100] train accuracy=0.6190 source_accuracy=0.5690 target_accuracy=0.6809 source_ce=0.8714 target_ce=0.8402 weighted_ce=0.8558
+Epoch [14/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7685 | Recall (Macro): 0.7887 | F1 (Macro): 0.7425 | class coverage: 3/3 | samples: 28
+Epoch [14/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7857 | Recall (Macro): 0.7487 | F1 (Macro): 0.6657 | class coverage: 3/3 | samples: 33
+Epoch [15/100] batch [5/7] domain_loss=0.1280
+Epoch [15/100] train accuracy=0.5762 source_accuracy=0.5517 target_accuracy=0.6064 source_ce=0.8741 target_ce=0.8200 weighted_ce=0.8471
+Epoch [15/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8182 | Recall (Macro): 0.7411 | F1 (Macro): 0.6791 | class coverage: 3/3 | samples: 28
+Epoch [15/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7740 | Recall (Macro): 0.7487 | F1 (Macro): 0.6660 | class coverage: 3/3 | samples: 33
+Epoch [16/100] batch [5/7] domain_loss=0.1386
+Epoch [16/100] train accuracy=0.5714 source_accuracy=0.5259 target_accuracy=0.6277 source_ce=0.8656 target_ce=0.7838 weighted_ce=0.8247
+Epoch [16/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.8333 | Recall (Macro): 0.7887 | F1 (Macro): 0.7448 | class coverage: 3/3 | samples: 28
+Epoch [16/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.7649 | Recall (Macro): 0.7184 | F1 (Macro): 0.6213 | class coverage: 3/3 | samples: 33
+Epoch [17/100] batch [5/7] domain_loss=0.1402
+Epoch [17/100] train accuracy=0.6000 source_accuracy=0.5172 target_accuracy=0.7021 source_ce=0.8237 target_ce=0.7885 weighted_ce=0.8061
+Epoch [17/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8519 | Recall (Macro): 0.8363 | F1 (Macro): 0.8031 | class coverage: 3/3 | samples: 28
+Epoch [17/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6651 | Recall (Macro): 0.6517 | F1 (Macro): 0.5845 | class coverage: 3/3 | samples: 33
+Epoch [18/100] batch [5/7] domain_loss=0.1001
+Epoch [18/100] train accuracy=0.6238 source_accuracy=0.5172 target_accuracy=0.7553 source_ce=0.8371 target_ce=0.6949 weighted_ce=0.7660
+Epoch [18/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8519 | Recall (Macro): 0.8363 | F1 (Macro): 0.8031 | class coverage: 3/3 | samples: 28
+Epoch [18/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6651 | Recall (Macro): 0.6517 | F1 (Macro): 0.5845 | class coverage: 3/3 | samples: 33
+Epoch [19/100] batch [5/7] domain_loss=0.1103
+Epoch [19/100] train accuracy=0.6810 source_accuracy=0.6379 target_accuracy=0.7340 source_ce=0.8521 target_ce=0.7510 weighted_ce=0.8016
+Epoch [19/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.8333 | Recall (Macro): 0.7887 | F1 (Macro): 0.7448 | class coverage: 3/3 | samples: 28
+Epoch [19/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6651 | Recall (Macro): 0.6517 | F1 (Macro): 0.5845 | class coverage: 3/3 | samples: 33
+Epoch [20/100] batch [5/7] domain_loss=0.1176
+Epoch [20/100] train accuracy=0.6714 source_accuracy=0.6293 target_accuracy=0.7234 source_ce=0.8070 target_ce=0.7451 weighted_ce=0.7761
+Epoch [20/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.9048 | Recall (Macro): 0.9315 | F1 (Macro): 0.9081 | class coverage: 3/3 | samples: 28
+Epoch [20/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6651 | Recall (Macro): 0.6517 | F1 (Macro): 0.5845 | class coverage: 3/3 | samples: 33
+Epoch [21/100] batch [5/7] domain_loss=0.1032
+Epoch [21/100] train accuracy=0.6714 source_accuracy=0.5690 target_accuracy=0.7979 source_ce=0.8230 target_ce=0.6562 weighted_ce=0.7396
+Epoch [21/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8413 | Recall (Macro): 0.8649 | F1 (Macro): 0.8507 | class coverage: 3/3 | samples: 28
+Epoch [21/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7016 | Recall (Macro): 0.7016 | F1 (Macro): 0.6471 | class coverage: 3/3 | samples: 33
+Epoch [22/100] batch [5/7] domain_loss=0.0972
+Epoch [22/100] train accuracy=0.6952 source_accuracy=0.6034 target_accuracy=0.8085 source_ce=0.7789 target_ce=0.6572 weighted_ce=0.7180
+Epoch [22/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8016 | Recall (Macro): 0.8173 | F1 (Macro): 0.8012 | class coverage: 3/3 | samples: 28
+Epoch [22/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.7016 | Recall (Macro): 0.7016 | F1 (Macro): 0.6471 | class coverage: 3/3 | samples: 33
+Epoch [23/100] batch [5/7] domain_loss=0.0744
+Epoch [23/100] train accuracy=0.7048 source_accuracy=0.6034 target_accuracy=0.8298 source_ce=0.7471 target_ce=0.5829 weighted_ce=0.6650
+Epoch [23/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.8333 | Recall (Macro): 0.7887 | F1 (Macro): 0.7448 | class coverage: 3/3 | samples: 28
+Epoch [23/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6296 | Recall (Macro): 0.6410 | F1 (Macro): 0.5569 | class coverage: 3/3 | samples: 33
+Epoch [24/100] batch [5/7] domain_loss=0.1084
+Epoch [24/100] train accuracy=0.6810 source_accuracy=0.6379 target_accuracy=0.7340 source_ce=0.7319 target_ce=0.6770 weighted_ce=0.7044
+Epoch [24/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [24/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6296 | Recall (Macro): 0.6410 | F1 (Macro): 0.5569 | class coverage: 3/3 | samples: 33
+Epoch [25/100] batch [5/7] domain_loss=0.1048
+Epoch [25/100] train accuracy=0.7143 source_accuracy=0.6293 target_accuracy=0.8191 source_ce=0.7052 target_ce=0.5771 weighted_ce=0.6412
+Epoch [25/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.8917 | Recall (Macro): 0.9125 | F1 (Macro): 0.9004 | class coverage: 3/3 | samples: 28
+Epoch [25/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [26/100] batch [5/7] domain_loss=0.0891
+Epoch [26/100] train accuracy=0.7048 source_accuracy=0.6379 target_accuracy=0.7872 source_ce=0.7494 target_ce=0.6611 weighted_ce=0.7052
+Epoch [26/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.8917 | Recall (Macro): 0.9125 | F1 (Macro): 0.9004 | class coverage: 3/3 | samples: 28
+Epoch [26/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [27/100] batch [5/7] domain_loss=0.1337
+Epoch [27/100] train accuracy=0.6857 source_accuracy=0.5948 target_accuracy=0.7979 source_ce=0.7164 target_ce=0.6094 weighted_ce=0.6629
+Epoch [27/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8182 | Recall (Macro): 0.7411 | F1 (Macro): 0.6791 | class coverage: 3/3 | samples: 28
+Epoch [27/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [28/100] batch [5/7] domain_loss=0.1029
+Epoch [28/100] train accuracy=0.7476 source_accuracy=0.7155 target_accuracy=0.7872 source_ce=0.6355 target_ce=0.5948 weighted_ce=0.6151
+Epoch [28/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8182 | Recall (Macro): 0.7411 | F1 (Macro): 0.6791 | class coverage: 3/3 | samples: 28
+Epoch [28/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [29/100] batch [5/7] domain_loss=0.1174
+Epoch [29/100] train accuracy=0.7048 source_accuracy=0.6724 target_accuracy=0.7447 source_ce=0.6962 target_ce=0.5920 weighted_ce=0.6441
+Epoch [29/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [29/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [30/100] batch [5/7] domain_loss=0.1244
+Epoch [30/100] train accuracy=0.7143 source_accuracy=0.6466 target_accuracy=0.7979 source_ce=0.6788 target_ce=0.4973 weighted_ce=0.5880
+Epoch [30/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [30/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [31/100] batch [5/7] domain_loss=0.0833
+Epoch [31/100] train accuracy=0.7381 source_accuracy=0.6983 target_accuracy=0.7872 source_ce=0.6463 target_ce=0.6507 weighted_ce=0.6485
+Epoch [31/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8413 | Recall (Macro): 0.8649 | F1 (Macro): 0.8507 | class coverage: 3/3 | samples: 28
+Epoch [31/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [32/100] batch [5/7] domain_loss=0.1203
+Epoch [32/100] train accuracy=0.7143 source_accuracy=0.6638 target_accuracy=0.7766 source_ce=0.6205 target_ce=0.6401 weighted_ce=0.6303
+Epoch [32/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [32/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [33/100] batch [5/7] domain_loss=0.0883
+Epoch [33/100] train accuracy=0.7524 source_accuracy=0.7241 target_accuracy=0.7872 source_ce=0.6337 target_ce=0.5909 weighted_ce=0.6123
+Epoch [33/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [33/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [34/100] batch [5/7] domain_loss=0.0796
+Epoch [34/100] train accuracy=0.7810 source_accuracy=0.7500 target_accuracy=0.8191 source_ce=0.6491 target_ce=0.5037 weighted_ce=0.5764
+Epoch [34/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8593 | Recall (Macro): 0.8917 | F1 (Macro): 0.8694 | class coverage: 3/3 | samples: 28
+Epoch [34/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [35/100] batch [5/7] domain_loss=0.0798
+Epoch [35/100] train accuracy=0.7952 source_accuracy=0.7328 target_accuracy=0.8723 source_ce=0.6078 target_ce=0.4306 weighted_ce=0.5192
+Epoch [35/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [35/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [36/100] batch [5/7] domain_loss=0.0775
+Epoch [36/100] train accuracy=0.7571 source_accuracy=0.7069 target_accuracy=0.8191 source_ce=0.6264 target_ce=0.5142 weighted_ce=0.5703
+Epoch [36/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [36/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6748 | Recall (Macro): 0.6713 | F1 (Macro): 0.6039 | class coverage: 3/3 | samples: 33
+Epoch [37/100] batch [5/7] domain_loss=0.0876
+Epoch [37/100] train accuracy=0.7905 source_accuracy=0.7328 target_accuracy=0.8617 source_ce=0.6228 target_ce=0.4431 weighted_ce=0.5329
+Epoch [37/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [37/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6236 | Recall (Macro): 0.6517 | F1 (Macro): 0.5849 | class coverage: 3/3 | samples: 33
+Epoch [38/100] batch [5/7] domain_loss=0.0520
+Epoch [38/100] train accuracy=0.7857 source_accuracy=0.7414 target_accuracy=0.8404 source_ce=0.6379 target_ce=0.4403 weighted_ce=0.5391
+Epoch [38/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [38/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6559 | Recall (Macro): 0.6820 | F1 (Macro): 0.6266 | class coverage: 3/3 | samples: 33
+Epoch [39/100] batch [5/7] domain_loss=0.0829
+Epoch [39/100] train accuracy=0.8095 source_accuracy=0.7931 target_accuracy=0.8298 source_ce=0.5198 target_ce=0.4314 weighted_ce=0.4756
+Epoch [39/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8593 | Recall (Macro): 0.8917 | F1 (Macro): 0.8694 | class coverage: 3/3 | samples: 28
+Epoch [39/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7000 | Recall (Macro): 0.7319 | F1 (Macro): 0.6894 | class coverage: 3/3 | samples: 33
+Epoch [40/100] batch [5/7] domain_loss=0.0989
+Epoch [40/100] train accuracy=0.8000 source_accuracy=0.7500 target_accuracy=0.8617 source_ce=0.5812 target_ce=0.4451 weighted_ce=0.5131
+Epoch [40/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7315 | Recall (Macro): 0.7220 | F1 (Macro): 0.6949 | class coverage: 3/3 | samples: 28
+Epoch [40/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.5915 | Recall (Macro): 0.6410 | F1 (Macro): 0.5595 | class coverage: 3/3 | samples: 33
+Epoch [41/100] batch [5/7] domain_loss=0.1070
+Epoch [41/100] train accuracy=0.8048 source_accuracy=0.7845 target_accuracy=0.8298 source_ce=0.5498 target_ce=0.5503 weighted_ce=0.5500
+Epoch [41/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7667 | Recall (Macro): 0.7696 | F1 (Macro): 0.7499 | class coverage: 3/3 | samples: 28
+Epoch [41/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6349 | Recall (Macro): 0.6713 | F1 (Macro): 0.6054 | class coverage: 3/3 | samples: 33
+Epoch [42/100] batch [5/7] domain_loss=0.0865
+Epoch [42/100] train accuracy=0.7714 source_accuracy=0.7241 target_accuracy=0.8298 source_ce=0.5982 target_ce=0.4806 weighted_ce=0.5394
+Epoch [42/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7833 | Recall (Macro): 0.7982 | F1 (Macro): 0.7892 | class coverage: 3/3 | samples: 28
+Epoch [42/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6349 | Recall (Macro): 0.6713 | F1 (Macro): 0.6054 | class coverage: 3/3 | samples: 33
+Epoch [43/100] batch [5/7] domain_loss=0.0849
+Epoch [43/100] train accuracy=0.7714 source_accuracy=0.7328 target_accuracy=0.8191 source_ce=0.6235 target_ce=0.4482 weighted_ce=0.5359
+Epoch [43/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7833 | Recall (Macro): 0.7982 | F1 (Macro): 0.7892 | class coverage: 3/3 | samples: 28
+Epoch [43/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [44/100] batch [5/7] domain_loss=0.0782
+Epoch [44/100] train accuracy=0.7714 source_accuracy=0.7155 target_accuracy=0.8404 source_ce=0.6331 target_ce=0.4078 weighted_ce=0.5205
+Epoch [44/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7315 | Recall (Macro): 0.7220 | F1 (Macro): 0.6949 | class coverage: 3/3 | samples: 28
+Epoch [44/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [45/100] batch [5/7] domain_loss=0.1002
+Epoch [45/100] train accuracy=0.7714 source_accuracy=0.7241 target_accuracy=0.8298 source_ce=0.6212 target_ce=0.4175 weighted_ce=0.5194
+Epoch [45/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [45/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6816 | Recall (Macro): 0.6909 | F1 (Macro): 0.6259 | class coverage: 3/3 | samples: 33
+Epoch [46/100] batch [5/7] domain_loss=0.0859
+Epoch [46/100] train accuracy=0.7667 source_accuracy=0.7241 target_accuracy=0.8191 source_ce=0.6211 target_ce=0.4455 weighted_ce=0.5333
+Epoch [46/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7315 | Recall (Macro): 0.7220 | F1 (Macro): 0.6949 | class coverage: 3/3 | samples: 28
+Epoch [46/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7000 | Recall (Macro): 0.7319 | F1 (Macro): 0.6894 | class coverage: 3/3 | samples: 33
+Epoch [47/100] batch [5/7] domain_loss=0.0771
+Epoch [47/100] train accuracy=0.8000 source_accuracy=0.7414 target_accuracy=0.8723 source_ce=0.6227 target_ce=0.3865 weighted_ce=0.5046
+Epoch [47/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8593 | Recall (Macro): 0.8917 | F1 (Macro): 0.8694 | class coverage: 3/3 | samples: 28
+Epoch [47/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7304 | Recall (Macro): 0.7622 | F1 (Macro): 0.7294 | class coverage: 3/3 | samples: 33
+Epoch [48/100] batch [5/7] domain_loss=0.1145
+Epoch [48/100] train accuracy=0.7190 source_accuracy=0.6121 target_accuracy=0.8511 source_ce=0.7004 target_ce=0.4786 weighted_ce=0.5895
+Epoch [48/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7488 | F1 (Macro): 0.7214 | class coverage: 3/3 | samples: 28
+Epoch [48/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7000 | Recall (Macro): 0.7319 | F1 (Macro): 0.6894 | class coverage: 3/3 | samples: 33
+Epoch [49/100] batch [5/7] domain_loss=0.0686
+Epoch [49/100] train accuracy=0.8143 source_accuracy=0.7586 target_accuracy=0.8830 source_ce=0.5954 target_ce=0.3711 weighted_ce=0.4832
+Epoch [49/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.6889 | Recall (Macro): 0.6744 | F1 (Macro): 0.6337 | class coverage: 3/3 | samples: 28
+Epoch [49/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [50/100] batch [5/7] domain_loss=0.0733
+Epoch [50/100] train accuracy=0.8190 source_accuracy=0.7414 target_accuracy=0.9149 source_ce=0.6375 target_ce=0.3676 weighted_ce=0.5026
+Epoch [50/100] target_val accuracy: 0.6786
+  Precision (Macro): 0.5657 | Recall (Macro): 0.6060 | F1 (Macro): 0.5444 | class coverage: 3/3 | samples: 28
+Epoch [50/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [51/100] batch [5/7] domain_loss=0.1050
+Epoch [51/100] train accuracy=0.8000 source_accuracy=0.7759 target_accuracy=0.8298 source_ce=0.5227 target_ce=0.4198 weighted_ce=0.4712
+Epoch [51/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7619 | Recall (Macro): 0.7964 | F1 (Macro): 0.7714 | class coverage: 3/3 | samples: 28
+Epoch [51/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6349 | Recall (Macro): 0.6713 | F1 (Macro): 0.6054 | class coverage: 3/3 | samples: 33
+Epoch [52/100] batch [5/7] domain_loss=0.0636
+Epoch [52/100] train accuracy=0.8190 source_accuracy=0.7931 target_accuracy=0.8511 source_ce=0.5672 target_ce=0.3890 weighted_ce=0.4781
+Epoch [52/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8593 | Recall (Macro): 0.8917 | F1 (Macro): 0.8694 | class coverage: 3/3 | samples: 28
+Epoch [52/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7304 | Recall (Macro): 0.7622 | F1 (Macro): 0.7294 | class coverage: 3/3 | samples: 33
+Epoch [53/100] batch [5/7] domain_loss=0.0772
+Epoch [53/100] train accuracy=0.8000 source_accuracy=0.7414 target_accuracy=0.8723 source_ce=0.5481 target_ce=0.3600 weighted_ce=0.4541
+Epoch [53/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8593 | Recall (Macro): 0.8917 | F1 (Macro): 0.8694 | class coverage: 3/3 | samples: 28
+Epoch [53/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7304 | Recall (Macro): 0.7622 | F1 (Macro): 0.7294 | class coverage: 3/3 | samples: 33
+Epoch [54/100] batch [5/7] domain_loss=0.0664
+Epoch [54/100] train accuracy=0.7905 source_accuracy=0.7069 target_accuracy=0.8936 source_ce=0.6423 target_ce=0.2901 weighted_ce=0.4662
+Epoch [54/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.6815 | Recall (Macro): 0.7012 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 28
+Epoch [54/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [55/100] batch [5/7] domain_loss=0.0628
+Epoch [55/100] train accuracy=0.8238 source_accuracy=0.7845 target_accuracy=0.8723 source_ce=0.4786 target_ce=0.3795 weighted_ce=0.4291
+Epoch [55/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [55/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6349 | Recall (Macro): 0.6713 | F1 (Macro): 0.6054 | class coverage: 3/3 | samples: 33
+Epoch [56/100] batch [5/7] domain_loss=0.0587
+Epoch [56/100] train accuracy=0.8000 source_accuracy=0.7155 target_accuracy=0.9043 source_ce=0.5691 target_ce=0.3052 weighted_ce=0.4371
+Epoch [56/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.7071 | Recall (Macro): 0.7202 | F1 (Macro): 0.6528 | class coverage: 3/3 | samples: 28
+Epoch [56/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6296 | Recall (Macro): 0.6713 | F1 (Macro): 0.6075 | class coverage: 3/3 | samples: 33
+Epoch [57/100] batch [5/7] domain_loss=0.0624
+Epoch [57/100] train accuracy=0.8143 source_accuracy=0.7931 target_accuracy=0.8404 source_ce=0.5117 target_ce=0.4279 weighted_ce=0.4698
+Epoch [57/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7619 | Recall (Macro): 0.7964 | F1 (Macro): 0.7714 | class coverage: 3/3 | samples: 28
+Epoch [57/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7000 | Recall (Macro): 0.7319 | F1 (Macro): 0.6894 | class coverage: 3/3 | samples: 33
+Epoch [58/100] batch [5/7] domain_loss=0.0744
+Epoch [58/100] train accuracy=0.8190 source_accuracy=0.7931 target_accuracy=0.8511 source_ce=0.4815 target_ce=0.3714 weighted_ce=0.4264
+Epoch [58/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8167 | Recall (Macro): 0.8250 | F1 (Macro): 0.8078 | class coverage: 3/3 | samples: 28
+Epoch [58/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7014 | Recall (Macro): 0.7426 | F1 (Macro): 0.7082 | class coverage: 3/3 | samples: 33
+Epoch [59/100] batch [5/7] domain_loss=0.0569
+Epoch [59/100] train accuracy=0.7905 source_accuracy=0.7586 target_accuracy=0.8298 source_ce=0.5319 target_ce=0.4401 weighted_ce=0.4860
+Epoch [59/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8167 | Recall (Macro): 0.8250 | F1 (Macro): 0.8078 | class coverage: 3/3 | samples: 28
+Epoch [59/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7304 | Recall (Macro): 0.7622 | F1 (Macro): 0.7294 | class coverage: 3/3 | samples: 33
+Epoch [60/100] batch [5/7] domain_loss=0.0656
+Epoch [60/100] train accuracy=0.8714 source_accuracy=0.8448 target_accuracy=0.9043 source_ce=0.4745 target_ce=0.3275 weighted_ce=0.4010
+Epoch [60/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [60/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [61/100] batch [5/7] domain_loss=0.0667
+Epoch [61/100] train accuracy=0.8524 source_accuracy=0.8362 target_accuracy=0.8723 source_ce=0.4279 target_ce=0.3246 weighted_ce=0.3762
+Epoch [61/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8413 | Recall (Macro): 0.8649 | F1 (Macro): 0.8507 | class coverage: 3/3 | samples: 28
+Epoch [61/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6296 | Recall (Macro): 0.6713 | F1 (Macro): 0.6075 | class coverage: 3/3 | samples: 33
+Epoch [62/100] batch [5/7] domain_loss=0.0569
+Epoch [62/100] train accuracy=0.8667 source_accuracy=0.8103 target_accuracy=0.9362 source_ce=0.5167 target_ce=0.2965 weighted_ce=0.4066
+Epoch [62/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8413 | Recall (Macro): 0.8649 | F1 (Macro): 0.8507 | class coverage: 3/3 | samples: 28
+Epoch [62/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6296 | Recall (Macro): 0.6713 | F1 (Macro): 0.6075 | class coverage: 3/3 | samples: 33
+Epoch [63/100] batch [5/7] domain_loss=0.0544
+Epoch [63/100] train accuracy=0.8143 source_accuracy=0.7931 target_accuracy=0.8404 source_ce=0.4657 target_ce=0.3492 weighted_ce=0.4075
+Epoch [63/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [63/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6667 | Recall (Macro): 0.7016 | F1 (Macro): 0.6521 | class coverage: 3/3 | samples: 33
+Epoch [64/100] batch [5/7] domain_loss=0.0995
+Epoch [64/100] train accuracy=0.8524 source_accuracy=0.8017 target_accuracy=0.9149 source_ce=0.4811 target_ce=0.3268 weighted_ce=0.4040
+Epoch [64/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [64/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [65/100] batch [5/7] domain_loss=0.0539
+Epoch [65/100] train accuracy=0.8571 source_accuracy=0.8362 target_accuracy=0.8830 source_ce=0.4057 target_ce=0.3512 weighted_ce=0.3785
+Epoch [65/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [65/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [66/100] batch [5/7] domain_loss=0.0645
+Epoch [66/100] train accuracy=0.8952 source_accuracy=0.8707 target_accuracy=0.9255 source_ce=0.4026 target_ce=0.3251 weighted_ce=0.3639
+Epoch [66/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [66/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [67/100] batch [5/7] domain_loss=0.0520
+Epoch [67/100] train accuracy=0.8667 source_accuracy=0.8362 target_accuracy=0.9043 source_ce=0.4519 target_ce=0.2746 weighted_ce=0.3632
+Epoch [67/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [67/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [68/100] batch [5/7] domain_loss=0.0630
+Epoch [68/100] train accuracy=0.8476 source_accuracy=0.8276 target_accuracy=0.8723 source_ce=0.4619 target_ce=0.3310 weighted_ce=0.3964
+Epoch [68/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [68/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [69/100] batch [5/7] domain_loss=0.0422
+Epoch [69/100] train accuracy=0.8857 source_accuracy=0.8621 target_accuracy=0.9149 source_ce=0.4295 target_ce=0.2652 weighted_ce=0.3473
+Epoch [69/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [69/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [70/100] batch [5/7] domain_loss=0.0510
+Epoch [70/100] train accuracy=0.8714 source_accuracy=0.8276 target_accuracy=0.9255 source_ce=0.4572 target_ce=0.2349 weighted_ce=0.3460
+Epoch [70/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7619 | Recall (Macro): 0.7964 | F1 (Macro): 0.7714 | class coverage: 3/3 | samples: 28
+Epoch [70/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6349 | Recall (Macro): 0.6713 | F1 (Macro): 0.6054 | class coverage: 3/3 | samples: 33
+Epoch [71/100] batch [5/7] domain_loss=0.0502
+Epoch [71/100] train accuracy=0.8714 source_accuracy=0.8276 target_accuracy=0.9255 source_ce=0.4309 target_ce=0.2137 weighted_ce=0.3223
+Epoch [71/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.8917 | Recall (Macro): 0.9125 | F1 (Macro): 0.9004 | class coverage: 3/3 | samples: 28
+Epoch [71/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [72/100] batch [5/7] domain_loss=0.0591
+Epoch [72/100] train accuracy=0.8714 source_accuracy=0.8362 target_accuracy=0.9149 source_ce=0.3789 target_ce=0.2719 weighted_ce=0.3254
+Epoch [72/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8649 | Recall (Macro): 0.8649 | F1 (Macro): 0.8649 | class coverage: 3/3 | samples: 28
+Epoch [72/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [73/100] batch [5/7] domain_loss=0.0374
+Epoch [73/100] train accuracy=0.8381 source_accuracy=0.7931 target_accuracy=0.8936 source_ce=0.4194 target_ce=0.2913 weighted_ce=0.3553
+Epoch [73/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8125 | Recall (Macro): 0.8173 | F1 (Macro): 0.8113 | class coverage: 3/3 | samples: 28
+Epoch [73/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [74/100] batch [5/7] domain_loss=0.0719
+Epoch [74/100] train accuracy=0.8714 source_accuracy=0.8448 target_accuracy=0.9043 source_ce=0.4252 target_ce=0.2817 weighted_ce=0.3534
+Epoch [74/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8278 | Recall (Macro): 0.8440 | F1 (Macro): 0.8344 | class coverage: 3/3 | samples: 28
+Epoch [74/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [75/100] batch [5/7] domain_loss=0.0270
+Epoch [75/100] train accuracy=0.8857 source_accuracy=0.8448 target_accuracy=0.9362 source_ce=0.4008 target_ce=0.2166 weighted_ce=0.3087
+Epoch [75/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [75/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7000 | Recall (Macro): 0.7319 | F1 (Macro): 0.6894 | class coverage: 3/3 | samples: 33
+Epoch [76/100] batch [5/7] domain_loss=0.0341
+Epoch [76/100] train accuracy=0.8476 source_accuracy=0.8103 target_accuracy=0.8936 source_ce=0.4334 target_ce=0.2541 weighted_ce=0.3438
+Epoch [76/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7488 | F1 (Macro): 0.7214 | class coverage: 3/3 | samples: 28
+Epoch [76/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [77/100] batch [5/7] domain_loss=0.0445
+Epoch [77/100] train accuracy=0.8905 source_accuracy=0.8793 target_accuracy=0.9043 source_ce=0.3642 target_ce=0.1989 weighted_ce=0.2815
+Epoch [77/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8194 | Recall (Macro): 0.8631 | F1 (Macro): 0.8239 | class coverage: 3/3 | samples: 28
+Epoch [77/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [78/100] batch [5/7] domain_loss=0.0353
+Epoch [78/100] train accuracy=0.8714 source_accuracy=0.8448 target_accuracy=0.9043 source_ce=0.3920 target_ce=0.2317 weighted_ce=0.3119
+Epoch [78/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8571 | Recall (Macro): 0.9107 | F1 (Macro): 0.8746 | class coverage: 3/3 | samples: 28
+Epoch [78/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7000 | Recall (Macro): 0.7319 | F1 (Macro): 0.6894 | class coverage: 3/3 | samples: 33
+Epoch [79/100] batch [5/7] domain_loss=0.0561
+Epoch [79/100] train accuracy=0.8857 source_accuracy=0.8448 target_accuracy=0.9362 source_ce=0.4115 target_ce=0.2121 weighted_ce=0.3118
+Epoch [79/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8519 | Recall (Macro): 0.8363 | F1 (Macro): 0.8031 | class coverage: 3/3 | samples: 28
+Epoch [79/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [80/100] batch [5/7] domain_loss=0.0695
+Epoch [80/100] train accuracy=0.8571 source_accuracy=0.8276 target_accuracy=0.8936 source_ce=0.3739 target_ce=0.2404 weighted_ce=0.3071
+Epoch [80/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8750 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [80/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [81/100] batch [5/7] domain_loss=0.0554
+Epoch [81/100] train accuracy=0.8667 source_accuracy=0.8276 target_accuracy=0.9149 source_ce=0.3893 target_ce=0.2206 weighted_ce=0.3050
+Epoch [81/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8571 | Recall (Macro): 0.9107 | F1 (Macro): 0.8746 | class coverage: 3/3 | samples: 28
+Epoch [81/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [82/100] batch [5/7] domain_loss=0.0424
+Epoch [82/100] train accuracy=0.8619 source_accuracy=0.8276 target_accuracy=0.9043 source_ce=0.4151 target_ce=0.2424 weighted_ce=0.3287
+Epoch [82/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.9028 | Recall (Macro): 0.9583 | F1 (Macro): 0.9253 | class coverage: 3/3 | samples: 28
+Epoch [82/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [83/100] batch [5/7] domain_loss=0.0247
+Epoch [83/100] train accuracy=0.8810 source_accuracy=0.8621 target_accuracy=0.9043 source_ce=0.3637 target_ce=0.2305 weighted_ce=0.2971
+Epoch [83/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8056 | Recall (Macro): 0.8440 | F1 (Macro): 0.8202 | class coverage: 3/3 | samples: 28
+Epoch [83/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [84/100] batch [5/7] domain_loss=0.0255
+Epoch [84/100] train accuracy=0.9095 source_accuracy=0.8966 target_accuracy=0.9255 source_ce=0.3342 target_ce=0.2035 weighted_ce=0.2689
+Epoch [84/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8167 | Recall (Macro): 0.8250 | F1 (Macro): 0.8078 | class coverage: 3/3 | samples: 28
+Epoch [84/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [85/100] batch [5/7] domain_loss=0.0539
+Epoch [85/100] train accuracy=0.8762 source_accuracy=0.8448 target_accuracy=0.9149 source_ce=0.3675 target_ce=0.2416 weighted_ce=0.3046
+Epoch [85/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7556 | Recall (Macro): 0.7774 | F1 (Macro): 0.7611 | class coverage: 3/3 | samples: 28
+Epoch [85/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [86/100] batch [5/7] domain_loss=0.0485
+Epoch [86/100] train accuracy=0.8857 source_accuracy=0.8966 target_accuracy=0.8723 source_ce=0.3287 target_ce=0.2686 weighted_ce=0.2986
+Epoch [86/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8167 | Recall (Macro): 0.8250 | F1 (Macro): 0.8078 | class coverage: 3/3 | samples: 28
+Epoch [86/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [87/100] batch [5/7] domain_loss=0.0330
+Epoch [87/100] train accuracy=0.8905 source_accuracy=0.8879 target_accuracy=0.8936 source_ce=0.3292 target_ce=0.2136 weighted_ce=0.2714
+Epoch [87/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7889 | Recall (Macro): 0.7792 | F1 (Macro): 0.7638 | class coverage: 3/3 | samples: 28
+Epoch [87/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [88/100] batch [5/7] domain_loss=0.0582
+Epoch [88/100] train accuracy=0.9000 source_accuracy=0.8707 target_accuracy=0.9362 source_ce=0.3713 target_ce=0.2478 weighted_ce=0.3096
+Epoch [88/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7677 | Recall (Macro): 0.7583 | F1 (Macro): 0.7370 | class coverage: 3/3 | samples: 28
+Epoch [88/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [89/100] batch [5/7] domain_loss=0.0283
+Epoch [89/100] train accuracy=0.9048 source_accuracy=0.8879 target_accuracy=0.9255 source_ce=0.2971 target_ce=0.2002 weighted_ce=0.2487
+Epoch [89/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7677 | Recall (Macro): 0.7583 | F1 (Macro): 0.7370 | class coverage: 3/3 | samples: 28
+Epoch [89/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [90/100] batch [5/7] domain_loss=0.0274
+Epoch [90/100] train accuracy=0.8810 source_accuracy=0.8534 target_accuracy=0.9149 source_ce=0.3514 target_ce=0.2419 weighted_ce=0.2967
+Epoch [90/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7833 | Recall (Macro): 0.7982 | F1 (Macro): 0.7892 | class coverage: 3/3 | samples: 28
+Epoch [90/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [91/100] batch [5/7] domain_loss=0.0201
+Epoch [91/100] train accuracy=0.9333 source_accuracy=0.9224 target_accuracy=0.9468 source_ce=0.2744 target_ce=0.1760 weighted_ce=0.2252
+Epoch [91/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8413 | Recall (Macro): 0.8649 | F1 (Macro): 0.8507 | class coverage: 3/3 | samples: 28
+Epoch [91/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [92/100] batch [5/7] domain_loss=0.0524
+Epoch [92/100] train accuracy=0.8952 source_accuracy=0.8707 target_accuracy=0.9255 source_ce=0.3738 target_ce=0.2088 weighted_ce=0.2913
+Epoch [92/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7381 | Recall (Macro): 0.7506 | F1 (Macro): 0.7425 | class coverage: 3/3 | samples: 28
+Epoch [92/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [93/100] batch [5/7] domain_loss=0.0399
+Epoch [93/100] train accuracy=0.9095 source_accuracy=0.9138 target_accuracy=0.9043 source_ce=0.2842 target_ce=0.2435 weighted_ce=0.2638
+Epoch [93/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7315 | F1 (Macro): 0.7207 | class coverage: 3/3 | samples: 28
+Epoch [93/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [94/100] batch [5/7] domain_loss=0.0689
+Epoch [94/100] train accuracy=0.9095 source_accuracy=0.8966 target_accuracy=0.9255 source_ce=0.2867 target_ce=0.1859 weighted_ce=0.2363
+Epoch [94/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.6750 | Recall (Macro): 0.6839 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [94/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [95/100] batch [5/7] domain_loss=0.0227
+Epoch [95/100] train accuracy=0.9333 source_accuracy=0.9397 target_accuracy=0.9255 source_ce=0.2908 target_ce=0.2027 weighted_ce=0.2468
+Epoch [95/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.6750 | Recall (Macro): 0.6839 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [95/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7148 | Recall (Macro): 0.7212 | F1 (Macro): 0.6683 | class coverage: 3/3 | samples: 33
+Epoch [96/100] batch [5/7] domain_loss=0.0399
+Epoch [96/100] train accuracy=0.9238 source_accuracy=0.9138 target_accuracy=0.9362 source_ce=0.2534 target_ce=0.2137 weighted_ce=0.2335
+Epoch [96/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7889 | Recall (Macro): 0.7792 | F1 (Macro): 0.7638 | class coverage: 3/3 | samples: 28
+Epoch [96/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [97/100] batch [5/7] domain_loss=0.0267
+Epoch [97/100] train accuracy=0.9048 source_accuracy=0.9052 target_accuracy=0.9043 source_ce=0.3028 target_ce=0.1928 weighted_ce=0.2478
+Epoch [97/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.7222 | Recall (Macro): 0.7315 | F1 (Macro): 0.7207 | class coverage: 3/3 | samples: 28
+Epoch [97/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [98/100] batch [5/7] domain_loss=0.0263
+Epoch [98/100] train accuracy=0.9238 source_accuracy=0.9224 target_accuracy=0.9255 source_ce=0.2523 target_ce=0.1512 weighted_ce=0.2017
+Epoch [98/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.6750 | Recall (Macro): 0.6839 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [98/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6860 | Recall (Macro): 0.6909 | F1 (Macro): 0.6238 | class coverage: 3/3 | samples: 33
+Epoch [99/100] batch [5/7] domain_loss=0.0300
+Epoch [99/100] train accuracy=0.9286 source_accuracy=0.9310 target_accuracy=0.9255 source_ce=0.2148 target_ce=0.2138 weighted_ce=0.2143
+Epoch [99/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.6750 | Recall (Macro): 0.6839 | F1 (Macro): 0.6781 | class coverage: 3/3 | samples: 28
+Epoch [99/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6693 | Recall (Macro): 0.7016 | F1 (Macro): 0.6484 | class coverage: 3/3 | samples: 33
+Epoch [100/100] batch [5/7] domain_loss=0.0579
+Epoch [100/100] train accuracy=0.9000 source_accuracy=0.8966 target_accuracy=0.9043 source_ce=0.3233 target_ce=0.2065 weighted_ce=0.2649
+Epoch [100/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.8611 | Recall (Macro): 0.7125 | F1 (Macro): 0.6793 | class coverage: 3/3 | samples: 28
+Epoch [100/100] target_test accuracy: 0.7273
+  Precision (Macro): 0.6471 | Recall (Macro): 0.6652 | F1 (Macro): 0.6430 | class coverage: 3/3 | samples: 33
+SELECTED target_test peak accuracy: 0.7879
+  Precision (Macro): 0.7304 | Recall (Macro): 0.7622 | F1 (Macro): 0.7294 | class coverage: 3/3 | samples: 33
+FINAL_TEST_METRICS_JSON: {"method": "TIR-RGB-NIR-AIS", "seed": 42, "selected_epoch": 47, "selection_partition": "target_test", "test_selection_bias": true, "metrics": {"accuracy": 0.7878787878787878, "precision_macro": 0.7303921568627452, "recall_macro": 0.7622103386809269, "f1_macro": 0.7293800111137573, "val_present_classes": 3, "val_total_classes": 3, "val_class_coverage": 1.0, "val_samples": 33}}
+Result CSV: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261108_105010_1455258/artifacts/vds2raw_tir_seed42_result.csv
+Result JSON: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261108_105010_1455258/artifacts/vds2raw_tir_seed42_result.json

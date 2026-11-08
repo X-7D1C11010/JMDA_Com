@@ -1,0 +1,345 @@
+[GPU-WAIT] mcft_dark: require free >= 4608 MiB, util <= 10% for 3 checks; candidates=all
+[GPU-WAIT] 2026-11-08T13:45:21+08:00 mcft_dark: GPU 0: free=30250 MiB, util=0%; GPU 1: free=32094 MiB, util=1%
+[GPU-WAIT] 2026-11-08T13:45:51+08:00 mcft_dark: GPU 0: free=30250 MiB, util=0%; GPU 1: free=32094 MiB, util=0%
+[GPU-SELECT] mcft_dark: physical GPU 1; free=32094 MiB, util=0%; launching: python /home/lixiang/lx/JMDA_Com/MCFT/train_mcft.py --target dark --epochs 100 --lr 0.0003 --weight-decay 0.0001 --label-smoothing 0.05 --dropout 0.2 --emb-dropout 0.2 --horizontal-flip --early-stopping-patience 15 --early-stopping-min-epochs 100 --seed 46 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/20261108_132125_1756285 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/supervised --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/supervised/20261108_132125_1756285
+Deterministic kernels: False
+Controlled random seed: 46
+Device: cuda
+Target-driven label space: 8 classes, original ids [0, 1, 4, 5, 6, 8, 10, 11], remapped to 0..7
+Source train (sunny VIS+IR): kept=493, dropped_label=267, dropped_unpaired=0
+Target train (dark VIS+IR, labels visible): kept=465, dropped_label=0, dropped_unpaired=0
+Target val (dark VIS+IR): kept=120, dropped_label=0, dropped_unpaired=0
+Fresh model initialization: no checkpoint or previous-seed state loaded.
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/supervised/MCFT/b56eac63c137
+/home/lixiang/lx/JMDA_Com/MCFT/mcft_model.py:291: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  if float(row.sum()) > 0:
+  Epoch [1/100] batch [5/15] ce=2.0264 ita=4.0279 itm=0.0001
+  Epoch [1/100] batch [10/15] ce=1.9086 ita=3.6430 itm=0.0000
+  Epoch [1/100] batch [15/15] ce=1.9139 ita=3.4504 itm=0.0000
+Epoch [1/100] target val accuracy: 0.3417
+  Val Precision (Macro): 0.0427 | Val Recall (Macro): 0.1250 | Val F1 (Macro): 0.0637 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [2/100] batch [5/15] ce=1.7486 ita=3.5500 itm=0.0000
+  Epoch [2/100] batch [10/15] ce=1.8263 ita=2.9086 itm=0.0000
+  Epoch [2/100] batch [15/15] ce=1.6586 ita=3.4413 itm=0.0000
+  Epoch [3/100] batch [5/15] ce=1.6485 ita=3.1912 itm=0.0000
+  Epoch [3/100] batch [10/15] ce=1.6901 ita=3.3463 itm=0.0000
+  Epoch [3/100] batch [15/15] ce=1.4947 ita=3.2506 itm=0.0000
+  Epoch [4/100] batch [5/15] ce=1.5576 ita=3.1117 itm=0.0000
+  Epoch [4/100] batch [10/15] ce=1.3518 ita=3.1475 itm=0.0000
+  Epoch [4/100] batch [15/15] ce=1.4747 ita=3.3096 itm=0.0000
+  Epoch [5/100] batch [5/15] ce=1.3694 ita=3.0949 itm=0.0000
+  Epoch [5/100] batch [10/15] ce=1.2973 ita=3.3230 itm=0.0000
+  Epoch [5/100] batch [15/15] ce=1.2621 ita=2.6999 itm=0.0000
+  Epoch [6/100] batch [5/15] ce=1.2623 ita=3.3192 itm=0.0000
+  Epoch [6/100] batch [10/15] ce=1.4033 ita=3.0920 itm=0.0000
+  Epoch [6/100] batch [15/15] ce=1.3189 ita=3.0086 itm=0.0000
+  Epoch [7/100] batch [5/15] ce=1.2390 ita=2.9872 itm=0.0000
+  Epoch [7/100] batch [10/15] ce=1.4271 ita=3.0767 itm=0.0000
+  Epoch [7/100] batch [15/15] ce=1.2100 ita=3.2770 itm=0.0000
+  Epoch [8/100] batch [5/15] ce=1.2986 ita=3.0625 itm=0.0000
+  Epoch [8/100] batch [10/15] ce=1.1551 ita=3.3420 itm=0.0000
+  Epoch [8/100] batch [15/15] ce=1.3363 ita=3.6910 itm=0.0024
+  Epoch [9/100] batch [5/15] ce=1.1171 ita=2.9043 itm=0.0000
+  Epoch [9/100] batch [10/15] ce=1.1037 ita=3.8896 itm=0.0000
+  Epoch [9/100] batch [15/15] ce=1.2781 ita=2.9353 itm=0.0000
+  Epoch [10/100] batch [5/15] ce=1.0791 ita=3.2328 itm=0.0000
+  Epoch [10/100] batch [10/15] ce=1.0466 ita=2.6538 itm=0.0000
+  Epoch [10/100] batch [15/15] ce=1.0938 ita=3.1432 itm=0.0000
+  Epoch [11/100] batch [5/15] ce=0.9884 ita=3.1638 itm=0.0000
+  Epoch [11/100] batch [10/15] ce=1.0532 ita=2.8308 itm=0.0000
+  Epoch [11/100] batch [15/15] ce=1.2684 ita=2.9486 itm=0.0000
+Epoch [11/100] target val accuracy: 0.6167
+  Val Precision (Macro): 0.4320 | Val Recall (Macro): 0.4089 | Val F1 (Macro): 0.3535 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [12/100] batch [5/15] ce=0.8932 ita=2.8519 itm=0.0000
+  Epoch [12/100] batch [10/15] ce=0.8827 ita=3.3154 itm=0.0000
+  Epoch [12/100] batch [15/15] ce=0.9179 ita=3.4690 itm=0.0000
+  Epoch [13/100] batch [5/15] ce=0.9336 ita=2.4998 itm=0.0000
+  Epoch [13/100] batch [10/15] ce=1.1271 ita=2.8076 itm=0.0001
+  Epoch [13/100] batch [15/15] ce=0.8807 ita=2.8338 itm=0.0000
+  Epoch [14/100] batch [5/15] ce=1.1250 ita=3.0661 itm=0.0000
+  Epoch [14/100] batch [10/15] ce=0.9085 ita=2.8605 itm=0.0002
+  Epoch [14/100] batch [15/15] ce=1.1535 ita=3.4820 itm=0.0000
+  Epoch [15/100] batch [5/15] ce=0.8100 ita=3.2120 itm=0.0009
+  Epoch [15/100] batch [10/15] ce=0.8926 ita=3.2240 itm=0.0000
+  Epoch [15/100] batch [15/15] ce=1.1590 ita=3.6325 itm=0.0016
+  Epoch [16/100] batch [5/15] ce=0.9245 ita=2.7782 itm=0.0000
+  Epoch [16/100] batch [10/15] ce=0.7539 ita=2.8587 itm=0.0000
+  Epoch [16/100] batch [15/15] ce=0.7210 ita=3.4319 itm=0.0001
+  Epoch [17/100] batch [5/15] ce=0.8702 ita=3.2548 itm=0.0000
+  Epoch [17/100] batch [10/15] ce=0.9383 ita=3.5962 itm=0.0000
+  Epoch [17/100] batch [15/15] ce=0.7834 ita=2.8959 itm=0.0000
+  Epoch [18/100] batch [5/15] ce=0.8954 ita=3.4587 itm=0.0000
+  Epoch [18/100] batch [10/15] ce=0.8479 ita=2.9738 itm=0.0000
+  Epoch [18/100] batch [15/15] ce=0.7894 ita=3.0524 itm=0.0000
+  Epoch [19/100] batch [5/15] ce=0.6978 ita=2.7109 itm=0.0000
+  Epoch [19/100] batch [10/15] ce=0.9055 ita=3.4954 itm=0.0000
+  Epoch [19/100] batch [15/15] ce=0.6795 ita=2.9457 itm=0.0000
+  Epoch [20/100] batch [5/15] ce=0.8120 ita=2.8154 itm=0.0001
+  Epoch [20/100] batch [10/15] ce=0.8462 ita=2.8577 itm=0.0009
+  Epoch [20/100] batch [15/15] ce=0.8512 ita=3.3440 itm=0.0000
+  Epoch [21/100] batch [5/15] ce=0.6809 ita=2.7806 itm=0.0000
+  Epoch [21/100] batch [10/15] ce=0.8890 ita=2.6514 itm=0.0000
+  Epoch [21/100] batch [15/15] ce=0.7306 ita=3.1785 itm=0.0000
+Epoch [21/100] target val accuracy: 0.8083
+  Val Precision (Macro): 0.5707 | Val Recall (Macro): 0.6805 | Val F1 (Macro): 0.6010 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [22/100] batch [5/15] ce=0.7083 ita=3.0586 itm=0.0000
+  Epoch [22/100] batch [10/15] ce=0.6991 ita=2.8343 itm=0.0000
+  Epoch [22/100] batch [15/15] ce=0.6722 ita=3.0416 itm=0.0000
+  Epoch [23/100] batch [5/15] ce=0.5905 ita=2.8329 itm=0.0001
+  Epoch [23/100] batch [10/15] ce=0.5558 ita=3.1357 itm=0.0000
+  Epoch [23/100] batch [15/15] ce=0.6194 ita=2.9248 itm=0.0000
+  Epoch [24/100] batch [5/15] ce=0.5975 ita=3.0589 itm=0.0000
+  Epoch [24/100] batch [10/15] ce=0.5488 ita=2.7099 itm=0.0000
+  Epoch [24/100] batch [15/15] ce=0.6745 ita=3.1717 itm=0.0004
+  Epoch [25/100] batch [5/15] ce=0.6554 ita=2.7541 itm=0.0000
+  Epoch [25/100] batch [10/15] ce=0.5906 ita=3.3989 itm=0.0000
+  Epoch [25/100] batch [15/15] ce=0.5935 ita=2.7646 itm=0.0000
+  Epoch [26/100] batch [5/15] ce=0.5467 ita=2.8534 itm=0.0000
+  Epoch [26/100] batch [10/15] ce=0.7349 ita=2.8334 itm=0.0000
+  Epoch [26/100] batch [15/15] ce=0.5894 ita=2.6949 itm=0.0000
+  Epoch [27/100] batch [5/15] ce=0.6507 ita=3.0344 itm=0.0000
+  Epoch [27/100] batch [10/15] ce=0.6386 ita=3.0053 itm=0.0000
+  Epoch [27/100] batch [15/15] ce=0.5687 ita=3.4288 itm=0.0000
+  Epoch [28/100] batch [5/15] ce=0.5490 ita=2.8361 itm=0.0001
+  Epoch [28/100] batch [10/15] ce=0.6165 ita=3.5253 itm=0.0000
+  Epoch [28/100] batch [15/15] ce=0.6167 ita=2.9738 itm=0.0004
+  Epoch [29/100] batch [5/15] ce=0.6034 ita=2.9276 itm=0.0000
+  Epoch [29/100] batch [10/15] ce=0.6286 ita=2.9999 itm=0.0000
+  Epoch [29/100] batch [15/15] ce=0.7120 ita=3.1229 itm=0.0000
+  Epoch [30/100] batch [5/15] ce=0.5317 ita=3.8736 itm=0.0000
+  Epoch [30/100] batch [10/15] ce=0.6362 ita=2.6878 itm=0.0000
+  Epoch [30/100] batch [15/15] ce=0.4986 ita=2.6781 itm=0.0000
+  Epoch [31/100] batch [5/15] ce=0.5107 ita=2.5749 itm=0.0000
+  Epoch [31/100] batch [10/15] ce=0.5301 ita=2.8413 itm=0.0000
+  Epoch [31/100] batch [15/15] ce=0.6173 ita=2.8295 itm=0.0001
+Epoch [31/100] target val accuracy: 0.8500
+  Val Precision (Macro): 0.8430 | Val Recall (Macro): 0.7611 | Val F1 (Macro): 0.7342 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [32/100] batch [5/15] ce=0.5598 ita=3.1058 itm=0.0000
+  Epoch [32/100] batch [10/15] ce=0.5284 ita=3.1637 itm=0.0000
+  Epoch [32/100] batch [15/15] ce=0.5393 ita=2.8156 itm=0.0000
+  Epoch [33/100] batch [5/15] ce=0.4949 ita=2.8327 itm=0.0000
+  Epoch [33/100] batch [10/15] ce=0.4915 ita=2.9106 itm=0.0000
+  Epoch [33/100] batch [15/15] ce=0.5361 ita=3.1472 itm=0.0000
+  Epoch [34/100] batch [5/15] ce=0.5678 ita=2.6230 itm=0.0003
+  Epoch [34/100] batch [10/15] ce=0.5981 ita=2.8882 itm=0.0000
+  Epoch [34/100] batch [15/15] ce=0.6375 ita=2.7513 itm=0.0000
+  Epoch [35/100] batch [5/15] ce=0.5153 ita=2.5955 itm=0.0000
+  Epoch [35/100] batch [10/15] ce=0.5203 ita=3.1891 itm=0.0000
+  Epoch [35/100] batch [15/15] ce=0.5472 ita=2.8163 itm=0.0000
+  Epoch [36/100] batch [5/15] ce=0.4512 ita=3.1157 itm=0.0000
+  Epoch [36/100] batch [10/15] ce=0.6668 ita=2.9857 itm=0.0000
+  Epoch [36/100] batch [15/15] ce=0.5194 ita=3.0341 itm=0.0000
+  Epoch [37/100] batch [5/15] ce=0.5427 ita=2.7997 itm=0.0000
+  Epoch [37/100] batch [10/15] ce=0.5866 ita=2.9366 itm=0.0000
+  Epoch [37/100] batch [15/15] ce=0.4802 ita=3.0663 itm=0.0000
+  Epoch [38/100] batch [5/15] ce=0.4759 ita=2.7332 itm=0.0000
+  Epoch [38/100] batch [10/15] ce=0.4480 ita=3.4436 itm=0.0000
+  Epoch [38/100] batch [15/15] ce=0.4934 ita=3.0822 itm=0.0000
+  Epoch [39/100] batch [5/15] ce=0.4945 ita=2.7352 itm=0.0000
+  Epoch [39/100] batch [10/15] ce=0.5213 ita=2.9245 itm=0.0000
+  Epoch [39/100] batch [15/15] ce=0.5408 ita=2.7557 itm=0.0000
+  Epoch [40/100] batch [5/15] ce=0.3934 ita=3.1859 itm=0.0000
+  Epoch [40/100] batch [10/15] ce=0.3761 ita=2.9613 itm=0.0000
+  Epoch [40/100] batch [15/15] ce=0.5121 ita=2.8997 itm=0.0000
+  Epoch [41/100] batch [5/15] ce=0.6232 ita=2.7291 itm=0.0000
+  Epoch [41/100] batch [10/15] ce=0.5176 ita=3.2238 itm=0.0000
+  Epoch [41/100] batch [15/15] ce=0.3850 ita=2.9710 itm=0.0000
+Epoch [41/100] target val accuracy: 0.8667
+  Val Precision (Macro): 0.8604 | Val Recall (Macro): 0.8967 | Val F1 (Macro): 0.8723 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [42/100] batch [5/15] ce=0.5668 ita=2.8418 itm=0.0000
+  Epoch [42/100] batch [10/15] ce=0.5148 ita=2.9440 itm=0.0000
+  Epoch [42/100] batch [15/15] ce=0.4844 ita=3.1775 itm=0.0000
+  Epoch [43/100] batch [5/15] ce=0.4836 ita=2.7068 itm=0.0000
+  Epoch [43/100] batch [10/15] ce=0.4660 ita=2.6600 itm=0.0000
+  Epoch [43/100] batch [15/15] ce=0.4550 ita=2.7621 itm=0.0000
+  Epoch [44/100] batch [5/15] ce=0.3968 ita=2.9241 itm=0.0000
+  Epoch [44/100] batch [10/15] ce=0.4203 ita=2.7690 itm=0.0000
+  Epoch [44/100] batch [15/15] ce=0.4781 ita=2.9995 itm=0.0000
+  Epoch [45/100] batch [5/15] ce=0.5486 ita=2.5985 itm=0.0000
+  Epoch [45/100] batch [10/15] ce=0.3922 ita=3.2314 itm=0.0001
+  Epoch [45/100] batch [15/15] ce=0.4433 ita=2.5910 itm=0.0000
+  Epoch [46/100] batch [5/15] ce=0.3801 ita=3.1862 itm=0.0000
+  Epoch [46/100] batch [10/15] ce=0.4177 ita=3.0475 itm=0.0000
+  Epoch [46/100] batch [15/15] ce=0.4386 ita=3.1664 itm=0.0000
+  Epoch [47/100] batch [5/15] ce=0.4594 ita=2.6675 itm=0.0000
+  Epoch [47/100] batch [10/15] ce=0.4373 ita=3.0650 itm=0.0000
+  Epoch [47/100] batch [15/15] ce=0.4956 ita=2.5623 itm=0.0000
+  Epoch [48/100] batch [5/15] ce=0.4144 ita=3.0539 itm=0.0000
+  Epoch [48/100] batch [10/15] ce=0.4594 ita=2.7417 itm=0.0000
+  Epoch [48/100] batch [15/15] ce=0.4427 ita=2.7376 itm=0.0000
+  Epoch [49/100] batch [5/15] ce=0.4409 ita=2.8007 itm=0.0000
+  Epoch [49/100] batch [10/15] ce=0.4160 ita=2.7224 itm=0.0000
+  Epoch [49/100] batch [15/15] ce=0.4697 ita=2.5705 itm=0.0000
+  Epoch [50/100] batch [5/15] ce=0.3932 ita=3.4221 itm=0.0000
+  Epoch [50/100] batch [10/15] ce=0.3765 ita=2.5973 itm=0.0003
+  Epoch [50/100] batch [15/15] ce=0.4973 ita=2.9154 itm=0.0000
+  Epoch [51/100] batch [5/15] ce=0.3873 ita=2.6912 itm=0.0000
+  Epoch [51/100] batch [10/15] ce=0.3894 ita=2.6359 itm=0.0000
+  Epoch [51/100] batch [15/15] ce=0.4755 ita=2.6947 itm=0.0000
+Epoch [51/100] target val accuracy: 0.8917
+  Val Precision (Macro): 0.8820 | Val Recall (Macro): 0.9164 | Val F1 (Macro): 0.8878 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [52/100] batch [5/15] ce=0.4920 ita=2.7272 itm=0.0000
+  Epoch [52/100] batch [10/15] ce=0.3749 ita=2.7428 itm=0.0000
+  Epoch [52/100] batch [15/15] ce=0.4694 ita=2.7492 itm=0.0000
+  Epoch [53/100] batch [5/15] ce=0.4780 ita=2.7449 itm=0.0000
+  Epoch [53/100] batch [10/15] ce=0.4857 ita=2.9296 itm=0.0000
+  Epoch [53/100] batch [15/15] ce=0.4159 ita=2.7294 itm=0.0000
+  Epoch [54/100] batch [5/15] ce=0.4433 ita=2.8679 itm=0.0000
+  Epoch [54/100] batch [10/15] ce=0.3942 ita=2.9216 itm=0.0000
+  Epoch [54/100] batch [15/15] ce=0.4148 ita=2.7576 itm=0.0000
+  Epoch [55/100] batch [5/15] ce=0.4804 ita=3.2631 itm=0.0000
+  Epoch [55/100] batch [10/15] ce=0.4358 ita=2.9192 itm=0.0000
+  Epoch [55/100] batch [15/15] ce=0.4190 ita=2.8920 itm=0.0000
+  Epoch [56/100] batch [5/15] ce=0.4534 ita=2.6966 itm=0.0000
+  Epoch [56/100] batch [10/15] ce=0.4073 ita=2.8986 itm=0.0000
+  Epoch [56/100] batch [15/15] ce=0.4598 ita=2.8596 itm=0.0000
+  Epoch [57/100] batch [5/15] ce=0.3978 ita=2.7283 itm=0.0000
+  Epoch [57/100] batch [10/15] ce=0.4540 ita=2.7218 itm=0.0000
+  Epoch [57/100] batch [15/15] ce=0.4070 ita=2.7697 itm=0.0000
+  Epoch [58/100] batch [5/15] ce=0.3856 ita=2.6877 itm=0.0000
+  Epoch [58/100] batch [10/15] ce=0.3935 ita=2.5473 itm=0.0000
+  Epoch [58/100] batch [15/15] ce=0.4258 ita=2.4904 itm=0.0000
+  Epoch [59/100] batch [5/15] ce=0.4358 ita=2.6114 itm=0.0000
+  Epoch [59/100] batch [10/15] ce=0.4185 ita=2.7976 itm=0.0000
+  Epoch [59/100] batch [15/15] ce=0.3977 ita=2.6109 itm=0.0000
+  Epoch [60/100] batch [5/15] ce=0.5029 ita=2.7642 itm=0.0000
+  Epoch [60/100] batch [10/15] ce=0.4664 ita=2.9340 itm=0.0001
+  Epoch [60/100] batch [15/15] ce=0.5394 ita=2.6601 itm=0.0000
+  Epoch [61/100] batch [5/15] ce=0.4160 ita=2.4828 itm=0.0000
+  Epoch [61/100] batch [10/15] ce=0.3870 ita=2.4164 itm=0.0000
+  Epoch [61/100] batch [15/15] ce=0.3650 ita=2.5802 itm=0.0000
+Epoch [61/100] target val accuracy: 0.9417
+  Val Precision (Macro): 0.9590 | Val Recall (Macro): 0.9632 | Val F1 (Macro): 0.9593 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [62/100] batch [5/15] ce=0.3445 ita=2.4000 itm=0.0000
+  Epoch [62/100] batch [10/15] ce=0.4476 ita=2.5242 itm=0.0000
+  Epoch [62/100] batch [15/15] ce=0.4184 ita=2.5945 itm=0.0000
+  Epoch [63/100] batch [5/15] ce=0.3645 ita=2.5694 itm=0.0000
+  Epoch [63/100] batch [10/15] ce=0.4427 ita=2.6552 itm=0.0006
+  Epoch [63/100] batch [15/15] ce=0.3633 ita=2.4477 itm=0.0000
+  Epoch [64/100] batch [5/15] ce=0.4550 ita=2.5037 itm=0.0000
+  Epoch [64/100] batch [10/15] ce=0.4586 ita=2.5732 itm=0.0000
+  Epoch [64/100] batch [15/15] ce=0.4435 ita=2.7169 itm=0.0000
+  Epoch [65/100] batch [5/15] ce=0.3382 ita=2.4399 itm=0.0000
+  Epoch [65/100] batch [10/15] ce=0.3683 ita=2.4433 itm=0.0000
+  Epoch [65/100] batch [15/15] ce=0.5020 ita=2.3379 itm=0.0000
+  Epoch [66/100] batch [5/15] ce=0.3834 ita=2.3409 itm=0.0000
+  Epoch [66/100] batch [10/15] ce=0.4186 ita=2.4292 itm=0.0000
+  Epoch [66/100] batch [15/15] ce=0.3874 ita=2.2311 itm=0.0000
+  Epoch [67/100] batch [5/15] ce=0.3870 ita=2.4316 itm=0.0000
+  Epoch [67/100] batch [10/15] ce=0.3673 ita=2.1264 itm=0.0000
+  Epoch [67/100] batch [15/15] ce=0.3634 ita=2.1636 itm=0.0000
+  Epoch [68/100] batch [5/15] ce=0.3557 ita=2.1060 itm=0.0000
+  Epoch [68/100] batch [10/15] ce=0.4120 ita=2.1977 itm=0.0000
+  Epoch [68/100] batch [15/15] ce=0.3685 ita=2.1879 itm=0.0000
+  Epoch [69/100] batch [5/15] ce=0.4457 ita=2.2568 itm=0.0000
+  Epoch [69/100] batch [10/15] ce=0.3631 ita=2.0439 itm=0.0000
+  Epoch [69/100] batch [15/15] ce=0.4479 ita=2.2537 itm=0.0000
+  Epoch [70/100] batch [5/15] ce=0.3846 ita=2.0166 itm=0.0000
+  Epoch [70/100] batch [10/15] ce=0.3884 ita=2.3019 itm=0.0000
+  Epoch [70/100] batch [15/15] ce=0.3443 ita=2.1131 itm=0.0000
+  Epoch [71/100] batch [5/15] ce=0.4141 ita=1.9009 itm=0.0000
+  Epoch [71/100] batch [10/15] ce=0.3661 ita=1.9922 itm=0.0000
+  Epoch [71/100] batch [15/15] ce=0.3485 ita=1.9591 itm=0.0000
+Epoch [71/100] target val accuracy: 0.9417
+  Val Precision (Macro): 0.9573 | Val Recall (Macro): 0.9585 | Val F1 (Macro): 0.9572 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [72/100] batch [5/15] ce=0.3694 ita=1.7453 itm=0.0000
+  Epoch [72/100] batch [10/15] ce=0.4831 ita=2.0963 itm=0.0000
+  Epoch [72/100] batch [15/15] ce=0.3229 ita=1.7597 itm=0.0000
+  Epoch [73/100] batch [5/15] ce=0.3542 ita=1.6812 itm=0.0000
+  Epoch [73/100] batch [10/15] ce=0.3296 ita=1.9017 itm=0.0000
+  Epoch [73/100] batch [15/15] ce=0.4464 ita=1.7565 itm=0.0000
+  Epoch [74/100] batch [5/15] ce=0.3543 ita=1.6007 itm=0.0000
+  Epoch [74/100] batch [10/15] ce=0.3880 ita=1.7568 itm=0.0000
+  Epoch [74/100] batch [15/15] ce=0.4292 ita=1.6513 itm=0.0000
+  Epoch [75/100] batch [5/15] ce=0.4207 ita=1.7000 itm=0.0000
+  Epoch [75/100] batch [10/15] ce=0.3856 ita=1.7036 itm=0.0000
+  Epoch [75/100] batch [15/15] ce=0.3725 ita=1.5516 itm=0.0002
+  Epoch [76/100] batch [5/15] ce=0.3874 ita=1.5852 itm=0.0000
+  Epoch [76/100] batch [10/15] ce=0.3702 ita=1.6441 itm=0.0000
+  Epoch [76/100] batch [15/15] ce=0.3505 ita=1.5182 itm=0.0000
+  Epoch [77/100] batch [5/15] ce=0.3817 ita=1.6017 itm=0.0000
+  Epoch [77/100] batch [10/15] ce=0.4104 ita=1.4845 itm=0.0002
+  Epoch [77/100] batch [15/15] ce=0.3879 ita=1.6281 itm=0.0000
+  Epoch [78/100] batch [5/15] ce=0.3505 ita=1.5008 itm=0.0000
+  Epoch [78/100] batch [10/15] ce=0.3481 ita=1.3351 itm=0.0000
+  Epoch [78/100] batch [15/15] ce=0.3730 ita=1.5449 itm=0.0001
+  Epoch [79/100] batch [5/15] ce=0.3466 ita=1.4175 itm=0.0000
+  Epoch [79/100] batch [10/15] ce=0.3513 ita=1.5443 itm=0.0000
+  Epoch [79/100] batch [15/15] ce=0.3506 ita=1.3800 itm=0.0000
+  Epoch [80/100] batch [5/15] ce=0.3419 ita=1.3741 itm=0.0000
+  Epoch [80/100] batch [10/15] ce=0.3837 ita=1.4608 itm=0.0000
+  Epoch [80/100] batch [15/15] ce=0.4065 ita=1.4061 itm=0.0000
+  Epoch [81/100] batch [5/15] ce=0.3658 ita=1.4258 itm=0.0000
+  Epoch [81/100] batch [10/15] ce=0.3959 ita=1.3866 itm=0.0000
+  Epoch [81/100] batch [15/15] ce=0.3405 ita=1.4534 itm=0.0000
+Epoch [81/100] target val accuracy: 0.9583
+  Val Precision (Macro): 0.9798 | Val Recall (Macro): 0.9610 | Val F1 (Macro): 0.9678 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [82/100] batch [5/15] ce=0.3575 ita=1.4499 itm=0.0000
+  Epoch [82/100] batch [10/15] ce=0.3194 ita=1.2271 itm=0.0000
+  Epoch [82/100] batch [15/15] ce=0.3813 ita=1.4054 itm=0.0000
+  Epoch [83/100] batch [5/15] ce=0.3829 ita=1.2829 itm=0.0000
+  Epoch [83/100] batch [10/15] ce=0.3895 ita=1.4171 itm=0.0000
+  Epoch [83/100] batch [15/15] ce=0.3594 ita=1.1693 itm=0.0000
+  Epoch [84/100] batch [5/15] ce=0.3297 ita=1.2881 itm=0.0000
+  Epoch [84/100] batch [10/15] ce=0.3291 ita=1.2137 itm=0.0000
+  Epoch [84/100] batch [15/15] ce=0.3530 ita=1.3293 itm=0.0000
+  Epoch [85/100] batch [5/15] ce=0.3570 ita=1.1853 itm=0.0000
+  Epoch [85/100] batch [10/15] ce=0.3593 ita=1.4934 itm=0.0000
+  Epoch [85/100] batch [15/15] ce=0.3316 ita=1.1428 itm=0.0000
+  Epoch [86/100] batch [5/15] ce=0.3281 ita=1.2902 itm=0.0000
+  Epoch [86/100] batch [10/15] ce=0.3673 ita=1.3137 itm=0.0000
+  Epoch [86/100] batch [15/15] ce=0.3810 ita=1.5670 itm=0.0000
+  Epoch [87/100] batch [5/15] ce=0.3753 ita=1.1893 itm=0.0000
+  Epoch [87/100] batch [10/15] ce=0.3744 ita=1.0536 itm=0.0000
+  Epoch [87/100] batch [15/15] ce=0.3579 ita=1.0999 itm=0.0000
+  Epoch [88/100] batch [5/15] ce=0.3269 ita=1.2357 itm=0.0000
+  Epoch [88/100] batch [10/15] ce=0.3639 ita=1.3335 itm=0.0000
+  Epoch [88/100] batch [15/15] ce=0.3440 ita=1.1248 itm=0.0000
+  Epoch [89/100] batch [5/15] ce=0.3194 ita=0.9875 itm=0.0000
+  Epoch [89/100] batch [10/15] ce=0.3323 ita=1.2154 itm=0.0000
+  Epoch [89/100] batch [15/15] ce=0.4023 ita=1.2052 itm=0.0000
+  Epoch [90/100] batch [5/15] ce=0.3341 ita=1.1946 itm=0.0000
+  Epoch [90/100] batch [10/15] ce=0.3638 ita=1.0053 itm=0.0000
+  Epoch [90/100] batch [15/15] ce=0.3672 ita=1.0740 itm=0.0000
+  Epoch [91/100] batch [5/15] ce=0.3153 ita=1.0010 itm=0.0000
+  Epoch [91/100] batch [10/15] ce=0.3543 ita=1.0544 itm=0.0000
+  Epoch [91/100] batch [15/15] ce=0.3467 ita=1.1382 itm=0.0000
+Epoch [91/100] target val accuracy: 0.9750
+  Val Precision (Macro): 0.9871 | Val Recall (Macro): 0.9778 | Val F1 (Macro): 0.9815 | Val class coverage: 8/8 | Val samples: 120
+  Epoch [92/100] batch [5/15] ce=0.3216 ita=1.1157 itm=0.0000
+  Epoch [92/100] batch [10/15] ce=0.3498 ita=1.1862 itm=0.0000
+  Epoch [92/100] batch [15/15] ce=0.3703 ita=1.1988 itm=0.0000
+  Epoch [93/100] batch [5/15] ce=0.3440 ita=1.0698 itm=0.0000
+  Epoch [93/100] batch [10/15] ce=0.3490 ita=1.0448 itm=0.0000
+  Epoch [93/100] batch [15/15] ce=0.3286 ita=1.0458 itm=0.0000
+  Epoch [94/100] batch [5/15] ce=0.3601 ita=1.1110 itm=0.0000
+  Epoch [94/100] batch [10/15] ce=0.3409 ita=0.9924 itm=0.0000
+  Epoch [94/100] batch [15/15] ce=0.3301 ita=0.9571 itm=0.0000
+  Epoch [95/100] batch [5/15] ce=0.3341 ita=1.0430 itm=0.0000
+  Epoch [95/100] batch [10/15] ce=0.3141 ita=0.9807 itm=0.0001
+  Epoch [95/100] batch [15/15] ce=0.3538 ita=0.9107 itm=0.0000
+  Epoch [96/100] batch [5/15] ce=0.3375 ita=1.1372 itm=0.0000
+  Epoch [96/100] batch [10/15] ce=0.3886 ita=0.9415 itm=0.0000
+  Epoch [96/100] batch [15/15] ce=0.3269 ita=0.9162 itm=0.0000
+  Epoch [97/100] batch [5/15] ce=0.3471 ita=0.9736 itm=0.0000
+  Epoch [97/100] batch [10/15] ce=0.3688 ita=1.1086 itm=0.0000
+  Epoch [97/100] batch [15/15] ce=0.3894 ita=0.9111 itm=0.0000
+  Epoch [98/100] batch [5/15] ce=0.3363 ita=1.0026 itm=0.0000
+  Epoch [98/100] batch [10/15] ce=0.3380 ita=1.0628 itm=0.0000
+  Epoch [98/100] batch [15/15] ce=0.3371 ita=0.9141 itm=0.0000
+  Epoch [99/100] batch [5/15] ce=0.3305 ita=1.0383 itm=0.0000
+  Epoch [99/100] batch [10/15] ce=0.3194 ita=0.8816 itm=0.0000
+  Epoch [99/100] batch [15/15] ce=0.3361 ita=0.8554 itm=0.0000
+  Epoch [100/100] batch [5/15] ce=0.3041 ita=0.8467 itm=0.0000
+  Epoch [100/100] batch [10/15] ce=0.3212 ita=0.9566 itm=0.0000
+  Epoch [100/100] batch [15/15] ce=0.3270 ita=0.8160 itm=0.0000
+Epoch [100/100] target val accuracy: 0.9750
+  Val Precision (Macro): 0.9871 | Val Recall (Macro): 0.9778 | Val F1 (Macro): 0.9815 | Val class coverage: 8/8 | Val samples: 120
+Strictly restored the in-memory best state; no model file was written.
+Last-epoch target val accuracy: 0.9750
+Final target val accuracy (selected epoch 91): 0.9750
+  Val Precision (Macro): 0.9871 | Val Recall (Macro): 0.9778 | Val F1 (Macro): 0.9815 | Val class coverage: 8/8 | Val samples: 120
+Metrics CSV: /home/lixiang/lx/JMDA_Com/checkpoints/supervised/20261108_132125_1756285/mcft_dark_seed46_metrics.csv
+Metrics JSON: /home/lixiang/lx/JMDA_Com/checkpoints/supervised/20261108_132125_1756285/mcft_dark_seed46_metrics.json
+{"timestamp": "2026-11-08T13:54:01", "suite_id": "20261108_132125_1756285", "run_tag": "mcft_dark", "method": "mcft", "protocol": "SUPERVISED", "target": "dark", "seed": 46, "epochs": 100, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "official_target_best", "status": "success", "exit_code": 0, "duration_seconds": 520.0, "final_acc": 0.975, "best_acc": 0.975, "final_acc_std": null, "precision_macro": 0.9871, "precision_macro_std": null, "recall_macro": 0.9778, "recall_macro_std": null, "f1_macro": 0.9815, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 11, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_dark_20261108_132125_1756285.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/supervised", "error_type": null, "error_summary": null}

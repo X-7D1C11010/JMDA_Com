@@ -1,0 +1,214 @@
+{
+  "metric_definition": {
+    "ACC": "classification accuracy",
+    "Precision_macro": "macro precision over evaluation classes",
+    "Recall_macro": "macro recall over evaluation classes",
+    "F1_macro": "macro F1 over evaluation classes"
+  },
+  "metadata": {
+    "method": "MCFT",
+    "protocol": "fully-supervised adaptation",
+    "source": "sunny",
+    "target": "backlight",
+    "supervision_protocol": "all target-class-matched sunny_train labels and all target_train labels are visible",
+    "source_labelled_samples": 515,
+    "target_labelled_samples": 113,
+    "target_label_budget": "all available target_train labels",
+    "source_target_class_sets_equal": true,
+    "class_ids_original_zero_based": [
+      0,
+      4,
+      5,
+      6,
+      7,
+      8,
+      10,
+      12,
+      13
+    ],
+    "label_map": {
+      "0": 0,
+      "4": 1,
+      "5": 2,
+      "6": 3,
+      "7": 4,
+      "8": 5,
+      "10": 6,
+      "12": 7,
+      "13": 8
+    },
+    "epochs": 100,
+    "eval_frequency": 10,
+    "seed": 42,
+    "input_modalities": "VIS_RGB+IR_grayscale",
+    "input_raster_size": 96,
+    "token_grid_size": 15,
+    "spatial_adapter": "96x96 convolution then adaptive pooling to 15x15",
+    "official_modality_adaptation": "HSI->VIS; LiDAR->IR",
+    "optimizer": {
+      "name": "Adam",
+      "lr": 0.0003,
+      "weight_decay": 0.0001,
+      "step_size": 20,
+      "gamma": 0.9
+    },
+    "regularization": {
+      "label_smoothing": 0.05,
+      "dropout": 0.2,
+      "emb_dropout": 0.2,
+      "paired_horizontal_flip": true
+    },
+    "max_train_batches": 0,
+    "checkpoint_policy": "in-memory best state; no model files retained",
+    "initialization_per_run": "fresh random initialization; no cross-seed checkpoint inheritance",
+    "completed_epochs": 100,
+    "stopped_early": false,
+    "early_stopping": {
+      "monitor": "target_val ACC",
+      "patience_evaluations": 15,
+      "min_epochs": 100
+    }
+  },
+  "final": {
+    "epoch": 100,
+    "ACC": 0.7777777777777778,
+    "Precision_macro": 0.7117283950617284,
+    "Recall_macro": 0.7111111111111111,
+    "F1_macro": 0.6492841581076875,
+    "val_samples": 36,
+    "val_present_classes": 9,
+    "val_total_classes": 9
+  },
+  "best_by_ACC_then_F1": {
+    "epoch": 91,
+    "ACC": 0.8055555555555556,
+    "Precision_macro": 0.7314814814814814,
+    "Recall_macro": 0.7333333333333333,
+    "F1_macro": 0.681216931216931,
+    "val_samples": 36,
+    "val_present_classes": 9,
+    "val_total_classes": 9
+  },
+  "best_by_ACC": {
+    "epoch": 91,
+    "ACC": 0.8055555555555556,
+    "Precision_macro": 0.7314814814814814,
+    "Recall_macro": 0.7333333333333333,
+    "F1_macro": 0.681216931216931,
+    "val_samples": 36,
+    "val_present_classes": 9,
+    "val_total_classes": 9
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "ACC": 0.16666666666666666,
+      "Precision_macro": 0.018518518518518517,
+      "Recall_macro": 0.1111111111111111,
+      "F1_macro": 0.031746031746031744,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 11,
+      "ACC": 0.6388888888888888,
+      "Precision_macro": 0.6329365079365079,
+      "Recall_macro": 0.6203703703703703,
+      "F1_macro": 0.5818903318903319,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 21,
+      "ACC": 0.5833333333333334,
+      "Precision_macro": 0.4058823529411765,
+      "Recall_macro": 0.4444444444444444,
+      "F1_macro": 0.40012268997776246,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 31,
+      "ACC": 0.6388888888888888,
+      "Precision_macro": 0.42261904761904767,
+      "Recall_macro": 0.5138888888888888,
+      "F1_macro": 0.45357142857142857,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 41,
+      "ACC": 0.6388888888888888,
+      "Precision_macro": 0.5277777777777778,
+      "Recall_macro": 0.5083333333333333,
+      "F1_macro": 0.48587061087061084,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 51,
+      "ACC": 0.6111111111111112,
+      "Precision_macro": 0.5253267973856209,
+      "Recall_macro": 0.48055555555555557,
+      "F1_macro": 0.4536059351276742,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 61,
+      "ACC": 0.6944444444444444,
+      "Precision_macro": 0.6333333333333333,
+      "Recall_macro": 0.6333333333333333,
+      "F1_macro": 0.6014109347442681,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 71,
+      "ACC": 0.75,
+      "Precision_macro": 0.6870370370370371,
+      "Recall_macro": 0.6833333333333333,
+      "F1_macro": 0.6267195767195768,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 81,
+      "ACC": 0.7777777777777778,
+      "Precision_macro": 0.7148148148148148,
+      "Recall_macro": 0.7111111111111111,
+      "F1_macro": 0.6494708994708994,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 91,
+      "ACC": 0.8055555555555556,
+      "Precision_macro": 0.7314814814814814,
+      "Recall_macro": 0.7333333333333333,
+      "F1_macro": 0.681216931216931,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    },
+    {
+      "epoch": 100,
+      "ACC": 0.7777777777777778,
+      "Precision_macro": 0.7117283950617284,
+      "Recall_macro": 0.7111111111111111,
+      "F1_macro": 0.6492841581076875,
+      "val_samples": 36,
+      "val_present_classes": 9,
+      "val_total_classes": 9
+    }
+  ]
+}
