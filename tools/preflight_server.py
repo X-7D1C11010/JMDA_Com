@@ -56,6 +56,7 @@ def validate_manifest(list_dir, data_root, required_modality='paired'):
     expected_rules = {
         'paired': 'exact VIS/IR stem match over train+val union; stable hash split',
         'vis': 'all VIS images over train+val union; stable hash split (no IR pairing)',
+        'ir': 'all IR images over train+val union; stable hash split (no VIS pairing)',
     }
     if manifest.get('modality') != required_modality:
         fail(
@@ -120,7 +121,7 @@ def representative_rows(rows):
     return selected
 
 
-def validate_list(path, data_root, check_all, require_ir=True):
+def validate_list(path, data_root, check_all, require_ir=True, modality='vis'):
     if not path.is_file():
         fail(f'Required list is missing: {path}')
     rows = read_list(path)
@@ -168,7 +169,8 @@ def validate_list(path, data_root, check_all, require_ir=True):
         )
     print(
         f'[OK] {path.name}: {len(rows)} rows, checked {len(selected)} '
-        + ('VIS paths and exact IR mates' if require_ir else 'VIS paths')
+        + ('VIS paths and exact IR mates' if require_ir
+           else f'{modality.upper()} paths')
     )
     return rows
 
@@ -235,7 +237,8 @@ def parse_args():
     parser.add_argument('--jmda-net-dir', required=True)
     parser.add_argument('--list-dir', required=True)
     parser.add_argument('--targets', nargs='+', choices=TARGETS, required=True)
-    parser.add_argument('--required-modality', choices=('paired', 'vis'), default='paired')
+    parser.add_argument('--required-modality', choices=('paired', 'vis', 'ir'),
+                        default='paired')
     parser.add_argument('--require-cuda', action='store_true')
     parser.add_argument('--check-all-paths', action='store_true')
     parser.add_argument(
@@ -329,6 +332,7 @@ def main():
         validated[path.name] = validate_list(
             path, data_root, args.check_all_paths,
             require_ir=args.required_modality == 'paired',
+            modality=args.required_modality,
         )
     validated_pairs = {}
     if args.protocol in ('jmda_oracle_shared_uda', 'jmda_label_guided_da'):

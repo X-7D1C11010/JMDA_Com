@@ -122,8 +122,8 @@ def main():
     parser = argparse.ArgumentParser(description='Official-recipe MCFT VIS+IR port')
     parser.add_argument('--target', default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=500,
-                        help='Released MCFT budget: 500 epochs.')
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='Weather comparison budget: 100 epochs.')
     parser.add_argument('--batch-size', type=int, default=64)
     parser.add_argument('--eval-frequency', type=int, default=10)
     parser.add_argument('--lr', type=float, default=3e-4)
@@ -225,6 +225,7 @@ def main():
         dropout=args.dropout,
         emb_dropout=args.emb_dropout,
     ).to(device)
+    print('Fresh model initialization: no checkpoint or previous-seed state loaded.')
     criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -361,6 +362,9 @@ def main():
             },
             'max_train_batches': args.max_train_batches,
             'checkpoint_policy': 'in-memory best state; no model files retained',
+            'initialization_per_run': (
+                'fresh random initialization; no cross-seed checkpoint inheritance'
+            ),
             'completed_epochs': completed_epoch,
             'stopped_early': stopped_early,
             'early_stopping': {

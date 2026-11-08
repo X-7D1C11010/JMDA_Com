@@ -1073,6 +1073,42 @@ DataManager 与目标标签擦除测试通过；`tools` 下69项单元测试全�
 验证：两个入口均通过2 epoch × 1 update的VIS+IR真实前向、反向与逐轮验证；
 MCC烟测覆盖了ACC并列时选取更早epoch。Python编译通过，相关39项单元测试通过。
 
+---
+
+## 21. 2026-11-08 天气MCFT统一100轮与独立seed运行
+
+- 本节覆盖此前“天气MCFT默认500轮”的历史配置。天气MCFT现统一为100 epoch，
+  包括模型入口、服务器默认值及TIR→MCFT组合启动器。
+- 正式组合实验固定先完成TIR，再按seed 42、43、44、45、46依次运行天气MCFT；
+  每个seed均启动新的Python训练进程并重新构建模型，不加载上一seed的模型状态。
+- 每个seed内部仍按逆光、雨天、雾天、黑天依次运行；每个目标域模型也从随机初始化
+  独立训练。最佳状态仅保存在本次进程内存中用于本次选模，不写模型文件且不跨运行继承。
+
+---
+
+## 22. 2026-11-08 官方单模态 VIS / IR 对照协议
+
+- 新增 `scripts/run_official_single_modal.ps1`、
+  `scripts/run_server_official_single_modal.sh` 与后台启动器，可独立运行 VIS、IR 或二者，
+  覆盖 DANN、Deep CORAL、CDAN、MDD、MCC。每个模态使用独立数据清单，不要求另一模态
+  存在同名配对文件；仍严格按目标域类别集合过滤源域并压缩到同一标签空间。
+- **VIS** 不经过 JMDA 的双分支、U-Net 或特征融合模块：DANN 使用 TLlib 图像分类版
+  ResNet-50、256维瓶颈、1024维域判别器、SGD+Nesterov、batch=32、20×1000 updates；
+  Deep CORAL 使用发布版 AlexNet、source/target batch=200/56 和论文 CORAL 损失；CDAN、
+  MDD、MCC 使用各自发布代码/TLlib 的 ResNet-50、损失、优化器、学习率调度及正式预算。
+  源域和目标域采用各官方流程的独立 loader，不再使用 JMDA 的较大域补齐采样器。
+- **IR** 是受控单变量扩展，因为上述方法的官方代码没有红外专用模型：域适配损失、分类头、
+  优化器、学习率调度、batch 和更新预算均与相应 VIS 官方流程相同；仅把输入清单切换为 IR，
+  将 ResNet-50 首层从三通道改为一通道（用 ImageNet 首层三通道权重均值初始化），并采用
+  单通道归一化。Deep CORAL 的 IR 路径使用同样的一通道 ResNet-50 扩展，避免把灰度图
+  伪复制成三通道后误称为官方 AlexNet IR 网络。
+- 单模态正式实验只把目标标签用于逐轮诊断指标和最终汇总，不参与梯度；运行日志显式记录
+  模态、有效类别、源/目标样本数、优化更新预算、ACC、macro Precision、macro Recall、
+  macro F1。VIS 与 IR 结果分别落在输出目录的 `vis`、`ir` 子目录，防止结果覆盖。
+
+验证：五种方法的 VIS 烟测全部完成；五种方法的 IR 烟测全部完成；IR 清单预检逐条验证
+了完整路径和标签空间；Python 编译与 PowerShell 解析通过；`tools` 下131项单元测试通过。
+
 
 
 

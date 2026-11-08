@@ -72,6 +72,14 @@ from uda_multimodal import (
     describe_pairing,
     unpaired_domain_loader,
 )
+from single_modality import (
+    adapt_resnet_stem_to_ir,
+    image_mode,
+    modality_label,
+    normalization,
+    official_forever_domain_iterator,
+    validate_single_modality_args,
+)
 
 
 def label_smoothed_nll_loss(log_probabilities, targets, smoothing=0.1):
@@ -82,9 +90,9 @@ def label_smoothed_nll_loss(log_probabilities, targets, smoothing=0.1):
 
 
 class ResNetDANN(nn.Module):
-    """DANN over JMDA's non-tensor VIS/IR feature concatenation."""
+    """DANN image classifier following the official TLlib architecture."""
 
-    def __init__(self, num_classes, multimodal=False):
+    def __init__(self, num_classes, multimodal=False, modality='vis'):
         super().__init__()
         self.multimodal = bool(multimodal)
         if self.multimodal:
@@ -95,56 +103,73 @@ class ResNetDANN(nn.Module):
         else:
             self.encoder = None
             backbone = models.resnet50(pretrained=True)
+            if modality == 'ir':
+                adapt_resnet_stem_to_ir(backbone)
             branch_dim = backbone.fc.in_features
             backbone.fc = nn.Identity()
             self.backbone = backbone
             self.ir_backbone = None
-            feature_dim = branch_dim
-        self.class_classifier = nn.Sequential(
-            nn.Linear(feature_dim, 256), nn.ReLU(True), nn.Dropout(0.5),
-            nn.Linear(256, num_classes), nn.LogSoftmax(dim=1),
-        )
-        self.domain_classifier = nn.Sequential(
-            nn.Linear(feature_dim, 1024), nn.ReLU(True), nn.Dropout(0.5),
-            nn.Linear(1024, 2), nn.LogSoftmax(dim=1),
-        )
+            self.bottleneck = nn.Sequential(
+                nn.Linear(branch_dim, 256),
+                nn.BatchNorm1d(256),
+                nn.ReLU(),
+            )
+            feature_dim = 256
+        if self.multimodal:
+            self.bottleneck = nn.Identity()
+            self.class_classifier = nn.Sequential(
+                nn.Linear(feature_dim, 256), nn.ReLU(True), nn.Dropout(0.5),
+                nn.Linear(256, num_classes), nn.LogSoftmax(dim=1),
+            )
+            self.domain_classifier = nn.Sequential(
+                nn.Linear(feature_dim, 1024), nn.ReLU(True), nn.Dropout(0.5),
+                nn.Linear(1024, 2), nn.LogSoftmax(dim=1),
+            )
+        else:
+            self.class_classifier = nn.Sequential(
+                nn.Linear(feature_dim, num_classes), nn.LogSoftmax(dim=1))
+            self.domain_classifier = nn.Sequential(
+                nn.Linear(feature_dim, 1024), nn.BatchNorm1d(1024), nn.ReLU(),
+                nn.Linear(1024, 1024), nn.BatchNorm1d(1024), nn.ReLU(),
+                nn.Linear(1024, 1), nn.Sigmoid(),
+            )
 
     def forward(self, input_data, alpha):
         if self.multimodal:
             feature = self.encoder(input_data)
         else:
-            feature = self.backbone(input_data)
+            feature = self.bottleneck(self.backbone(input_data))
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         return (self.class_classifier(feature),
                 self.domain_classifier(reverse_feature))
 
 
-def get_transforms(backbone='cnn28', enhanced_augmentation=False):
+def get_transforms(backbone='cnn28', enhanced_augmentation=False,
+                   modality='vis'):
     # The official network has a fixed 50*4*4 flattening layer and therefore
     # requires 28x28 inputs. Both weather domains are RGB, so the MNIST-M
     # normalization is applied consistently to source and target.
     if backbone in {'resnet50', 'jmda'}:
-        train_ops = [transforms.Resize((256, 256))]
+        train_ops = [
+            transforms.Resize((256, 256)),
+            transforms.RandomResizedCrop(
+                224, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.)),
+            transforms.RandomHorizontalFlip(),
+        ]
         if enhanced_augmentation:
-            train_ops += [
-                transforms.RandomResizedCrop(224, scale=(0.6, 1.0)),
-                transforms.RandomHorizontalFlip(),
+            train_ops.append(
                 transforms.ColorJitter(brightness=0.25, contrast=0.25,
-                                       saturation=0.2, hue=0.05),
-            ]
-        else:
-            train_ops += [transforms.CenterCrop(224)]
+                                       saturation=0.2, hue=0.05))
+        mean, std = normalization(modality)
         train_ops += [
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225]),
+            transforms.Normalize(mean, std),
         ]
         train_tf = transforms.Compose(train_ops)
         val_tf = transforms.Compose([
             transforms.Resize((256, 256)), transforms.CenterCrop(224),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225]),
+            transforms.Normalize(mean, std),
         ])
     else:
         train_ops = [transforms.Resize((32, 32))]
@@ -156,14 +181,16 @@ def get_transforms(backbone='cnn28', enhanced_augmentation=False):
             ]
         else:
             train_ops = [transforms.Resize((28, 28))]
+        channel_stats = ((0.5,), (0.5,)) if modality == 'ir' else (
+            (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         train_ops += [
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            transforms.Normalize(*channel_stats),
         ]
         train_tf = transforms.Compose(train_ops)
         val_tf = transforms.Compose([
             transforms.Resize((28, 28)), transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            transforms.Normalize(*channel_stats),
         ])
     return train_tf, val_tf
 
@@ -185,8 +212,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', type=str, default='backlight',
                         choices=['backlight', 'rainy', 'foggy', 'dark'])
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='训练轮数（随附 DANN 参考实现默认 100）')
+    parser.add_argument('--epochs', type=int, default=20,
+                        help='TLlib official image-classification default: 20')
+    parser.add_argument('--iters-per-epoch', type=int, default=1000,
+                        help='TLlib official image-classification default: 1000')
     parser.add_argument('--max-iterations', type=int, default=0,
                         help='exact optimizer-update budget; 0 uses --epochs')
     parser.add_argument(
@@ -195,9 +224,13 @@ def main():
               'budget. This allows a shorter training budget without '
               'artificially accelerating the official logistic GRL ramp.'),
     )
-    parser.add_argument('--batch-size', type=int, default=128,
-                        help='官方 DANN/train/main.py 设置为 128')
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--batch-size', type=int, default=32,
+                        help='TLlib official image-classification default: 32')
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr-gamma', type=float, default=0.001)
+    parser.add_argument('--lr-decay', type=float, default=0.75)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--weight-decay', type=float, default=1e-3)
     parser.add_argument('--lr-scheduler', choices=['constant', 'cosine'],
                         default='constant')
     parser.add_argument('--min-lr-ratio', type=float, default=0.1,
@@ -218,6 +251,8 @@ def main():
                         help='enable random crop, horizontal flip, and color jitter')
     parser.add_argument('--multimodal', action='store_true',
                         help='exact-paired VIS+IR dual ResNet branches with feature concatenation')
+    parser.add_argument('--modality', choices=['vis', 'ir'], default='vis',
+                        help='single-modal input (VIS official path or IR extension)')
     parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
                         default=False, help='save checkpoints (disabled by default)')
     parser.add_argument('--early-stop-patience', type=int, default=0,
@@ -233,6 +268,9 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=8)
     args = parser.parse_args()
+    validate_single_modality_args(args.modality, args.multimodal)
+    if args.modality == 'ir' and args.backbone != 'resnet50':
+        raise ValueError('DANN IR requires --backbone resnet50')
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
 
@@ -244,14 +282,15 @@ def main():
         raise ValueError('--early-stop-patience must be >= 0')
     if args.early_stop_patience:
         raise ValueError('target-validation early stopping is disabled by this protocol')
-    if args.epochs < 1 or args.max_iterations < 0:
+    if args.epochs < 1 or args.iters_per_epoch < 1 or args.max_iterations < 0:
         raise ValueError('--epochs must be >=1 and --max-iterations must be >=0')
     if (args.domain_loss_weight < 0 or args.target_eval_interval < 0 or
             args.source_warmup_epochs < 0 or
             args.grl_max_iterations < 0 or
             args.print_freq < 1 or not 0 <= args.min_lr_ratio <= 1):
         raise ValueError('domain loss weight/evaluation interval/print frequency is invalid')
-    train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
+    train_tf, val_tf = get_transforms(
+        args.backbone, args.enhanced_augmentation, args.modality)
     if args.multimodal:
         train_tf, val_tf = jmda_train_transform(), jmda_val_transform()
         print('Multimodal preprocessing: JMDA paired Resize(256) + '
@@ -271,12 +310,16 @@ def main():
             tgt_train_list, train_tf, label_map)
         tgt_val_ds = paired_dataset(tgt_val_list, val_tf, label_map)
     else:
+        single_image_mode = image_mode(args.modality)
         src_ds = UdaImageListDataset(
-            src_list, transform=train_tf, label_map=label_map)
+            src_list, transform=train_tf, label_map=label_map,
+            image_mode=single_image_mode)
         tgt_ds = UdaImageListDataset(
-            tgt_train_list, transform=train_tf, label_map=label_map)
+            tgt_train_list, transform=train_tf, label_map=label_map,
+            image_mode=single_image_mode)
         tgt_val_ds = UdaImageListDataset(
-            tgt_val_list, transform=val_tf, label_map=label_map)
+            tgt_val_list, transform=val_tf, label_map=label_map,
+            image_mode=single_image_mode)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
@@ -292,8 +335,14 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    train_loader = unpaired_domain_loader(
-        src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+    if args.multimodal:
+        train_loader = unpaired_domain_loader(
+            src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+        official_train_iter = None
+    else:
+        train_loader = None
+        official_train_iter = official_forever_domain_iterator(
+            src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, **eval_loader_kwargs)
 
@@ -303,7 +352,8 @@ def main():
         if args.multimodal and args.backbone != 'jmda':
             raise ValueError('--multimodal requires --backbone jmda')
         model = ResNetDANN(num_classes=num_classes,
-                           multimodal=args.multimodal).to(device)
+                           multimodal=args.multimodal,
+                           modality=args.modality).to(device)
         if args.multimodal:
             tuning = configure_jmda_visual_finetuning(
                 model.encoder, mode='layer2_4')
@@ -313,7 +363,8 @@ def main():
         print('DANN architecture: '
               + ('JMDA non-tensor encoder (VIS ResNet-18 + IR U-Net, '
                  '512+512 direct concatenation)'
-                 if args.multimodal else 'ImageNet ResNet-50 VIS branch'))
+                 if args.multimodal else
+                 f'ImageNet ResNet-50 {args.modality.upper()} branch'))
     else:
         if args.multimodal:
             raise ValueError('--multimodal requires --backbone jmda')
@@ -334,15 +385,18 @@ def main():
             optimizer = optim.AdamW(
                 parameter_groups, weight_decay=JMDA_WEIGHT_DECAY)
         else:
-            optimizer = optim.Adam([
-                {'params': model.backbone.parameters(), 'lr': args.lr * 0.1},
-                {'params': model.class_classifier.parameters(), 'lr': args.lr},
-                {'params': model.domain_classifier.parameters(), 'lr': args.lr},
-            ])
+            optimizer = optim.SGD([
+                {'params': model.backbone.parameters(), 'lr': 0.1},
+                {'params': model.bottleneck.parameters(), 'lr': 1.0},
+                {'params': model.class_classifier.parameters(), 'lr': 1.0},
+                {'params': model.domain_classifier.parameters(), 'lr': 1.0},
+            ], lr=args.lr, momentum=args.momentum,
+                weight_decay=args.weight_decay, nesterov=True)
     else:
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = torch.nn.NLLLoss()
-    domain_criterion = torch.nn.NLLLoss()
+    domain_criterion = (torch.nn.NLLLoss() if args.multimodal
+                        else torch.nn.BCELoss())
 
     best_acc = -float('inf')
     best_epoch = 0
@@ -350,7 +404,9 @@ def main():
     last_metrics = None
     epochs_without_improvement = 0
     final_acc = None
-    best_path = os.path.join(args.save_dir, f'dann_{args.target}_{args.backbone}_best.pth')
+    best_path = os.path.join(
+        args.save_dir,
+        f'dann_{args.modality}_{args.target}_{args.backbone}_best.pth')
     if args.early_stop_patience:
         print('WARNING: early stopping monitors labelled target validation accuracy; '
               'this is target-validation-selected UDA, not strict label-free UDA.')
@@ -359,21 +415,24 @@ def main():
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools'))
         from efficiency_common import EfficiencyLogger
-        eff = EfficiencyLogger(args.efficiency_output_dir, 'DANN-MM' if args.multimodal else 'DANN',
+        method_name = ('DANN-MM' if args.multimodal else
+                       f'DANN-{args.modality.upper()}')
+        eff = EfficiencyLogger(args.efficiency_output_dir, method_name,
                                 seed=args.seed, device=str(device),
-                                modalities='VIS+IR' if args.multimodal else 'VIS')
+                                modalities=modality_label(
+                                    args.modality, args.multimodal))
         print(f'Efficiency logging -> {eff.run_dir}')
 
-    # Match JMDA strict UDA exactly: cover the larger domain and independently
-    # reshuffle/cycle the smaller domain, with a full equal batch on both sides.
-    n_batches = len(train_loader)
+    n_batches = (len(train_loader) if args.multimodal
+                 else args.iters_per_epoch)
     if n_batches < 1:
         raise ValueError('DANN requires at least one source and target batch')
     planned_updates = args.max_iterations or args.epochs * n_batches
-    grl_max_iterations = args.grl_max_iterations or planned_updates
+    grl_max_iterations = args.grl_max_iterations or (
+        planned_updates if args.multimodal else 1000)
     outer_epochs = math.ceil(planned_updates / n_batches)
     source_warmup_epochs = (JMDA_SOURCE_WARMUP_EPOCHS
-                            if args.multimodal else args.source_warmup_epochs)
+                            if args.multimodal else 0)
     if args.multimodal and outer_epochs <= source_warmup_epochs:
         raise ValueError('JMDA staged training requires more than 10 epochs')
     scheduler = None
@@ -383,28 +442,37 @@ def main():
             lr_lambda=lambda epoch_index: jmda_cosine_lr_multiplier(
                 epoch_index, outer_epochs),
         )
-    elif args.lr_scheduler == 'cosine':
+    else:
         scheduler = optim.lr_scheduler.LambdaLR(
             optimizer,
-            lr_lambda=lambda step: jmda_cosine_lr_multiplier(
-                step, planned_updates, args.min_lr_ratio),
+            lr_lambda=lambda step: args.lr *
+            (1. + args.lr_gamma * float(step)) ** (-args.lr_decay),
         )
     print(f'DANN optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
-    print(f'DANN domain sampling: JMDA strict-UDA larger-domain epoch; '
-          f'{n_batches} full paired batches/epoch')
+    sampling_protocol = ('JMDA larger-domain paired epoch' if args.multimodal
+                         else 'TLlib independent forever iterators')
+    print(f'DANN domain sampling: {sampling_protocol}; '
+          f'{n_batches} full domain batches/epoch')
     print(f'DANN GRL ramp length: {grl_max_iterations} updates')
-    print('DANN multimodal staged training: '
-          f'source-only warmup={source_warmup_epochs} epochs; '
-          f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
-          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
-          f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
+    if args.multimodal:
+        print('DANN multimodal staged training: '
+              f'source-only warmup={source_warmup_epochs} epochs; '
+              f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
+              f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+              f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
+    else:
+        print('DANN official TLlib image optimization: SGD+Nesterov; '
+              f'lr={args.lr:g}; batch={args.batch_size}; '
+              f'{args.iters_per_epoch} iterations/epoch; inverse LR; '
+              'warm-start GRL(alpha=1,max_iters=1000)')
     global_step = 0
     for epoch in range(outer_epochs):
         if eff:
             eff.epoch_start(epoch)
         model.train()
-        train_iter = iter(train_loader)
+        train_iter = (iter(train_loader) if args.multimodal
+                      else official_train_iter)
         batches_this_epoch = min(n_batches, planned_updates - global_step)
         epoch_cls_loss = 0.0
         epoch_domain_loss = 0.0
@@ -423,9 +491,14 @@ def main():
                 global_step - source_warmup_epochs * n_batches, 0)
             adaptation_budget = max(
                 planned_updates - source_warmup_epochs * n_batches, 1)
-            p = min(float(adaptation_step) /
-                    max(min(grl_max_iterations, adaptation_budget), 1), 1.0)
-            alpha = 2.0 / (1.0 + np.exp(-10 * p)) - 1.0
+            if args.multimodal:
+                p = min(float(adaptation_step) /
+                        max(min(grl_max_iterations, adaptation_budget), 1), 1.0)
+            else:
+                # TLlib WarmStartGradientReverseLayer does not clamp i/N.
+                p = float(global_step) / max(grl_max_iterations, 1)
+            grl_alpha = 10.0 if args.multimodal else 1.0
+            alpha = 2.0 / (1.0 + np.exp(-grl_alpha * p)) - 1.0
             if eff:
                 eff.step_start()
             (src_imgs, src_labels), (tgt_imgs, _) = next(train_iter)
@@ -437,17 +510,32 @@ def main():
             if eff:
                 eff.dataloader_done()
 
-            # Source classification loss
-            src_class_out, src_domain_out = model(
-                src_imgs, 0.0 if source_warmup else alpha)
-            loss_cls = (label_smoothed_nll_loss(src_class_out, src_labels)
-                        if args.multimodal else criterion(src_class_out, src_labels))
+            if not args.multimodal:
+                # Official TLlib DANN performs one joint forward so source and
+                # target share the same BatchNorm update.
+                joint_images = torch.cat((src_imgs, tgt_imgs), dim=0)
+                joint_class_out, joint_domain_out = model(joint_images, alpha)
+                src_class_out = joint_class_out[:src_imgs.size(0)]
+                src_domain_out, tgt_domain_out = joint_domain_out.split(
+                    (src_imgs.size(0), tgt_imgs.size(0)), dim=0)
+                loss_cls = criterion(src_class_out, src_labels)
+                src_domain_label = torch.ones_like(src_domain_out)
+                tgt_domain_label = torch.zeros_like(tgt_domain_out)
+                loss_domain = 0.5 * (
+                    domain_criterion(src_domain_out, src_domain_label) +
+                    domain_criterion(tgt_domain_out, tgt_domain_label))
+                loss = loss_cls + args.domain_loss_weight * loss_domain
+            else:
+                src_class_out, src_domain_out = model(
+                    src_imgs, 0.0 if source_warmup else alpha)
+                loss_cls = label_smoothed_nll_loss(
+                    src_class_out, src_labels)
 
-            if source_warmup:
+            if args.multimodal and source_warmup:
                 loss_domain = loss_cls.new_zeros(())
                 loss = loss_cls
                 src_domain_label = tgt_domain_label = tgt_domain_out = None
-            else:
+            elif args.multimodal:
                 src_domain_label = torch.zeros(
                     src_imgs.size(0), dtype=torch.long, device=device)
                 tgt_domain_label = torch.ones(
@@ -465,10 +553,18 @@ def main():
                     src_class_out.argmax(dim=1).eq(src_labels).sum().item())
                 epoch_source_samples += int(src_labels.numel())
                 if not source_warmup:
+                    if args.multimodal:
+                        src_domain_pred = src_domain_out.argmax(dim=1)
+                        tgt_domain_pred = tgt_domain_out.argmax(dim=1)
+                    else:
+                        src_domain_pred = (src_domain_out >= 0.5).to(
+                            src_domain_label.dtype)
+                        tgt_domain_pred = (tgt_domain_out >= 0.5).to(
+                            tgt_domain_label.dtype)
                     epoch_domain_correct += int(
-                        src_domain_out.argmax(dim=1).eq(src_domain_label).sum().item())
+                        src_domain_pred.eq(src_domain_label).sum().item())
                     epoch_domain_correct += int(
-                        tgt_domain_out.argmax(dim=1).eq(tgt_domain_label).sum().item())
+                        tgt_domain_pred.eq(tgt_domain_label).sum().item())
                     epoch_domain_samples += int(src_domain_label.numel() +
                                                 tgt_domain_label.numel())
             optimizer.zero_grad()
@@ -562,7 +658,8 @@ def main():
         raise RuntimeError('DANN completed without target-validation metrics')
     if args.save_model:
         torch.save(model.state_dict(), os.path.join(
-            args.save_dir, f'dann_{args.target}_last.pth'))
+            args.save_dir,
+            f'dann_{args.modality}_{args.target}_last.pth'))
     if eff:
         eff.finalize(extra_metrics={'final_acc': best_metrics['accuracy'],
                                     'best_acc': best_acc,

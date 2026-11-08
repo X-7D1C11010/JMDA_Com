@@ -43,13 +43,16 @@ class OfficialBaselineWiringTests(unittest.TestCase):
         self.assertIn("class JmdaInfraredEncoder", shared)
         self.assertIn("torch.cat((vis_features, ir_features), dim=1)", shared)
 
-    def test_unequal_domain_loaders_do_not_truncate_source(self):
+    def test_domain_loaders_preserve_each_protocol_sampling_rule(self):
         for relative in ("DANN/train_dann.py", "DeepCORAL/train_deepcoral.py"):
             with self.subTest(method=relative):
                 with open(os.path.join(ROOT, relative), encoding="utf-8") as f:
                     trainer = f.read()
-                self.assertIn("n_batches = len(train_loader)", trainer)
+                # The historical multimodal comparison keeps its larger-domain
+                # loader, while the official single-modal path uses independent
+                # source/target loaders exactly as the corresponding baseline.
                 self.assertIn("unpaired_domain_loader", trainer)
+                self.assertIn("official_", trainer)
                 self.assertNotIn("n_batches = min(len(src_loader), len(tgt_loader))", trainer)
 
     def test_mcc_source_warmup_precedes_target_confusion(self):
@@ -129,7 +132,8 @@ class OfficialBaselineWiringTests(unittest.TestCase):
             coral = f.read()
         with open(os.path.join(ROOT, "CDAN", "train_cdan.py"), encoding="utf-8") as f:
             cdan = f.read()
-        self.assertIn("default=128", dann)
+        self.assertIn("default=32", dann)
+        self.assertIn("default=1000", dann)
         self.assertIn("default=200", coral)
         self.assertIn("default=56", coral)
         self.assertIn("choices=['ResNet18', 'ResNet50', 'JMDA']", cdan)
@@ -143,7 +147,7 @@ class OfficialBaselineWiringTests(unittest.TestCase):
                   encoding="utf-8-sig") as f:
             launcher = f.read()
         self.assertIn("--grl-max-iterations", dann)
-        self.assertIn("grl_max_iterations = args.grl_max_iterations or planned_updates", dann)
+        self.assertIn("planned_updates if args.multimodal else 1000", dann)
         self.assertIn("[int]$DANNGrlMaxIterations = 0", launcher)
         self.assertIn("'--grl-max-iterations', $DANNGrlMaxIterations", launcher)
 

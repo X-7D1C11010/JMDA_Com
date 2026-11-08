@@ -116,10 +116,14 @@ class UdaImageListDataset(Dataset):
     ``skipped`` 记录因不属于目标域类别集而被丢弃的图像数，供日志核对。
     """
 
-    def __init__(self, list_path, transform=None, label_map=None):
+    def __init__(self, list_path, transform=None, label_map=None,
+                 image_mode='RGB'):
         self.list_path = list_path
         self.transform = transform
         self.label_map = label_map
+        if image_mode not in ('RGB', 'L'):
+            raise ValueError(f'unsupported image mode: {image_mode!r}')
+        self.image_mode = image_mode
         self.samples = []
         self.skipped = 0
         for path, label in read_image_list(list_path):
@@ -138,7 +142,7 @@ class UdaImageListDataset(Dataset):
 
     def __getitem__(self, index):
         path, label = self.samples[index]
-        image = Image.open(path).convert('RGB')
+        image = Image.open(path).convert(self.image_mode)
         if self.transform:
             image = self.transform(image)
         return image, label

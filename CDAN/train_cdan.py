@@ -75,6 +75,14 @@ from uda_multimodal import (
     paired_dataset,
     unpaired_domain_loader,
 )
+from single_modality import (
+    adapt_resnet_stem_to_ir,
+    image_mode,
+    modality_label,
+    normalization,
+    official_forever_domain_iterator,
+    validate_single_modality_args,
+)
 
 
 class DualResNetFc(nn.Module):
@@ -110,7 +118,7 @@ class DualResNetFc(nn.Module):
 def evaluate_10crop(model, list_path, label_map, device, num_classes,
                     batch_size=4, num_workers=4, prefetch_factor=2,
                     pin_memory=True, worker_timeout_seconds=300,
-                    multimodal=False):
+                    multimodal=False, modality='vis'):
     """官方 train_image.py:22-45 的十裁剪测试协议（test_10crop=True 默认）：
     10 个裁剪视角分别前向，softmax 概率求和后取 argmax。
 
@@ -125,6 +133,10 @@ def evaluate_10crop(model, list_path, label_map, device, num_classes,
     # 10-crop evaluation protocol.
     transform_list = ([jmda_val_transform()] if multimodal else
                       prep.image_test_10crop(resize_size=256, crop_size=224))
+    if not multimodal and modality == 'ir':
+        mean, std = normalization(modality)
+        for transform in transform_list:
+            transform.transforms[-1] = T.Normalize(mean=mean, std=std)
     eval_loader_kwargs = {
         'num_workers': num_workers,
         'pin_memory': pin_memory,
@@ -139,7 +151,8 @@ def evaluate_10crop(model, list_path, label_map, device, num_classes,
         for transform in transform_list:
             dataset = (paired_dataset(list_path, transform, label_map)
                        if multimodal else UdaImageListDataset(
-                           list_path, transform=transform, label_map=label_map))
+                           list_path, transform=transform, label_map=label_map,
+                           image_mode=image_mode(modality)))
             loader = DataLoader(
                 dataset,
                 batch_size=batch_size, shuffle=False, **eval_loader_kwargs,
@@ -207,6 +220,8 @@ def main():
     parser.add_argument('--enhanced-augmentation', action='store_true',
                         help='add color jitter to the official resize/crop/flip pipeline')
     parser.add_argument('--multimodal', action='store_true')
+    parser.add_argument('--modality', choices=['vis', 'ir'], default='vis',
+                        help='single-modal input (VIS official path or IR extension)')
     parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
                         default=False)
     parser.add_argument('--early-stop-patience', type=int, default=0,
@@ -222,6 +237,9 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=4, default_eval_workers=0)
     args = parser.parse_args()
+    validate_single_modality_args(args.modality, args.multimodal)
+    if args.modality == 'ir' and args.backbone != 'ResNet50':
+        raise ValueError('CDAN IR requires --backbone ResNet50')
     if args.early_stop_patience < 0:
         raise ValueError('--early-stop-patience must be >= 0')
     if args.early_stop_patience:
@@ -243,6 +261,7 @@ def main():
     # 预处理恢复原参考实现 pre_process.py:image_train（Resize 256 + 随机裁剪 224）；
     # 评估由 evaluate_10crop 按官方十裁剪协议自建数据加载。
     if args.enhanced_augmentation:
+        mean, std = normalization(args.modality)
         train_tf = T.Compose([
             prep.ResizeImage(256),
             T.RandomResizedCrop(224, scale=(0.6, 1.0)),
@@ -250,11 +269,13 @@ def main():
             T.ColorJitter(brightness=0.25, contrast=0.25,
                           saturation=0.2, hue=0.05),
             T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406],
-                        std=[0.229, 0.224, 0.225]),
+            T.Normalize(mean=mean, std=std),
         ])
     else:
         train_tf = prep.image_train(resize_size=256, crop_size=224)
+        if args.modality == 'ir':
+            mean, std = normalization(args.modality)
+            train_tf.transforms[-1] = T.Normalize(mean=mean, std=std)
     if args.multimodal:
         train_tf = jmda_train_transform()
         print('Multimodal preprocessing: JMDA paired Resize(256) + '
@@ -272,10 +293,13 @@ def main():
         tgt_ds = label_free_target_paired_dataset(
             tgt_train_list, train_tf, label_map)
     else:
+        single_image_mode = image_mode(args.modality)
         src_ds = UdaImageListDataset(src_list, transform=train_tf,
-                                     label_map=label_map)
+                                     label_map=label_map,
+                                     image_mode=single_image_mode)
         tgt_ds = UdaImageListDataset(tgt_train_list, transform=train_tf,
-                                     label_map=label_map)
+                                     label_map=label_map,
+                                     image_mode=single_image_mode)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
@@ -291,8 +315,20 @@ def main():
                      else 'official CDAN 10-crop')
     print(f'DataLoader settings: train={loader_kwargs}, '
           f'eval={eval_protocol}, workers/view={args.eval_num_workers}')
-    train_loader = unpaired_domain_loader(
-        src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+    if args.multimodal:
+        train_loader = unpaired_domain_loader(
+            src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+        train_iterator = iter(train_loader)
+        updates_per_domain_epoch = len(train_loader)
+    else:
+        train_loader = None
+        train_iterator = official_forever_domain_iterator(
+            src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+        updates_per_domain_epoch = max(
+            len(src_ds) // args.batch_size,
+            len(tgt_ds) // args.batch_size,
+            1,
+        )
 
     if args.multimodal:
         if args.backbone != 'JMDA':
@@ -312,7 +348,10 @@ def main():
         model = ResNetFc(resnet_name=args.backbone, use_bottleneck=True,
                          bottleneck_dim=256, new_cls=True,
                          class_num=num_classes).to(device)
-        print(f'CDAN backbone: official CDAN/pytorch/network.py ResNetFc({args.backbone})')
+        if args.modality == 'ir':
+            adapt_resnet_stem_to_ir(model)
+        print('CDAN backbone: official CDAN/pytorch/network.py '
+              f'ResNetFc({args.backbone}), modality={args.modality.upper()}')
     # 原参考实现 train_image.py:113-118：--random 默认 False 时不建 RandomLayer，
     # 判别器输入 = bottleneck×类别数 的外积；仅 --random 时用 1024 维随机映射。
     if args.random:
@@ -354,7 +393,8 @@ def main():
     evaluations_without_improvement = 0
     final_acc = None
     best_path = os.path.join(args.save_dir,
-                             f'cdan_{args.target}_{args.backbone}_best.pth')
+                             f'cdan_{args.modality}_{args.target}_'
+                             f'{args.backbone}_best.pth')
     if args.early_stop_patience:
         print('WARNING: early stopping monitors labelled target validation accuracy; '
               'this is target-validation-selected UDA, not strict label-free UDA.')
@@ -363,17 +403,19 @@ def main():
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
+        method_name = ('CDAN-MM' if args.multimodal else
+                       f'CDAN-{args.modality.upper()}')
         eff = EfficiencyLogger(args.efficiency_output_dir,
-                                'CDAN-MM' if args.multimodal else 'CDAN',
+                                method_name,
                                 seed=args.seed, device=str(device),
-                                modalities='VIS+IR' if args.multimodal else 'VIS')
+                                modalities=modality_label(
+                                    args.modality, args.multimodal))
         print(f'Efficiency logging -> {eff.run_dir}')
 
     # 原参考实现 train_image.py:145-192 的迭代制训练：
     #   for i in range(100004)，迭代器耗尽即重建（:168-171），
     #   每个 iteration 开头 inv 调 lr（:166，0 基迭代号），
     #   源/目标分别前向后拼接 features/outputs（:175-178）。
-    updates_per_domain_epoch = len(train_loader)
     total_domain_epochs = math.ceil(args.num_iterations /
                                     updates_per_domain_epoch)
     if args.multimodal:
@@ -393,16 +435,20 @@ def main():
                       max(args.num_iterations -
                           args.source_warmup_iterations, 1))
     ad_net.max_iter = float(coeff_max_iter)
-    print('CDAN multimodal staged training: '
-          f'source-only warmup={JMDA_SOURCE_WARMUP_EPOCHS} epochs/'
-          f'{args.source_warmup_iterations} updates; '
-          f'VIS lr={JMDA_VIS_LR:g}; IR+heads+ad lr={JMDA_OTHER_LR:g}; '
-          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
-          f'grad clip={JMDA_GRAD_CLIP_NORM:g}; '
-          f'label smoothing={args.label_smoothing}')
-    train_iterator = iter(train_loader)
-    print('CDAN domain sampling: JMDA strict-UDA larger-domain epoch; '
-          f'{updates_per_domain_epoch} full paired batches/domain epoch')
+    if args.multimodal:
+        print('CDAN multimodal staged training: '
+              f'source-only warmup={JMDA_SOURCE_WARMUP_EPOCHS} epochs/'
+              f'{args.source_warmup_iterations} updates; '
+              f'VIS lr={JMDA_VIS_LR:g}; IR+heads+ad lr={JMDA_OTHER_LR:g}; '
+              f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+              f'grad clip={JMDA_GRAD_CLIP_NORM:g}; '
+              f'label smoothing={args.label_smoothing}')
+        print('CDAN domain sampling: JMDA larger-domain paired epoch; '
+              f'{updates_per_domain_epoch} batches/domain epoch')
+    else:
+        print('CDAN official single-modal optimization: independent '
+              'source/target iterators; SGD+Nesterov; inv LR schedule; '
+              f'batch={args.batch_size}; iterations={args.num_iterations}')
     block = 0
     for iter_num in range(args.num_iterations):
         if iter_num == 0 and eff:
@@ -413,7 +459,7 @@ def main():
             optimizer = inv_lr_scheduler(
                 optimizer, iter_num, gamma=args.lr_gamma,
                 power=args.lr_decay, lr=args.lr, weight_decay=5e-4)
-        if iter_num % updates_per_domain_epoch == 0:
+        if args.multimodal and iter_num % updates_per_domain_epoch == 0:
             train_iterator = iter(train_loader)
         if eff:
             eff.step_start()
@@ -529,7 +575,8 @@ def main():
                                           prefetch_factor=args.prefetch_factor,
                                           pin_memory=args.pin_memory,
                                           worker_timeout_seconds=args.worker_timeout_seconds,
-                                          multimodal=args.multimodal)
+                                          multimodal=args.multimodal,
+                                          modality=args.modality)
             acc = val_metrics['accuracy']
             last_metrics = dict(val_metrics)
             if iter_num == args.num_iterations - 1:
@@ -563,7 +610,8 @@ def main():
         raise RuntimeError('CDAN completed without target-validation metrics')
     if args.save_model:
         torch.save(model.state_dict(), os.path.join(
-            args.save_dir, f'cdan_{args.target}_last.pth'))
+            args.save_dir,
+            f'cdan_{args.modality}_{args.target}_last.pth'))
     if eff:
         eff.finalize(extra_metrics={'final_acc': best_metrics['accuracy'],
                                     'best_acc': best_acc,

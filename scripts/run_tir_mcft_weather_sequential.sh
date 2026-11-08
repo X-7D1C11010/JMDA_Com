@@ -17,7 +17,7 @@ export VDS2RAW_SEEDS="${COMBINED_TIR_SEEDS:-42 43 44 45 46}"
 
 export JMDA_DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 read -r -a MCFT_SEEDS <<< "${COMBINED_MCFT_SEEDS:-42 43 44 45 46}"
-MCFT_EPOCHS="${WEATHER_MCFT_EPOCHS:-500}"
+MCFT_EPOCHS="${WEATHER_MCFT_EPOCHS:-100}"
 if [ "$MODE" = "smoke" ]; then
   VDS2RAW_SEEDS="42"
   export VDS2RAW_SEEDS
@@ -29,8 +29,9 @@ echo "[1/2] TIR: VDS2Raw RGB+NIR+AIS; seeds=${VDS2RAW_SEEDS}"
 bash "$HERE/scripts/run_vds2raw_methods.sh" "$MODE"
 
 echo "[2/2] MCFT: weather VIS+IR; seeds=${MCFT_SEEDS[*]}; epochs=$MCFT_EPOCHS"
+export SUPERVISED_MCFT_EPOCHS="$MCFT_EPOCHS"
 for seed in "${MCFT_SEEDS[@]}"; do
-  echo ">>> weather MCFT seed=$seed"
+  echo ">>> weather MCFT seed=$seed (fresh model; independent run)"
   JMDA_SEED="$seed" bash "$HERE/scripts/run_server.sh" supervised "$MCFT_EPOCHS"
 done
 

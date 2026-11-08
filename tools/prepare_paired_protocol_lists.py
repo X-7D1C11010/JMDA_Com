@@ -97,37 +97,55 @@ def exact_paired_split(domain_root, domain_type, phase):
     return selected, statistics
 
 
-def exact_vis_split(domain_root, domain_type, phase):
-    """VIS-only analog of exact_paired_split: same union/hash split rule but
-    without requiring a same-stem IR mate, so single-modality (VIS) methods
-    keep every VIS image of the domain."""
+def exact_modality_split(domain_root, domain_type, phase, modality):
+    """Single-modality analog of the paired split.
+
+    It retains every image from the requested modality and applies the same
+    deterministic union/hash split rule without requiring a cross-modal mate.
+    """
+    if modality not in ('可见光', '红外'):
+        raise ValueError(f'unsupported modality directory: {modality!r}')
+    key = 'vis' if modality == '可见光' else 'ir'
     selected = []
     statistics = {
-        'union_vis_files': 0,
+        f'union_{key}_files': 0,
         'selected_phase_images': 0,
     }
     for class_name in class_names(domain_root, domain_type):
-        vis_by_stem, raw_val_vis = {}, {}
+        images_by_stem, raw_val_images = {}, {}
         for split in ('train', 'val'):
-            split_vis = image_map(
-                modality_dir(domain_root, domain_type, split, class_name, '可见光')
+            split_images = image_map(
+                modality_dir(domain_root, domain_type, split, class_name, modality)
             )
-            vis_by_stem.update(split_vis)
+            images_by_stem.update(split_images)
             if split == 'val':
-                raw_val_vis = split_vis
+                raw_val_images = split_images
 
-        desired_val_count = min(len(raw_val_vis), len(vis_by_stem))
+        desired_val_count = min(len(raw_val_images), len(images_by_stem))
+        hash_namespace = (f'{domain_root.name}:{class_name}'
+                          if modality == '可见光'
+                          else f'{domain_root.name}:{modality}:{class_name}')
         ranked = sorted(
-            vis_by_stem,
+            images_by_stem,
             key=lambda stem: hashlib.sha256(
-                f'{domain_root.name}:{class_name}:{stem}'.encode('utf-8')
+                f'{hash_namespace}:{stem}'.encode('utf-8')
             ).hexdigest(),
         )
         stems = ranked[:desired_val_count] if phase == 'val' else ranked[desired_val_count:]
-        statistics['union_vis_files'] += len(vis_by_stem)
+        statistics[f'union_{key}_files'] += len(images_by_stem)
         statistics['selected_phase_images'] += len(stems)
-        selected.extend((vis_by_stem[stem], int(class_name)) for stem in stems)
+        selected.extend((images_by_stem[stem], int(class_name)) for stem in stems)
     return selected, statistics
+
+
+def exact_vis_split(domain_root, domain_type, phase):
+    return exact_modality_split(
+        domain_root, domain_type, phase, modality='可见光')
+
+
+def exact_ir_split(domain_root, domain_type, phase):
+    return exact_modality_split(
+        domain_root, domain_type, phase, modality='红外')
 
 
 def write_list(path, samples, label_map):
@@ -173,9 +191,9 @@ def main():
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--output-dir', required=True)
     parser.add_argument('--targets', nargs='+', choices=tuple(TARGET_DIRS), required=True)
-    parser.add_argument('--modality', choices=('paired', 'vis'), default='paired',
+    parser.add_argument('--modality', choices=('paired', 'vis', 'ir'), default='paired',
                         help="paired: 仅保留有同名 IR 配对的 VIS 样本（多模态统一队列）；"
-                             "vis: 保留全部 VIS 样本（单模态方法，不做配对裁剪）")
+                             "vis: 保留全部 VIS 样本；ir: 保留全部 IR 样本")
     parser.add_argument('--sda-shots', type=int, default=10)
     parser.add_argument('--sda-seed', type=int, default=42)
     args = parser.parse_args()
@@ -185,7 +203,11 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     source_root = data_root / '晴天'
 
-    split_fn = exact_paired_split if args.modality == 'paired' else exact_vis_split
+    split_fn = {
+        'paired': exact_paired_split,
+        'vis': exact_vis_split,
+        'ir': exact_ir_split,
+    }[args.modality]
     source_train, source_train_stats = split_fn(source_root, 'source', 'train')
     source_val, source_val_stats = split_fn(source_root, 'source', 'val')
     original_labels = sorted({sample[-1] for sample in source_train + source_val})
@@ -195,11 +217,12 @@ def main():
         )
     label_map = {label: index for index, label in enumerate(original_labels)}
 
-    cohort_rule = (
-        'exact VIS/IR stem match over train+val union; stable hash split'
-        if args.modality == 'paired'
-        else 'all VIS images over train+val union; stable hash split (no IR pairing)'
-    )
+    cohort_rule = {
+        'paired': 'exact VIS/IR stem match over train+val union; stable hash split',
+        'vis': 'all VIS images over train+val union; stable hash split (no IR pairing)',
+        'ir': ('all IR images over train+val union; stable hash split '
+               '(no VIS pairing)'),
+    }[args.modality]
     manifest = {
         'data_root': str(data_root),
         'modality': args.modality,

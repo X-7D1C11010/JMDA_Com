@@ -30,6 +30,7 @@ param(
     [string]$DataDir = '',
     [int]$CdanIterations = 2000,
     [int]$DANNEpochs = 100,
+    [int]$DANNIterationsPerEpoch = 1000,
     [int]$DeepCoralEpochs = 20,
     [int]$MDDEpochs = 20,
     [int]$MCCEpochs = 20,
@@ -82,6 +83,9 @@ param(
     [int]$ImageBatchSize = 32,
     [switch]$EnhancedAugmentation,
     [switch]$Multimodal,
+    [ValidateSet('vis', 'ir')]
+    [string]$SingleModality = 'vis',
+    [switch]$OfficialSingleModal,
     [switch]$IncludePausedMethods,
     [int]$EarlyStoppingPatience = 0,
     [double]$EarlyStoppingMinDelta = 0.0,
@@ -92,7 +96,13 @@ $ErrorActionPreference = 'Continue'
 
 $Repo = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $Repo 'efficiency_results\uda_sunny' }
-if (-not $DataDir) { $DataDir = Join-Path $Repo 'data_lists_vis' }
+if (-not $DataDir) {
+    $DataDir = Join-Path $Repo ("data_lists_{0}" -f $SingleModality)
+}
+if ($Multimodal -and $SingleModality -ne 'vis') {
+    Write-Host '-Multimodal cannot be combined with -SingleModality ir.' -ForegroundColor Red
+    exit 1
+}
 if (-not $DeepCoralWeights) {
     $candidate = Join-Path $Repo 'pretrained_weights\deepcoral_alexnet_owt_4df8aa71.pth'
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $DeepCoralWeights = $candidate }
@@ -181,7 +191,7 @@ if ($EarlyStoppingPatience -lt 0 -or $EarlyStoppingMinDelta -lt 0) {
     exit 1
 }
 if ($DANNDomainLossWeight -lt 0 -or $DANNGrlMaxIterations -lt 0 -or
-    $DANNTargetEvalInterval -lt 0 -or
+    $DANNTargetEvalInterval -lt 0 -or $DANNIterationsPerEpoch -lt 1 -or
     $DANNMinimumLearningRateRatio -lt 0 -or $DANNMinimumLearningRateRatio -gt 1 -or
     $DeepCoralMaxWeight -lt 0 -or $DeepCoralWarmupEpochs -lt 0 -or
     $DeepCoralWeightDecay -lt 0 -or
@@ -263,7 +273,8 @@ Write-Host " TORCH_HOME: $env:TORCH_HOME"
 Write-Host " Image backbone override: $(if ($ImageBackbone) { $ImageBackbone } else { 'method default' })"
 Write-Host " Image backbone batch size: $ImageBatchSize"
 Write-Host " Enhanced augmentation: $EnhancedAugmentation"
-Write-Host " Modalities: $(if ($Multimodal) { 'VIS+IR exact pairs' } else { 'VIS' })"
+Write-Host " Modalities: $(if ($Multimodal) { 'VIS+IR exact pairs' } else { $SingleModality.ToUpperInvariant() })"
+Write-Host " Official single-modal preset: $OfficialSingleModal"
 Write-Host " Result rule: peak target-val ACC within budget (ACC ties: macro-F1)"
 Write-Host " Early stopping: patience=$EarlyStoppingPatience, min_delta=$EarlyStoppingMinDelta"
 if ($EarlyStoppingPatience -gt 0) {
@@ -318,6 +329,9 @@ foreach ($method in $Methods.Keys) {
                      '--num-workers', $EffectiveNumWorkers,
                      '--prefetch-factor', $PrefetchFactor,
                      '--pin-memory')
+            if (-not $Multimodal) {
+                $cli += @('--modality', $SingleModality)
+            }
             if ($UsePersistentWorkers) {
                 $cli += '--persistent-workers'
             } else {
@@ -353,7 +367,8 @@ foreach ($method in $Methods.Keys) {
                           '--min-lr-ratio', ([Convert]::ToString(
                               $DANNMinimumLearningRateRatio,
                               [Globalization.CultureInfo]::InvariantCulture)),
-                          '--target-eval-interval', $DANNTargetEvalInterval)
+                          '--target-eval-interval', $DANNTargetEvalInterval,
+                          '--iters-per-epoch', $DANNIterationsPerEpoch)
             }
             if ($method -eq 'DeepCORAL') {
                 $cli += @('--coral-max-weight', ([Convert]::ToString(
@@ -406,6 +421,31 @@ foreach ($method in $Methods.Keys) {
                               $MCCLabelSmoothing,
                               [Globalization.CultureInfo]::InvariantCulture)))
             }
+            if ($OfficialSingleModal) {
+                # Keep each publication's own update budget, optimizer and
+                # batch sizes.  IR changes only the one-channel feature stem.
+                if ($method -eq 'DANN') {
+                    $cli += @('--backbone', 'resnet50', '--batch-size', 32)
+                } elseif ($method -eq 'DeepCORAL') {
+                    if ($SingleModality -eq 'vis') {
+                        $cli += @('--backbone', 'alexnet')
+                    } else {
+                        $cli += @('--backbone', 'resnet50')
+                    }
+                    $cli += @('--source-batch-size', 200,
+                              '--target-batch-size', 56,
+                              '--test-batch-size', 128)
+                } elseif ($method -eq 'CDAN') {
+                    $cli += @('--backbone', 'ResNet50', '--batch-size', 36)
+                } elseif ($method -eq 'MDD') {
+                    $cli += @('--backbone', 'resnet50', '--batch-size', 32)
+                } elseif ($method -eq 'MCC') {
+                    $cli += @('--backbone', 'resnet50', '--batch-size', 36,
+                              '--source-warmup-epochs', 0,
+                              '--trade-off-warmup-epochs', 0,
+                              '--label-smoothing', 0)
+                }
+            }
             if ($method -eq 'DeepCORAL' -and $DeepCoralWeights) {
                 $cli += @('--alexnet-weights', $DeepCoralWeights)
             }
@@ -419,7 +459,7 @@ foreach ($method in $Methods.Keys) {
                 $cli += @('--early-stop-patience', $EarlyStoppingPatience,
                           '--early-stop-min-delta', $EarlyStoppingMinDelta)
             }
-            if ($ImageBackbone) {
+            if ($ImageBackbone -and -not $OfficialSingleModal) {
                 if ($ImageBackbone -ieq 'JMDA') {
                     if ($method -eq 'CDAN') {
                         $cli += @('--backbone', 'JMDA')
@@ -468,5 +508,7 @@ Write-Host " Summary MD   : $(Join-Path $OutDir 'efficiency_table.md')"
 Write-Host " Per-run logs : $LogDir"
 if ($failed.Count -gt 0) {
     Write-Host (" Failed runs ({0}): {1}" -f $failed.Count, ($failed -join ', ')) -ForegroundColor Red
+    Write-Host "=============================================================="
+    exit 1
 }
 Write-Host "=============================================================="

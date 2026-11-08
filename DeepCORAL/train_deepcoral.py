@@ -82,6 +82,14 @@ from uda_multimodal import (
     describe_pairing,
     unpaired_domain_loader,
 )
+from single_modality import (
+    adapt_resnet_stem_to_ir,
+    image_mode,
+    modality_label,
+    normalization,
+    official_min_domain_loader,
+    validate_single_modality_args,
+)
 
 
 ALEXNET_URL = 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth'
@@ -137,7 +145,7 @@ def load_pretrained_alexnet(backbone, weights_path=''):
 class ResNetDeepCORAL(nn.Module):
     """Deep CORAL over JMDA's non-tensor VIS/IR feature concatenation."""
 
-    def __init__(self, num_classes, multimodal=False):
+    def __init__(self, num_classes, multimodal=False, modality='vis'):
         super().__init__()
         self.multimodal = bool(multimodal)
         if self.multimodal:
@@ -148,6 +156,8 @@ class ResNetDeepCORAL(nn.Module):
         else:
             self.encoder = None
             backbone = tv_models.resnet50(pretrained=True)
+            if modality == 'ir':
+                adapt_resnet_stem_to_ir(backbone)
             branch_dim = backbone.fc.in_features
             backbone.fc = nn.Identity()
             self.sharedNet = backbone
@@ -168,7 +178,8 @@ class ResNetDeepCORAL(nn.Module):
         return self.predict_components(source), self.predict_components(target)
 
 
-def get_transforms(backbone='alexnet', enhanced_augmentation=False):
+def get_transforms(backbone='alexnet', enhanced_augmentation=False,
+                   modality='vis'):
     # DeepCORAL/data_loader.py:get_office31_dataloader: Scale(227), ToTensor,
     # ImageNet Normalize. Scale is replaced by its current torchvision name.
     crop_size = 224 if backbone in {'resnet50', 'jmda'} else 227
@@ -182,15 +193,16 @@ def get_transforms(backbone='alexnet', enhanced_augmentation=False):
         ]
     else:
         train_ops = [transforms.Resize((crop_size, crop_size))]
+    mean, std = normalization(modality)
     train_ops += [
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Normalize(mean, std),
     ]
     train_tf = transforms.Compose(train_ops)
     val_tf = transforms.Compose([
         transforms.Resize((256, 256)), transforms.CenterCrop(crop_size),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Normalize(mean, std),
     ])
     return train_tf, val_tf
 
@@ -259,6 +271,8 @@ def main():
     parser.add_argument('--enhanced-augmentation', action='store_true',
                         help='enable random crop, horizontal flip, and color jitter')
     parser.add_argument('--multimodal', action='store_true')
+    parser.add_argument('--modality', choices=['vis', 'ir'], default='vis',
+                        help='single-modal input (VIS official path or IR extension)')
     parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
                         default=False)
     parser.add_argument('--early-stop-patience', type=int, default=0,
@@ -274,6 +288,9 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
+    validate_single_modality_args(args.modality, args.multimodal)
+    if args.modality == 'ir' and args.backbone != 'resnet50':
+        raise ValueError('Deep CORAL IR requires --backbone resnet50')
     args.seed = seed_everything(args.seed)
     print(f'Controlled random seed: {args.seed}')
 
@@ -293,7 +310,8 @@ def main():
             args.ir_lr_mult <= 0 or not 0 <= args.min_lr_ratio <= 1 or
             not 0 <= args.label_smoothing < 1):
         raise ValueError('invalid CORAL weight/eval interval/head LR/scheduler setting')
-    train_tf, val_tf = get_transforms(args.backbone, args.enhanced_augmentation)
+    train_tf, val_tf = get_transforms(
+        args.backbone, args.enhanced_augmentation, args.modality)
     if args.multimodal:
         train_tf, val_tf = jmda_train_transform(), jmda_val_transform()
         print('Multimodal preprocessing: JMDA paired Resize(256) + '
@@ -313,14 +331,19 @@ def main():
             tgt_train_list, train_tf, label_map)
         tgt_val_ds = paired_dataset(tgt_val_list, val_tf, label_map)
     else:
+        single_image_mode = image_mode(args.modality)
         src_ds = UdaImageListDataset(src_list, transform=train_tf,
-                                     label_map=label_map)
+                                     label_map=label_map,
+                                     image_mode=single_image_mode)
         src_eval_ds = UdaImageListDataset(src_list, transform=val_tf,
-                                          label_map=label_map)
+                                          label_map=label_map,
+                                          image_mode=single_image_mode)
         tgt_ds = UdaImageListDataset(tgt_train_list, transform=train_tf,
-                                     label_map=label_map)
+                                     label_map=label_map,
+                                     image_mode=single_image_mode)
         tgt_val_ds = UdaImageListDataset(tgt_val_list, transform=val_tf,
-                                         label_map=label_map)
+                                         label_map=label_map,
+                                         image_mode=single_image_mode)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
 
     print(format_class_space(class_ids, num_classes))
@@ -336,11 +359,16 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    if args.source_batch_size != args.target_batch_size:
-        raise ValueError(
-            'JMDA strict-UDA sampling requires equal source/target batch sizes')
-    train_loader = unpaired_domain_loader(
-        src_ds, tgt_ds, args.source_batch_size, args.seed, **loader_kwargs)
+    if args.multimodal:
+        if args.source_batch_size != args.target_batch_size:
+            raise ValueError(
+                'JMDA multimodal sampling requires equal domain batch sizes')
+        train_loader = unpaired_domain_loader(
+            src_ds, tgt_ds, args.source_batch_size, args.seed, **loader_kwargs)
+    else:
+        train_loader = official_min_domain_loader(
+            src_ds, tgt_ds, args.source_batch_size, args.target_batch_size,
+            args.seed, **loader_kwargs)
     src_eval_loader = DataLoader(src_eval_ds, batch_size=args.test_batch_size,
                                  shuffle=False, **eval_loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.test_batch_size,
@@ -352,7 +380,8 @@ def main():
         if args.multimodal and args.backbone != 'jmda':
             raise ValueError('--multimodal requires --backbone jmda')
         model = ResNetDeepCORAL(num_classes=num_classes,
-                                multimodal=args.multimodal).to(device)
+                                multimodal=args.multimodal,
+                                modality=args.modality).to(device)
         if args.multimodal:
             tuning = configure_jmda_visual_finetuning(
                 model.encoder, mode='layer2_4')
@@ -362,7 +391,8 @@ def main():
         print('DeepCORAL architecture: '
               + ('JMDA non-tensor encoder (VIS ResNet-18 + IR U-Net, '
                  '512+512 direct concatenation)'
-                 if args.multimodal else 'ImageNet ResNet-50 VIS branch'))
+                 if args.multimodal else
+                 f'ImageNet ResNet-50 {args.modality.upper()} branch'))
     else:
         if args.multimodal:
             raise ValueError('--multimodal requires --backbone jmda')
@@ -380,9 +410,11 @@ def main():
             optimizer_groups, weight_decay=JMDA_WEIGHT_DECAY)
         args.label_smoothing = 0.1
     else:
+        encoder_lr_mult = (args.ir_lr_mult if args.modality == 'ir'
+                           else args.vis_lr_mult)
         optimizer_groups = [{
             'params': model.sharedNet.parameters(),
-            'lr': args.vis_lr_mult * args.lr,
+            'lr': encoder_lr_mult * args.lr,
         }, {'params': model.fc.parameters(),
             'lr': args.head_lr_mult * args.lr}]
         optimizer = optim.SGD(optimizer_groups, lr=args.lr, momentum=0.9,
@@ -401,7 +433,8 @@ def main():
     epochs_without_improvement = 0
     final_acc = None
     best_path = os.path.join(args.save_dir,
-                             f'deepcoral_{args.target}_{args.backbone}_best.pth')
+                             f'deepcoral_{args.modality}_{args.target}_'
+                             f'{args.backbone}_best.pth')
     if args.early_stop_patience:
         print('WARNING: early stopping monitors labelled target validation accuracy; '
               'this is target-validation-selected UDA, not strict label-free UDA.')
@@ -410,10 +443,13 @@ def main():
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
+        method_name = ('DeepCORAL-MM' if args.multimodal else
+                       f'DeepCORAL-{args.modality.upper()}')
         eff = EfficiencyLogger(args.efficiency_output_dir,
-                                'DeepCORAL-MM' if args.multimodal else 'DeepCORAL',
+                                method_name,
                                 seed=args.seed, device=str(device),
-                                modalities='VIS+IR' if args.multimodal else 'VIS')
+                                modalities=modality_label(
+                                    args.modality, args.multimodal))
         print(f'Efficiency logging -> {eff.run_dir}')
 
     n_batches = len(train_loader)
@@ -440,13 +476,22 @@ def main():
         )
     print(f'DeepCORAL optimizer-update budget: {planned_updates} '
           f'({"explicit iterations" if args.max_iterations else f"{args.epochs} epochs"})')
-    print(f'DeepCORAL domain sampling: JMDA strict-UDA larger-domain epoch; '
-          f'{n_batches} full paired batches/epoch')
-    print('DeepCORAL multimodal staged training: '
-          f'source-only warmup={source_warmup_epochs} epochs; '
-          f'VIS lr={JMDA_VIS_LR:g}; IR+head lr={JMDA_OTHER_LR:g}; '
-          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
-          f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
+    sampling_protocol = ('JMDA larger-domain paired epoch' if args.multimodal
+                         else 'released Deep CORAL min(source,target) epoch')
+    print(f'DeepCORAL domain sampling: {sampling_protocol}; '
+          f'{n_batches} updates/epoch')
+    if args.multimodal:
+        print('DeepCORAL multimodal staged training: '
+              f'source-only warmup={source_warmup_epochs} epochs; '
+              f'VIS lr={JMDA_VIS_LR:g}; IR+head lr={JMDA_OTHER_LR:g}; '
+              f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+              f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
+    else:
+        print('DeepCORAL official single-modal optimization: SGD; '
+              f'backbone_lr={optimizer.param_groups[0]["lr"]:g}; '
+              f'head_lr={optimizer.param_groups[1]["lr"]:g}; '
+              f'source_batch={args.source_batch_size}; '
+              f'target_batch={args.target_batch_size}')
     global_step = 0
     for epoch in range(outer_epochs):
         if eff:

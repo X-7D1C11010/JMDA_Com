@@ -260,7 +260,7 @@ class TIRVDS2Raw(nn.Module):
         lora_params: Sequence[str] = ("q", "k", "v"),
         ais_dropout_probability: float = 0.3,
         nir_initial_scale: float = 0.01,
-        ais_initial_scale: float = 1.20,
+        ais_initial_scale: float = 1.50,
         logit_scale: float = 4.0,
     ):
         super().__init__()

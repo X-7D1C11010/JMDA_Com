@@ -61,6 +61,7 @@ from data_loader_options import (
     evaluation_loader_kwargs,
 )
 from uda_multimodal import (
+    CyclingDataIterator,
     JMDA_GRAD_CLIP_NORM,
     JMDA_OTHER_LR,
     JMDA_SOURCE_WARMUP_EPOCHS,
@@ -77,6 +78,14 @@ from uda_multimodal import (
     paired_dataset,
     unpaired_domain_loader,
 )
+from single_modality import (
+    adapt_resnet_stem_to_ir,
+    image_mode,
+    modality_label,
+    normalization,
+    official_forever_domain_iterator,
+    validate_single_modality_args,
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -91,7 +100,7 @@ class ResizeImage:
         return img.resize((self.size, self.size), Image.BILINEAR)
 
 
-def get_train_transform(enhanced_augmentation=False):
+def get_train_transform(enhanced_augmentation=False, modality='vis'):
     operations = [
         ResizeImage(256),
         T.RandomResizedCrop(224, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.)),
@@ -100,18 +109,20 @@ def get_train_transform(enhanced_augmentation=False):
     if enhanced_augmentation:
         operations.append(T.ColorJitter(brightness=0.25, contrast=0.25,
                                         saturation=0.2, hue=0.05))
+    mean, std = normalization(modality)
     operations += [T.ToTensor(),
-        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        T.Normalize(mean=mean, std=std),
     ]
     return T.Compose(operations)
 
 
-def get_val_transform():
+def get_val_transform(modality='vis'):
+    mean, std = normalization(modality)
     return T.Compose([
         ResizeImage(256),
         T.CenterCrop(224),
         T.ToTensor(),
-        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        T.Normalize(mean=mean, std=std),
     ])
 
 
@@ -284,6 +295,8 @@ def main():
                         default='resnet18')
     parser.add_argument('--enhanced-augmentation', action='store_true')
     parser.add_argument('--multimodal', action='store_true')
+    parser.add_argument('--modality', choices=['vis', 'ir'], default='vis',
+                        help='single-modal input (VIS official path or IR extension)')
     parser.add_argument('--save-model', action=argparse.BooleanOptionalAction,
                         default=False)
     parser.add_argument('--early-stop-patience', type=int, default=0,
@@ -299,6 +312,9 @@ def main():
     parser.add_argument('--seed', type=int, default=42)
     add_data_loader_args(parser, default_workers=2)
     args = parser.parse_args()
+    validate_single_modality_args(args.modality, args.multimodal)
+    if args.modality == 'ir' and args.backbone != 'resnet50':
+        raise ValueError('MDD IR requires --backbone resnet50')
     if (args.trade_off < 0 or args.trade_off_warmup_epochs < 0 or
             args.source_warmup_epochs < 0):
         raise ValueError('invalid MDD trade-off/warmup setting')
@@ -311,7 +327,9 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     print(args)
 
-    train_tf, val_tf = get_train_transform(args.enhanced_augmentation), get_val_transform()
+    train_tf = get_train_transform(
+        args.enhanced_augmentation, args.modality)
+    val_tf = get_val_transform(args.modality)
     if args.multimodal:
         train_tf, val_tf = jmda_train_transform(), jmda_val_transform()
         print('Multimodal preprocessing: JMDA paired Resize(256) + '
@@ -328,9 +346,15 @@ def main():
             tgt_train_list, train_tf, label_map)
         tgt_val_ds = paired_dataset(tgt_val_list, val_tf, label_map)
     else:
-        src_ds = UdaImageListDataset(src_list, train_tf, label_map)
-        tgt_ds = UdaImageListDataset(tgt_train_list, train_tf, label_map)
-        tgt_val_ds = UdaImageListDataset(tgt_val_list, val_tf, label_map)
+        single_image_mode = image_mode(args.modality)
+        src_ds = UdaImageListDataset(
+            src_list, train_tf, label_map, image_mode=single_image_mode)
+        tgt_ds = UdaImageListDataset(
+            tgt_train_list, train_tf, label_map,
+            image_mode=single_image_mode)
+        tgt_val_ds = UdaImageListDataset(
+            tgt_val_list, val_tf, label_map,
+            image_mode=single_image_mode)
     assert_training_label_space(src_ds, tgt_ds, class_ids)
     print(format_class_space(class_ids, num_classes))
     print(f'Source train: {len(src_ds)}, target train: {len(tgt_ds)}, target val: {len(tgt_val_ds)}')
@@ -343,15 +367,21 @@ def main():
     loader_kwargs = data_loader_kwargs(args)
     eval_loader_kwargs = evaluation_loader_kwargs(args)
     print(f'DataLoader settings: train={loader_kwargs}, eval={eval_loader_kwargs}')
-    train_loader = unpaired_domain_loader(
-        src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+    if args.multimodal:
+        train_loader = unpaired_domain_loader(
+            src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
+        train_iter = CyclingDataIterator(train_loader)
+    else:
+        train_loader = None
+        train_iter = official_forever_domain_iterator(
+            src_ds, tgt_ds, args.batch_size, args.seed, **loader_kwargs)
     tgt_val_loader = DataLoader(tgt_val_ds, batch_size=args.batch_size,
                                 shuffle=False, **eval_loader_kwargs)
-    if args.iters_per_epoch != len(train_loader):
-        print('MDD update budget aligned to JMDA strict UDA: '
-              f'{args.iters_per_epoch} -> {len(train_loader)} iterations/epoch')
-    args.iters_per_epoch = len(train_loader)
     if args.multimodal:
+        if args.iters_per_epoch != len(train_loader):
+            print('MDD update budget aligned to JMDA strict UDA: '
+                  f'{args.iters_per_epoch} -> {len(train_loader)} iterations/epoch')
+        args.iters_per_epoch = len(train_loader)
         args.source_warmup_epochs = JMDA_SOURCE_WARMUP_EPOCHS
         if args.epochs <= args.source_warmup_epochs:
             raise ValueError('JMDA staged training requires more than 10 epochs')
@@ -372,7 +402,10 @@ def main():
             raise ValueError('--backbone jmda requires --multimodal')
         backbone_fn = resnet50 if args.backbone == 'resnet50' else resnet18
         backbone = backbone_fn(pretrained=True)
-        print(f'MDD backbone: {args.backbone} (ImageNet pretrained), modalities=VIS')
+        if args.modality == 'ir':
+            adapt_resnet_stem_to_ir(backbone)
+        print(f'MDD backbone: {args.backbone} (ImageNet pretrained), '
+              f'modality={args.modality.upper()}')
     classifier = ImageClassifier(backbone, num_classes, bottleneck_dim=args.bottleneck_dim,
                                  width=args.bottleneck_dim).to(device)
     mdd = MarginDisparityDiscrepancy(args.margin).to(device)
@@ -400,11 +433,16 @@ def main():
             optimizer,
             lambda x: args.lr *
             (1. + args.lr_gamma * float(x)) ** (-args.lr_decay))
-    print('MDD multimodal staged training: '
-          f'source-only warmup={args.source_warmup_epochs} epochs; '
-          f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
-          f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
-          f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
+    if args.multimodal:
+        print('MDD multimodal staged training: '
+              f'source-only warmup={args.source_warmup_epochs} epochs; '
+              f'VIS lr={JMDA_VIS_LR:g}; IR+heads lr={JMDA_OTHER_LR:g}; '
+              f'AdamW wd={JMDA_WEIGHT_DECAY:g}; epoch cosine; '
+              f'grad clip={JMDA_GRAD_CLIP_NORM:g}')
+    else:
+        print('MDD official single-modal optimization: independent '
+              'source/target iterators; SGD+Nesterov; inverse LR; '
+              f'{args.iters_per_epoch} iterations/epoch')
 
     best_acc = -float('inf')
     best_epoch = 0
@@ -413,8 +451,10 @@ def main():
     epochs_without_improvement = 0
     last_epoch = 0
     accuracy_history = []
-    best_path = os.path.join(args.save_dir, f'mdd_{args.target}_best.pth')
-    last_path = os.path.join(args.save_dir, f'mdd_{args.target}_last.pth')
+    best_path = os.path.join(
+        args.save_dir, f'mdd_{args.modality}_{args.target}_best.pth')
+    last_path = os.path.join(
+        args.save_dir, f'mdd_{args.modality}_{args.target}_last.pth')
     print('WARNING: labelled target validation is evaluated after every epoch and '
           'the highest-accuracy epoch is selected. Training remains target-label-free, '
           'but reporting is target-validation-selected UDA.')
@@ -423,10 +463,13 @@ def main():
     if args.efficiency_output_dir:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
         from efficiency_common import EfficiencyLogger
+        method_name = ('MDD-MM' if args.multimodal else
+                       f'MDD-{args.modality.upper()}')
         eff = EfficiencyLogger(args.efficiency_output_dir,
-                                'MDD-MM' if args.multimodal else 'MDD',
+                                method_name,
                                 seed=args.seed, device=str(device),
-                                modalities='VIS+IR' if args.multimodal else 'VIS')
+                                modalities=modality_label(
+                                    args.modality, args.multimodal))
         print(f'Efficiency logging -> {eff.run_dir}')
 
     for epoch in range(1, args.epochs + 1):
@@ -434,7 +477,7 @@ def main():
         if eff:
             eff.epoch_start(epoch)
         train_diagnostics = train_epoch(
-            iter(train_loader), classifier, mdd,
+            train_iter, classifier, mdd,
             optimizer, lr_scheduler, epoch, args, eff=eff)
         if args.multimodal:
             lr_scheduler.step()

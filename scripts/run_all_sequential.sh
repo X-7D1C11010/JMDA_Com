@@ -7,7 +7,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The positional budget applies only to JMDA-Net.  Comparison methods keep
-# their independently released budgets; MCFT therefore defaults to 500.
+# their configured comparison budgets; weather MCFT now defaults to 100.
 EPOCHS="${1:-100}"
 PYTHON="${PYTHON:-python}"
 export PYTHON

@@ -34,7 +34,7 @@ param(
     [int]$DeepCoralEpochs = 20,
     [int]$MDDEpochs = 20,
     [int]$MCCEpochs = 20,
-    [int]$MCFTEpochs = 500,
+    [int]$MCFTEpochs = 100,
     [int]$CdanIterations = 100004
 )
 

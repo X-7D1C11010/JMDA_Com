@@ -42,7 +42,9 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn("ConcatDataset((source, target_train))", train)
         self.assertIn("'target_label_budget': 'all available target_train labels'", train)
         self.assertIn("in-memory best state; no model files retained", train)
+        self.assertIn("no cross-seed checkpoint inheritance", train)
         self.assertNotIn("torch.save(", train)
+        self.assertNotIn("torch.load(", train)
 
     def test_weather_mcft_regularization_and_best_metric_reporting(self):
         train = (ROOT / "MCFT" / "train_mcft.py").read_text(encoding="utf-8")
@@ -99,6 +101,9 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn('export VDS2RAW_METHOD_ORDER="tir"', launcher)
         self.assertIn('/mnt/data/lixiang/data/Data', launcher)
         self.assertIn('MCFT_SEEDS <<< "${COMBINED_MCFT_SEEDS:-42 43 44 45 46}"', launcher)
+        self.assertIn('MCFT_EPOCHS="${WEATHER_MCFT_EPOCHS:-100}"', launcher)
+        self.assertIn('export SUPERVISED_MCFT_EPOCHS="$MCFT_EPOCHS"', launcher)
+        self.assertIn('fresh model; independent run', launcher)
 
     def test_efficiency_registry_has_current_methods(self):
         benchmark = (ROOT / "tools" / "benchmark_efficiency.py").read_text(
