@@ -1135,3 +1135,15 @@ MCC烟测覆盖了ACC并列时选取更早epoch。Python编译通过，相关39�
   AIS 初始门控、MCFT epoch、TIR epoch；执行顺序固定为 TIR 后 MCFT，且二者
   默认均使用 seed 42--46。MCFT 阶段只包含雨天和黑天。
 
+## 24. TIR 三模态直接监督与两阶段优化修复（2026-11-08）
+
+- 保留官方RGB CLIP/CoOp/LoRA/TIR核心，将此前几乎失效的NIR像素残差改为独立
+  轻量CNN三分类头；AIS由4维安全字段直接输出三分类logits，不再拟合CLIP文本空间。
+- NIR和AIS头各增加权重0.2的辅助CE，最终通过两个softplus正值门控与视觉logits
+  融合。NIR/AIS初始门控默认0.10/2.0，gate使用独立 `1e-2` 学习率。
+- 前25轮冻结CoOp/LoRA并预热新模态头，随后联合微调；正式训练改为batch=32的正常
+  minibatch更新。源/目标监督权重改为0.4/0.6，AIS只保留0.1内部dropout，删除整分支
+  丢弃；target_val早停默认patience=15、min_epochs=60。
+- 逐轮记录NIR/AIS独立ACC和CE、融合门控、训练阶段与实际更新次数；现有结果文件和
+  启动接口保持兼容。
+

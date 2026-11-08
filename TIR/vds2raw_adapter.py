@@ -4,12 +4,13 @@ The visual/text backbone, CoOp prompt construction and LoRA implementation are
 from the vendored official repository.  VDS2Raw-specific changes are isolated
 here:
 
-* RGB and NIR are fused by a small non-zero residual adapter before the
-  official CLIP ViT-B/16 visual encoder so the NIR branch receives gradients
-  from the first update.
+* RGB follows the official CLIP ViT-B/16 visual/TIR path. NIR uses an
+  independent, directly supervised convolutional classifier.
 * only proxy-safe AIS heading, length and width values are encoded by a
-  regularised late-fusion residual; validity bits gate missing values but are
-  not classifier inputs.
+  directly supervised MLP; validity bits gate missing values but are not
+  classifier inputs.
+* NIR and AIS class logits are fused with the visual logits through trainable
+  softplus-positive gates, and are also constrained by auxiliary CE losses.
 * the paper's simplified K-way ordering is used for three-class VDS2Raw, with
   bounded weights to avoid complete token deletion or 2x amplification. The
   released five-way path remains unchanged.
@@ -258,9 +259,9 @@ class TIRVDS2Raw(nn.Module):
         lora_encoder: str = "both",
         lora_position: str = "all",
         lora_params: Sequence[str] = ("q", "k", "v"),
-        ais_dropout_probability: float = 0.3,
-        nir_initial_scale: float = 0.01,
-        ais_initial_scale: float = 1.50,
+        ais_dropout_probability: float = 0.1,
+        nir_initial_scale: float = 0.10,
+        ais_initial_scale: float = 2.0,
         logit_scale: float = 4.0,
     ):
         super().__init__()
@@ -270,8 +271,8 @@ class TIRVDS2Raw(nn.Module):
             raise ValueError("ais_dropout_probability must be in [0, 1)")
         if not 0.0 <= tir_min_weight <= tir_max_weight:
             raise ValueError("TIR weight bounds must satisfy 0 <= min <= max")
-        if not -1.0 < nir_initial_scale < 1.0:
-            raise ValueError("nir_initial_scale must be in (-1, 1)")
+        if not 0.0 < nir_initial_scale:
+            raise ValueError("nir_initial_scale must be positive")
         if not 0.0 < ais_initial_scale:
             raise ValueError("ais_initial_scale must be positive")
         if not lora_params or any(name not in {"q", "k", "v"} for name in lora_params):
@@ -301,27 +302,37 @@ class TIRVDS2Raw(nn.Module):
         self.clip_model.visual.transformer.tir = TokenImportanceRecalibration()
         self.prompt_learner = PromptLearner(self.class_names, self.clip_model)
 
-        self.nir_adapter = nn.Sequential(
+        class_count = len(self.class_names)
+        # VDS2Raw NIR is not semantically interchangeable with RGB.  Learn a
+        # directly supervised NIR classifier instead of injecting a tiny,
+        # randomly initialised residual into the frozen CLIP RGB input.
+        self.nir_classifier = nn.Sequential(
             nn.Conv2d(1, 16, 3, padding=1, bias=False),
             nn.BatchNorm2d(16),
             nn.GELU(),
-            nn.Conv2d(16, 3, 1),
-        )
-        self.nir_scale = nn.Parameter(torch.tensor(math.atanh(nir_initial_scale)))
-        embed_dim = int(self.clip_model.text_projection.shape[1])
-        self.ais_encoder = nn.Sequential(
-            nn.LayerNorm(4),
-            nn.Linear(4, 128),
+            nn.Conv2d(16, 32, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
             nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, embed_dim),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(32, class_count),
         )
-        raw_ais_scale = (
-            ais_initial_scale
-            if ais_initial_scale > 20.0
-            else math.log(math.expm1(ais_initial_scale))
+        # The AIS fields are already compact tabular measurements.  A direct
+        # supervised classifier is substantially better conditioned than
+        # forcing four values to imitate a 512-D CLIP text embedding.
+        self.ais_classifier = nn.Sequential(
+            nn.LayerNorm(4),
+            nn.Linear(4, 64),
+            nn.GELU(),
+            nn.Dropout(self.ais_dropout_probability),
+            nn.Linear(64, class_count),
         )
-        self.ais_scale = nn.Parameter(torch.tensor(raw_ais_scale))
+        self.nir_scale = nn.Parameter(
+            torch.tensor(self._inverse_softplus(nir_initial_scale))
+        )
+        self.ais_scale = nn.Parameter(
+            torch.tensor(self._inverse_softplus(ais_initial_scale))
+        )
 
         for parameter in self.clip_model.parameters():
             parameter.requires_grad_(False)
@@ -356,9 +367,29 @@ class TIRVDS2Raw(nn.Module):
             if "lora_" in name and parameter.requires_grad
         ]
         prompt = list(self.prompt_learner.parameters())
-        adapters = list(self.nir_adapter.parameters()) + list(self.ais_encoder.parameters())
-        adapters.extend((self.nir_scale, self.ais_scale))
-        return {"lora": lora, "prompt": prompt, "adapters": adapters}
+        adapters = list(self.nir_classifier.parameters()) + list(
+            self.ais_classifier.parameters()
+        )
+        return {
+            "lora": lora,
+            "prompt": prompt,
+            "adapters": adapters,
+            "gates": [self.nir_scale, self.ais_scale],
+        }
+
+    @staticmethod
+    def _inverse_softplus(value: float) -> float:
+        """Stable inverse for a finite, strictly positive softplus value."""
+
+        value = float(value)
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError("fusion scale must be finite and positive")
+        return value if value > 20.0 else math.log(math.expm1(value))
+
+    def effective_nir_scale(self) -> torch.Tensor:
+        """Return the trainable NIR contribution constrained to be positive."""
+
+        return F.softplus(self.nir_scale)
 
     def effective_ais_scale(self) -> torch.Tensor:
         """Return the trainable AIS contribution constrained to be positive."""
@@ -382,31 +413,25 @@ class TIRVDS2Raw(nn.Module):
         params.aux_container["visual_ln_post"] = self.clip_model.visual.ln_post
         params.aux_container["visual_projection"] = self.clip_model.visual.proj
 
-        nir_residual = self.nir_adapter(nir)
-        fused_image = rgb + torch.tanh(self.nir_scale) * nir_residual
-        image_features = self.clip_model.visual(fused_image, params=params).float()
+        image_features = self.clip_model.visual(rgb, params=params).float()
         self.last_tir_stats = tuple(params.aux_container.get("tir_stats", ()))
         image_features = F.normalize(image_features, dim=-1)
         text_features = F.normalize(text_features, dim=-1)
-        logits = self.fixed_logit_scale * image_features @ text_features.t()
+        visual_logits = self.fixed_logit_scale * image_features @ text_features.t()
 
         if ais.ndim != 2 or ais.shape[1] != 4 or ais_mask.shape != ais.shape:
             raise ValueError(
                 "AIS and AIS mask must both have shape [batch, 4] for "
                 "heading_sin, heading_cos, length_z, width_z"
             )
-        ais_input = ais * ais_mask
-        ais_features = self.ais_encoder(ais_input)
-        if self.training and self.ais_dropout_probability:
-            keep = (
-                torch.rand(ais_features.shape[0], 1, device=ais_features.device)
-                >= self.ais_dropout_probability
-            ).to(ais_features.dtype)
-            ais_features = ais_features * keep / (1.0 - self.ais_dropout_probability)
-        ais_logits = self.fixed_logit_scale * F.normalize(ais_features, dim=-1) @ text_features.t()
-        logits = logits + self.effective_ais_scale() * ais_logits
-        zero = logits.new_zeros(())
-        return logits, zero, zero
+        nir_logits = self.nir_classifier(nir)
+        ais_logits = self.ais_classifier(ais * ais_mask)
+        logits = (
+            visual_logits
+            + self.effective_nir_scale() * nir_logits
+            + self.effective_ais_scale() * ais_logits
+        )
+        return logits, nir_logits, ais_logits
 
 
 __all__ = [

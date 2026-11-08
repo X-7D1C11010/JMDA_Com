@@ -252,6 +252,20 @@ class TIRCoreTests(unittest.TestCase):
         self.assertGreater(updated, initial)
         self.assertGreater(updated, 0.0)
 
+    def test_nir_gate_is_positive_trainable_and_preserves_initial_value(self):
+        model = TIRVDS2Raw.__new__(TIRVDS2Raw)
+        nn.Module.__init__(model)
+        initial = 0.10
+        model.nir_scale = nn.Parameter(
+            torch.tensor(np.log(np.expm1(initial)), dtype=torch.float32)
+        )
+        gate = model.effective_nir_scale()
+        self.assertAlmostEqual(float(gate.detach()), initial, places=6)
+        (-gate).backward()
+        self.assertIsNotNone(model.nir_scale.grad)
+        self.assertNotEqual(float(model.nir_scale.grad), 0.0)
+        self.assertGreater(float(gate.detach()), 0.0)
+
     def test_three_way_rule_uses_paper_generalized_extremes(self):
         tokens = torch.tensor(
             [
@@ -398,15 +412,26 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-16}"', linux)
         self.assertIn('--scheduler none', linux)
         self.assertIn('--natural-train-sampling', linux)
-        self.assertIn('--accumulate-full-epoch', linux)
+        self.assertIn('--minibatch-updates', linux)
+        self.assertIn('TIR_GATE_LR="${VDS2RAW_TIR_GATE_LR:-0.01}"', linux)
+        self.assertIn(
+            'TIR_MODALITY_WARMUP_EPOCHS="${VDS2RAW_TIR_MODALITY_WARMUP_EPOCHS:-25}"',
+            linux,
+        )
+        self.assertIn('TIR_NIR_AUX_WEIGHT="${VDS2RAW_TIR_NIR_AUX_LOSS_WEIGHT:-0.2}"', linux)
+        self.assertIn('TIR_AIS_AUX_WEIGHT="${VDS2RAW_TIR_AIS_AUX_LOSS_WEIGHT:-0.2}"', linux)
         self.assertIn('--lora-encoder both --lora-params q k v', linux)
         self.assertIn('MCFT_BATCH=2; TIR_BATCH=32', linux)
         self.assertIn('MCFT_MAX_BATCH_ARGS=(--max-train-batches 1)', linux)
         self.assertNotIn('TIR_MAX_BATCH_ARGS=(--max-train-batches 1)', linux)
-        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
+        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-15}"', linux)
+        self.assertIn('TIR_EARLY_MIN_EPOCHS="${VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS:-60}"', linux)
         tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
         self.assertIn("domain_class_balanced_train=False", tir_train)
-        self.assertIn("accumulate_full_epoch=True", tir_train)
+        self.assertIn("accumulate_full_epoch=False", tir_train)
+        self.assertIn("nir_logits, ais_logits = model", tir_train)
+        self.assertIn("args.nir_aux_loss_weight * nir_aux_loss", tir_train)
+        self.assertIn("args.ais_aux_loss_weight * ais_aux_loss", tir_train)
         self.assertIn("DomainTaggedDataset(source, 0)", tir_train)
         self.assertIn("DomainTaggedDataset(target, 1)", tir_train)
         self.assertIn('"domain_separated_supervised_loss": True', tir_train)

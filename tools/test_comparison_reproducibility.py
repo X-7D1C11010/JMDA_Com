@@ -20,6 +20,27 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn(f'OFFICIAL_COMMIT = "{commit}"', adapter)
         self.assertIn("did not contain a `LICENSE`", provenance)
 
+    def test_tir_vds2raw_uses_direct_supervised_modal_heads(self):
+        adapter = (ROOT / "TIR" / "vds2raw_adapter.py").read_text(
+            encoding="utf-8"
+        )
+        train = (ROOT / "vds2raw" / "train_tir.py").read_text(
+            encoding="utf-8"
+        )
+        runner = (ROOT / "scripts" / "run_vds2raw_methods.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("self.nir_classifier = nn.Sequential", adapter)
+        self.assertIn("self.ais_classifier = nn.Sequential", adapter)
+        self.assertIn("self.effective_nir_scale() * nir_logits", adapter)
+        self.assertIn("self.effective_ais_scale() * ais_logits", adapter)
+        self.assertNotIn("fused_image = rgb +", adapter)
+        self.assertNotIn("ais_features = ais_features * keep", adapter)
+        self.assertIn('"training_stage"', train)
+        self.assertIn('"nir_aux_ce"', train)
+        self.assertIn('"ais_aux_ce"', train)
+        self.assertIn("--minibatch-updates", runner)
+
     def test_clip_checkpoint_loading_is_strict(self):
         adapter = (ROOT / "TIR" / "vds2raw_adapter.py").read_text(
             encoding="utf-8"

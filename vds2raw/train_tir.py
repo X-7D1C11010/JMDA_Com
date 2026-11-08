@@ -193,6 +193,7 @@ def main():
     parser.add_argument("--lora-lr", type=float, default=2e-4)
     parser.add_argument("--prompt-lr", type=float, default=2e-3)
     parser.add_argument("--adapter-lr", type=float, default=1e-3)
+    parser.add_argument("--gate-lr", type=float, default=1e-2)
     parser.add_argument("--lora-weight-decay", type=float, default=1e-2)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--topk-ratio", type=float, default=0.3)
@@ -213,9 +214,9 @@ def main():
         choices=("q", "k", "v"),
         default=("q", "k", "v"),
     )
-    parser.add_argument("--ais-dropout-probability", type=float, default=0.3)
-    parser.add_argument("--nir-initial-scale", type=float, default=0.01)
-    parser.add_argument("--ais-initial-scale", type=float, default=1.50)
+    parser.add_argument("--ais-dropout-probability", type=float, default=0.1)
+    parser.add_argument("--nir-initial-scale", type=float, default=0.10)
+    parser.add_argument("--ais-initial-scale", type=float, default=2.0)
     parser.add_argument(
         "--logit-scale",
         type=float,
@@ -228,11 +229,22 @@ def main():
     )
     parser.add_argument("--min-lr-ratio", type=float, default=0.1)
     parser.add_argument("--warmup-epochs", type=int, default=0)
-    parser.add_argument("--early-stopping-patience", type=int, default=0)
-    parser.add_argument("--early-stopping-min-epochs", type=int, default=0)
+    parser.add_argument("--early-stopping-patience", type=int, default=15)
+    parser.add_argument("--early-stopping-min-epochs", type=int, default=60)
+    parser.add_argument(
+        "--modality-warmup-epochs",
+        type=int,
+        default=25,
+        help=(
+            "Train the new NIR/AIS classifiers and fusion gates before "
+            "unfreezing CoOp/LoRA for joint fine-tuning."
+        ),
+    )
+    parser.add_argument("--nir-aux-loss-weight", type=float, default=0.2)
+    parser.add_argument("--ais-aux-loss-weight", type=float, default=0.2)
     parser.add_argument("--class-weight-power", type=float, default=0.5)
-    parser.add_argument("--source-loss-weight", type=float, default=0.5)
-    parser.add_argument("--target-loss-weight", type=float, default=0.5)
+    parser.add_argument("--source-loss-weight", type=float, default=0.4)
+    parser.add_argument("--target-loss-weight", type=float, default=0.6)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--augment", dest="augment", action="store_true")
@@ -267,13 +279,13 @@ def main():
     parser.set_defaults(
         augment=True,
         domain_class_balanced_train=False,
-        accumulate_full_epoch=True,
+        accumulate_full_epoch=False,
     )
     args = parser.parse_args()
 
     if args.epochs <= 0 or args.batch_size <= 0 or args.eval_frequency <= 0:
         raise ValueError("epochs, batch-size and eval-frequency must be positive")
-    if min(args.lora_lr, args.prompt_lr, args.adapter_lr) <= 0:
+    if min(args.lora_lr, args.prompt_lr, args.adapter_lr, args.gate_lr) <= 0:
         raise ValueError("all learning rates must be positive")
     if min(args.lora_weight_decay, args.weight_decay) < 0:
         raise ValueError("weight decays must be non-negative")
@@ -283,14 +295,18 @@ def main():
         raise ValueError("invalid temper-rate or label-smoothing")
     if not 0.0 <= args.tir_min_weight <= args.tir_max_weight:
         raise ValueError("TIR weight bounds must satisfy 0 <= min <= max")
-    if not -1.0 < args.nir_initial_scale < 1.0:
-        raise ValueError("nir-initial-scale must be in (-1, 1)")
+    if not 0.0 < args.nir_initial_scale:
+        raise ValueError("nir-initial-scale must be positive")
     if not 0.0 < args.ais_initial_scale:
         raise ValueError("ais-initial-scale must be positive")
     if args.text_layer not in range(12):
         raise ValueError("text-layer must be between 0 and 11")
     if args.early_stopping_patience < 0 or args.early_stopping_min_epochs < 0:
         raise ValueError("early stopping settings cannot be negative")
+    if not 0 <= args.modality_warmup_epochs < args.epochs:
+        raise ValueError("modality-warmup-epochs must be in [0, epochs)")
+    if min(args.nir_aux_loss_weight, args.ais_aux_loss_weight) < 0:
+        raise ValueError("auxiliary loss weights must be non-negative")
     if args.logit_scale <= 0:
         raise ValueError("logit-scale must be positive")
     if not 0.0 <= args.min_lr_ratio <= 1.0:
@@ -402,12 +418,17 @@ def main():
         lr=args.lora_lr,
         weight_decay=args.lora_weight_decay,
     )
-    task_optimizer = torch.optim.SGD(
-        [
-            {"params": groups["prompt"], "lr": args.prompt_lr},
-            {"params": groups["adapters"], "lr": args.adapter_lr},
-        ],
+    prompt_optimizer = torch.optim.SGD(
+        groups["prompt"],
+        lr=args.prompt_lr,
         momentum=0.9,
+        weight_decay=args.weight_decay,
+    )
+    adapter_optimizer = torch.optim.AdamW(
+        [
+            {"params": groups["adapters"], "lr": args.adapter_lr},
+            {"params": groups["gates"], "lr": args.gate_lr},
+        ],
         weight_decay=args.weight_decay,
     )
     if args.scheduler == "cosine":
@@ -420,7 +441,8 @@ def main():
     else:
         decay = lambda _epoch: 1.0
     lora_scheduler = torch.optim.lr_scheduler.LambdaLR(lora_optimizer, decay)
-    task_scheduler = torch.optim.lr_scheduler.LambdaLR(task_optimizer, decay)
+    prompt_scheduler = torch.optim.lr_scheduler.LambdaLR(prompt_optimizer, decay)
+    adapter_scheduler = torch.optim.lr_scheduler.LambdaLR(adapter_optimizer, decay)
     source_criterion = nn.CrossEntropyLoss(
         weight=source_class_weights.to(device),
         label_smoothing=args.label_smoothing,
@@ -450,8 +472,8 @@ def main():
         "protocol_deviation": (
             "Fair-comparison adaptation uses all source/target labels and "
             "RGB/NIR/AIS inputs instead of the paper's source-free few-shot budget; "
-            "the TIR, CoOp and LoRA mechanisms and the previously validated "
-            "full-support optimizer scale are retained"
+            "the RGB TIR, CoOp and LoRA mechanisms are retained while the "
+            "task-specific NIR/AIS heads use supervised minibatch optimization"
         ),
         "source_labelled_samples": len(source),
         "target_labelled_samples": len(target),
@@ -461,7 +483,10 @@ def main():
         "training_update_semantics": (
             "one accumulated full-epoch update over source+target training data"
             if args.accumulate_full_epoch
-            else "minibatch updates over full source+target training data"
+            else (
+                "minibatch updates; modality classifiers warm up first, then "
+                "CoOp/LoRA joint fine-tuning"
+            )
         ),
         "domain_class_balanced_training": args.domain_class_balanced_train,
         "domain_class_counts": counts_by_domain,
@@ -486,15 +511,16 @@ def main():
         "modalities": ["RGB", "NIR", "AIS"],
         "auxiliary_inputs": ["AIS_validity_mask"],
         "ais_input": (
-            "heading sin/cos, length, and width only; validity mask is gating-only"
+            "heading sin/cos, length, and width into a directly supervised "
+            "three-class MLP; validity mask is gating-only"
         ),
         "ais_feature_names": list(SAFE_AIS_FEATURE_NAMES),
         "excluded_label_proxy_fields": list(EXCLUDED_AIS_PROXY_FEATURES),
         "ais_mask_as_classifier_feature": False,
         "image_input": (
             "8-bit-semantics RGB scaling (/255 with sparse outlier clipping), "
-            "CLIP normalization at 224x224, "
-            "plus learned NIR residual"
+            "CLIP normalization at 224x224; NIR uses an independent directly "
+            "supervised convolutional classifier"
         ),
         "class_names": list(DEFAULT_CLASS_NAMES),
         "tir": {
@@ -517,8 +543,20 @@ def main():
         },
         "prompt_lr": args.prompt_lr,
         "adapter_lr": args.adapter_lr,
+        "gate_lr": args.gate_lr,
         "task_weight_decay": args.weight_decay,
         "label_smoothing": args.label_smoothing,
+        "modality_warmup_epochs": args.modality_warmup_epochs,
+        "auxiliary_loss_weights": {
+            "nir": args.nir_aux_loss_weight,
+            "ais": args.ais_aux_loss_weight,
+        },
+        "fusion": (
+            "visual logits + positive NIR gate * supervised NIR logits + "
+            "positive AIS gate * supervised AIS logits"
+        ),
+        "ais_internal_dropout": args.ais_dropout_probability,
+        "ais_whole_branch_dropout": 0.0,
         "scheduler": {
             "name": args.scheduler,
             "min_lr_ratio": args.min_lr_ratio,
@@ -528,6 +566,7 @@ def main():
             "nir": args.nir_initial_scale,
             "ais": args.ais_initial_scale,
         },
+        "nir_fusion_constraint": "softplus_positive_(0,+inf)",
         "ais_fusion_constraint": "softplus_positive_(0,+inf)",
         "clip_checkpoint": str(Path(args.clip_checkpoint).expanduser().resolve()),
         "normalization": statistics.to_dict(),
@@ -576,21 +615,36 @@ def main():
     stopped_early = False
     completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
+        joint_finetune = epoch > args.modality_warmup_epochs
+        for parameter in groups["lora"] + groups["prompt"]:
+            parameter.requires_grad_(joint_finetune)
+        for parameter in groups["adapters"] + groups["gates"]:
+            parameter.requires_grad_(True)
         model.train()
-        epoch_lora_lr = lora_optimizer.param_groups[0]["lr"]
-        epoch_prompt_lr = task_optimizer.param_groups[0]["lr"]
-        epoch_adapter_lr = task_optimizer.param_groups[1]["lr"]
+        epoch_lora_lr = (
+            lora_optimizer.param_groups[0]["lr"] if joint_finetune else 0.0
+        )
+        epoch_prompt_lr = (
+            prompt_optimizer.param_groups[0]["lr"] if joint_finetune else 0.0
+        )
+        epoch_adapter_lr = adapter_optimizer.param_groups[0]["lr"]
+        epoch_gate_lr = adapter_optimizer.param_groups[1]["lr"]
         train_items = train_correct = 0
+        nir_correct = ais_correct = 0
         source_items = source_correct = target_items = target_correct = 0
         source_loss_sum = target_loss_sum = 0.0
+        source_nir_loss_sum = target_nir_loss_sum = 0.0
+        source_ais_loss_sum = target_ais_loss_sum = 0.0
         epoch_tir_stats = []
+        optimizer_steps = 0
+        optimizers = (lora_optimizer, prompt_optimizer, adapter_optimizer)
         if args.accumulate_full_epoch:
-            lora_optimizer.zero_grad(set_to_none=True)
-            task_optimizer.zero_grad(set_to_none=True)
+            for optimizer in optimizers:
+                optimizer.zero_grad(set_to_none=True)
         for batch_index, batch in enumerate(train_loader, 1):
             labels = batch["label"].to(device)
             domains = batch["domain"].to(device)
-            logits, _, _ = model(
+            logits, nir_logits, ais_logits = model(
                 batch["rgb"].to(device),
                 batch["nir"].to(device),
                 batch["ais"].to(device),
@@ -614,13 +668,41 @@ def main():
                 if target_batch_items
                 else logits.new_zeros(())
             )
+            source_nir_loss = (
+                source_criterion(nir_logits[source_mask], labels[source_mask])
+                if source_batch_items
+                else logits.new_zeros(())
+            )
+            target_nir_loss = (
+                target_criterion(nir_logits[target_mask], labels[target_mask])
+                if target_batch_items
+                else logits.new_zeros(())
+            )
+            source_ais_loss = (
+                source_criterion(ais_logits[source_mask], labels[source_mask])
+                if source_batch_items
+                else logits.new_zeros(())
+            )
+            target_ais_loss = (
+                target_criterion(ais_logits[target_mask], labels[target_mask])
+                if target_batch_items
+                else logits.new_zeros(())
+            )
             if args.accumulate_full_epoch:
-                loss = (
+                fused_loss = (
                     args.source_loss_weight * source_loss / len(source)
                     + args.target_loss_weight * target_loss / len(target)
                 )
+                nir_aux_loss = (
+                    args.source_loss_weight * source_nir_loss / len(source)
+                    + args.target_loss_weight * target_nir_loss / len(target)
+                )
+                ais_aux_loss = (
+                    args.source_loss_weight * source_ais_loss / len(source)
+                    + args.target_loss_weight * target_ais_loss / len(target)
+                )
             else:
-                loss = (
+                fused_loss = (
                     args.source_loss_weight
                     * source_loss
                     / max(source_batch_items, 1)
@@ -628,16 +710,42 @@ def main():
                     * target_loss
                     / max(target_batch_items, 1)
                 )
+                nir_aux_loss = (
+                    args.source_loss_weight
+                    * source_nir_loss
+                    / max(source_batch_items, 1)
+                    + args.target_loss_weight
+                    * target_nir_loss
+                    / max(target_batch_items, 1)
+                )
+                ais_aux_loss = (
+                    args.source_loss_weight
+                    * source_ais_loss
+                    / max(source_batch_items, 1)
+                    + args.target_loss_weight
+                    * target_ais_loss
+                    / max(target_batch_items, 1)
+                )
+            loss = (
+                fused_loss
+                + args.nir_aux_loss_weight * nir_aux_loss
+                + args.ais_aux_loss_weight * ais_aux_loss
+            )
             if args.accumulate_full_epoch:
                 loss.backward()
             else:
-                lora_optimizer.zero_grad(set_to_none=True)
-                task_optimizer.zero_grad(set_to_none=True)
+                for optimizer in optimizers:
+                    optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                lora_optimizer.step()
-                task_optimizer.step()
+                if joint_finetune:
+                    lora_optimizer.step()
+                    prompt_optimizer.step()
+                adapter_optimizer.step()
+                optimizer_steps += 1
             train_items += items
             train_correct += int((logits.argmax(1) == labels).sum().item())
+            nir_correct += int((nir_logits.argmax(1) == labels).sum().item())
+            ais_correct += int((ais_logits.argmax(1) == labels).sum().item())
             source_items += source_batch_items
             target_items += target_batch_items
             if source_batch_items:
@@ -654,6 +762,10 @@ def main():
                 )
             source_loss_sum += float(source_loss.detach().item())
             target_loss_sum += float(target_loss.detach().item())
+            source_nir_loss_sum += float(source_nir_loss.detach().item())
+            target_nir_loss_sum += float(target_nir_loss.detach().item())
+            source_ais_loss_sum += float(source_ais_loss.detach().item())
+            target_ais_loss_sum += float(target_ais_loss.detach().item())
             epoch_tir_stats.extend(getattr(model, "last_tir_stats", ()))
             if batch_index % 5 == 0:
                 print(
@@ -664,8 +776,11 @@ def main():
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
         if args.accumulate_full_epoch:
-            lora_optimizer.step()
-            task_optimizer.step()
+            if joint_finetune:
+                lora_optimizer.step()
+                prompt_optimizer.step()
+            adapter_optimizer.step()
+            optimizer_steps = 1
         tir_tokens = sum(int(stats["tokens"]) for stats in epoch_tir_stats)
 
         def sum_tir_stat(name):
@@ -679,42 +794,70 @@ def main():
         tir_sink = sum_tir_stat("sink")
         tir_suppressed = sum_tir_stat("suppressed")
         tir_clipped = sum_tir_stat("clipped")
-        lora_scheduler.step()
-        task_scheduler.step()
+        if joint_finetune:
+            lora_scheduler.step()
+            prompt_scheduler.step()
+        adapter_scheduler.step()
         completed_epoch = epoch
         source_epoch_ce = source_loss_sum / max(source_items, 1)
         target_epoch_ce = target_loss_sum / max(target_items, 1)
+        source_nir_epoch_ce = source_nir_loss_sum / max(source_items, 1)
+        target_nir_epoch_ce = target_nir_loss_sum / max(target_items, 1)
+        source_ais_epoch_ce = source_ais_loss_sum / max(source_items, 1)
+        target_ais_epoch_ce = target_ais_loss_sum / max(target_items, 1)
         weighted_epoch_ce = (
             args.source_loss_weight * source_epoch_ce
             + args.target_loss_weight * target_epoch_ce
         )
+        weighted_nir_epoch_ce = (
+            args.source_loss_weight * source_nir_epoch_ce
+            + args.target_loss_weight * target_nir_epoch_ce
+        )
+        weighted_ais_epoch_ce = (
+            args.source_loss_weight * source_ais_epoch_ce
+            + args.target_loss_weight * target_ais_epoch_ce
+        )
+        weighted_total_loss = (
+            weighted_epoch_ce
+            + args.nir_aux_loss_weight * weighted_nir_epoch_ce
+            + args.ais_aux_loss_weight * weighted_ais_epoch_ce
+        )
         train_history.append(
             {
                 "epoch": epoch,
+                "training_stage": (
+                    "joint_finetune" if joint_finetune else "modality_warmup"
+                ),
                 "accuracy": train_correct / max(train_items, 1),
+                "nir_accuracy": nir_correct / max(train_items, 1),
+                "ais_accuracy": ais_correct / max(train_items, 1),
                 "source_accuracy": source_correct / max(source_items, 1),
                 "target_accuracy": target_correct / max(target_items, 1),
                 "ce": weighted_epoch_ce,
+                "nir_aux_ce": weighted_nir_epoch_ce,
+                "ais_aux_ce": weighted_ais_epoch_ce,
                 "source_weighted_ce": source_epoch_ce,
                 "target_weighted_ce": target_epoch_ce,
-                "total_loss": weighted_epoch_ce,
+                "total_loss": weighted_total_loss,
                 "lora_lr": epoch_lora_lr,
                 "prompt_lr": epoch_prompt_lr,
                 "adapter_lr": epoch_adapter_lr,
+                "gate_lr": epoch_gate_lr,
                 "lora_lr_after_scheduler": lora_optimizer.param_groups[0]["lr"],
-                "prompt_lr_after_scheduler": task_optimizer.param_groups[0]["lr"],
-                "adapter_lr_after_scheduler": task_optimizer.param_groups[1]["lr"],
+                "prompt_lr_after_scheduler": prompt_optimizer.param_groups[0]["lr"],
+                "adapter_lr_after_scheduler": adapter_optimizer.param_groups[0]["lr"],
+                "gate_lr_after_scheduler": adapter_optimizer.param_groups[1]["lr"],
                 "samples": train_items,
                 "source_samples": source_items,
                 "target_samples": target_items,
-                "optimizer_steps": 1 if args.accumulate_full_epoch else batch_index,
+                "optimizer_steps": optimizer_steps,
                 "tir_discriminative_fraction": tir_discriminative
                 / max(tir_tokens, 1),
                 "tir_sink_fraction": tir_sink / max(tir_tokens, 1),
                 "tir_suppressed_fraction": tir_suppressed
                 / max(tir_tokens, 1),
                 "tir_clipped_fraction": tir_clipped / max(tir_tokens, 1),
-                "nir_scale": float(torch.tanh(model.nir_scale).detach().cpu()),
+                "nir_scale": float(model.effective_nir_scale().detach().cpu()),
                 "ais_scale": float(model.effective_ais_scale().detach().cpu()),
             }
         )
@@ -723,8 +866,13 @@ def main():
             f"{train_correct / max(train_items, 1):.4f} "
             f"source_accuracy={source_correct / max(source_items, 1):.4f} "
             f"target_accuracy={target_correct / max(target_items, 1):.4f} "
+            f"nir_accuracy={nir_correct / max(train_items, 1):.4f} "
+            f"ais_accuracy={ais_correct / max(train_items, 1):.4f} "
             f"source_ce={source_epoch_ce:.4f} target_ce={target_epoch_ce:.4f} "
-            f"weighted_ce={weighted_epoch_ce:.4f}"
+            f"nir_ce={weighted_nir_epoch_ce:.4f} "
+            f"ais_ce={weighted_ais_epoch_ce:.4f} "
+            f"total_loss={weighted_total_loss:.4f} "
+            f"stage={'joint' if joint_finetune else 'modality_warmup'}"
         )
 
         should_evaluate = epoch == 1 or epoch == args.epochs or epoch % args.eval_frequency == 0
