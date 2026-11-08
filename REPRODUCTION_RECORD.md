@@ -1105,10 +1105,33 @@ MCC烟测覆盖了ACC并列时选取更早epoch。Python编译通过，相关39�
 - 单模态正式实验只把目标标签用于逐轮诊断指标和最终汇总，不参与梯度；运行日志显式记录
   模态、有效类别、源/目标样本数、优化更新预算、ACC、macro Precision、macro Recall、
   macro F1。VIS 与 IR 结果分别落在输出目录的 `vis`、`ir` 子目录，防止结果覆盖。
+- 单模态启动器在生成清单前统一检查并按需下载官方 ResNet-50 与 AlexNet 权重，下载完成后
+  校验 SHA-256 并以原子替换写入缓存；Deep CORAL 在被单独启动且显式 AlexNet 路径缺失时
+  也会自动恢复官方权重。这样缺少权重会在训练前处理，不再运行到某个方法时才失败。
 
 验证：五种方法的 VIS 烟测全部完成；五种方法的 IR 烟测全部完成；IR 清单预检逐条验证
 了完整路径和标签空间；Python 编译与 PowerShell 解析通过；`tools` 下131项单元测试通过。
 
 
 
+
+## 22. MCFT 雨天/黑天低学习率专项入口（2026-11-08）
+
+- 新增 `scripts/run_mcft_rainy_dark_sequential.sh` 与后台包装
+  `scripts/run_mcft_rainy_dark_background.sh`。
+- 本入口严格只训练 `rainy` 和 `dark`，默认学习率由 `3e-4` 小幅降低为
+  `2e-4`；可用 `MCFT_RAINY_DARK_LR` 覆盖。
+- epoch 可作为后台脚本的第一个参数指定，默认 100；seed 默认固定为
+  42、43、44、45、46。
+- 每个 seed 分别调用一次 `run_server.sh` 并启动新的 Python 训练进程，模型
+  从头初始化，不读取或继承上一 seed 的模型状态。
+
+## 23. TIR 正值 AIS 自定义门控与联合入口（2026-11-08）
+
+- `VDS2RAW_TIR_AIS_INITIAL_SCALE` 现在在启动阶段校验为有限且严格大于 0，
+  无效值会在数据审计和 GPU 等待前失败；模型内部仍通过 `softplus` 对可训练
+  参数重参数化，因此训练全过程的有效 AIS 门控保持为正。
+- 新增 `run_tir_mcft_rainy_dark_sequential.sh` 及后台包装。参数顺序依次为
+  AIS 初始门控、MCFT epoch、TIR epoch；执行顺序固定为 TIR 后 MCFT，且二者
+  默认均使用 seed 42--46。MCFT 阶段只包含雨天和黑天。
 

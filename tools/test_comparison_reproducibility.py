@@ -105,6 +105,52 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn('export SUPERVISED_MCFT_EPOCHS="$MCFT_EPOCHS"', launcher)
         self.assertIn('fresh model; independent run', launcher)
 
+    def test_mcft_rainy_dark_launcher_is_independent_and_configurable(self):
+        launcher = (
+            ROOT / "scripts" / "run_mcft_rainy_dark_sequential.sh"
+        ).read_text(encoding="utf-8")
+        background = (
+            ROOT / "scripts" / "run_mcft_rainy_dark_background.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('JMDA_TARGETS="rainy dark"', launcher)
+        self.assertIn('MCFT_RAINY_DARK_EPOCHS:-100', launcher)
+        self.assertIn('MCFT_RAINY_DARK_LR:-0.0002', launcher)
+        self.assertIn('MCFT_RAINY_DARK_SEEDS:-42 43 44 45 46', launcher)
+        self.assertIn('JMDA_SEED="$seed"', launcher)
+        self.assertIn('fresh model; independent run', launcher)
+        self.assertIn(
+            'run_mcft_rainy_dark_sequential.sh" "$EPOCHS"', background
+        )
+        self.assertNotIn("backlight", launcher)
+        self.assertNotIn("foggy", launcher)
+
+    def test_tir_mcft_rainy_dark_combined_launcher_is_ordered(self):
+        launcher = (
+            ROOT / "scripts" / "run_tir_mcft_rainy_dark_sequential.sh"
+        ).read_text(encoding="utf-8")
+        background = (
+            ROOT / "scripts" / "run_tir_mcft_rainy_dark_background.sh"
+        ).read_text(encoding="utf-8")
+        vds_runner = (ROOT / "scripts" / "run_vds2raw_methods.sh").read_text(
+            encoding="utf-8"
+        )
+
+        tir_call = 'bash "$HERE/scripts/run_vds2raw_methods.sh" formal'
+        mcft_call = (
+            'bash "$HERE/scripts/run_mcft_rainy_dark_sequential.sh" '
+            '"$MCFT_EPOCHS"'
+        )
+        self.assertLess(launcher.index(tir_call), launcher.index(mcft_call))
+        self.assertIn('VDS2RAW_METHOD_ORDER="tir"', launcher)
+        self.assertIn('VDS2RAW_TIR_AIS_INITIAL_SCALE="$AIS_INITIAL_SCALE"', launcher)
+        self.assertIn("math.isfinite(value) and value > 0.0", launcher)
+        self.assertIn("math.isfinite(value) and value > 0.0", vds_runner)
+        self.assertIn("trainable softplus-positive", vds_runner)
+        self.assertIn(
+            'run_tir_mcft_rainy_dark_sequential.sh"', background
+        )
+
     def test_efficiency_registry_has_current_methods(self):
         benchmark = (ROOT / "tools" / "benchmark_efficiency.py").read_text(
             encoding="utf-8"

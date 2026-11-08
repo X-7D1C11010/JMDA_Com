@@ -15,6 +15,7 @@ TOOLS = ROOT / "tools"
 sys.path.insert(0, str(TOOLS))
 
 from prepare_paired_protocol_lists import exact_ir_split  # noqa: E402
+from download_official_uda_weights import WEIGHTS_BY_ID  # noqa: E402
 from single_modality import (  # noqa: E402
     IR_MEAN,
     IR_STD,
@@ -113,6 +114,19 @@ class OfficialSingleModalTests(unittest.TestCase):
         self.assertIn("CdanIterations = 100004", source)
         self.assertIn("MDDIterationsPerEpoch = 1000", source)
         self.assertIn("MCCIterationsPerEpoch = 1000", source)
+        self.assertIn("--only resnet50 alexnet", source)
+
+        server = (ROOT / "scripts" /
+                  "run_server_official_single_modal.sh").read_text(
+                      encoding="utf-8")
+        self.assertIn("--only resnet50 alexnet", server)
+
+    def test_single_modal_weight_inventory_is_complete(self):
+        self.assertEqual(
+            {"resnet50", "alexnet"} - set(WEIGHTS_BY_ID), set())
+        deepcoral = (ROOT / "DeepCORAL" / "train_deepcoral.py").read_text(
+            encoding="utf-8")
+        self.assertIn("ensure_weight('alexnet', output_dir)", deepcoral)
 
     def test_dann_single_modal_path_matches_tllib_image_protocol(self):
         source = (ROOT / "DANN" / "train_dann.py").read_text(

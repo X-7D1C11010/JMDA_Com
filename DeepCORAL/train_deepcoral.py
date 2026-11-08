@@ -90,6 +90,7 @@ from single_modality import (
     official_min_domain_loader,
     validate_single_modality_args,
 )
+from download_official_uda_weights import ensure_weight
 
 
 ALEXNET_URL = 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth'
@@ -107,6 +108,11 @@ def _sha256(path):
 def load_pretrained_alexnet(backbone, weights_path=''):
     """Official main.py:107-117, with an optional offline checkpoint path."""
     if weights_path:
+        if not os.path.isfile(weights_path):
+            output_dir = os.path.dirname(os.path.abspath(weights_path))
+            print(f'AlexNet checkpoint is missing; downloading the verified '
+                  f'official checkpoint into {output_dir}', flush=True)
+            weights_path = ensure_weight('alexnet', output_dir)
         actual_sha256 = _sha256(weights_path)
         if actual_sha256 != ALEXNET_SHA256:
             raise RuntimeError(

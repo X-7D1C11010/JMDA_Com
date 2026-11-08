@@ -20,6 +20,10 @@ export JMDA_CLASS_NAMES_FILE="${JMDA_CLASS_NAMES_FILE:-$HERE/class.txt}"
 export PYTHONUNBUFFERED=1
 mkdir -p "$LOG_DIR" "$LIST_ROOT" "$CHECKPOINT_DIR"
 
+echo "Checking official ResNet-50 and AlexNet weights ..."
+"$PYTHON_BIN" "$HERE/tools/download_official_uda_weights.py" \
+  --output-dir "$HERE/pretrained_weights" --only resnet50 alexnet
+
 IFS=',' read -r -a MODALITIES <<< "$MODALITIES_RAW"
 IFS=',' read -r -a METHODS <<< "$METHODS_RAW"
 

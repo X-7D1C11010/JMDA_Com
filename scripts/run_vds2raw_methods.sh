@@ -74,6 +74,15 @@ if [ "$seen_mcft" -gt 1 ] || [ "$seen_tir" -gt 1 ]; then
   echo "VDS2RAW_METHOD_ORDER cannot contain duplicates." >&2
   exit 1
 fi
+# Reject invalid AIS gates before auditing data or waiting for a GPU.  The
+# model reparameterises this positive initial value with softplus, so the
+# effective gate remains strictly positive while it is trained.
+if [ "$seen_tir" -gt 0 ] && ! "$PYTHON_BIN" -c \
+    'import math, sys; value = float(sys.argv[1]); sys.exit(0 if math.isfinite(value) and value > 0.0 else 1)' \
+    "$TIR_AIS_INITIAL_SCALE"; then
+  echo "VDS2RAW_TIR_AIS_INITIAL_SCALE must be finite and strictly positive: $TIR_AIS_INITIAL_SCALE" >&2
+  exit 1
+fi
 if [ "$seen_tir" -gt 0 ] && [ ! -f "$TIR_CLIP_CHECKPOINT" ]; then
   echo "Missing TIR CLIP checkpoint: $TIR_CLIP_CHECKPOINT" >&2
   exit 1
@@ -99,6 +108,9 @@ mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SUMMARY_DIR"
 
 echo "Run directory: $RUN_DIR"
 echo "Method order: ${METHOD_ORDER[*]}"
+if [ "$seen_tir" -gt 0 ]; then
+  echo "TIR AIS initial gate: $TIR_AIS_INITIAL_SCALE (trainable softplus-positive)"
+fi
 "$PYTHON_BIN" "$HERE/vds2raw/audit.py" --data-root "$DATA_ROOT" \
   --stats-file "$STATS_FILE" --report-file "$RUN_DIR/dataset_audit.json"
 

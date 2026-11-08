@@ -31,6 +31,14 @@ if (-not (Test-Path -LiteralPath $DataRoot -PathType Container)) {
     throw "Dataset root not found: $DataRoot"
 }
 
+Write-Host 'Checking official ResNet-50 and AlexNet weights ...'
+& $Python -B -u (Join-Path $Repo 'tools\download_official_uda_weights.py') `
+    --output-dir (Join-Path $Repo 'pretrained_weights') `
+    --only resnet50 alexnet
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to prepare official pretrained weights (exit=$LASTEXITCODE)"
+}
+
 $targetArgs = @($Targets | ForEach-Object { $_.Trim().ToLowerInvariant() })
 $methodArgs = @($Methods | ForEach-Object { $_.Trim() })
 

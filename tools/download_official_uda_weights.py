@@ -16,6 +16,7 @@ import urllib.request
 
 WEIGHTS = (
     {
+        "id": "resnet50",
         "method": "Enhanced DANN/DeepCORAL/CDAN/MDD/MCC (ResNet-50)",
         "url": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
         "relative_path": os.path.join(
@@ -24,6 +25,7 @@ WEIGHTS = (
         "sha256_prefix": "0676ba61",
     },
     {
+        "id": "resnet18",
         "method": "CDAN/MDD/MCC",
         "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
         "relative_path": os.path.join(
@@ -32,12 +34,15 @@ WEIGHTS = (
         "sha256_prefix": "f37072fd",
     },
     {
+        "id": "alexnet",
         "method": "DeepCORAL",
         "url": "https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth",
         "relative_path": "deepcoral_alexnet_owt_4df8aa71.pth",
         "sha256_prefix": "4df8aa71",
     },
 )
+
+WEIGHTS_BY_ID = {spec["id"]: spec for spec in WEIGHTS}
 
 
 def sha256(path):
@@ -143,6 +148,18 @@ def download(spec, output_dir):
     return destination
 
 
+def ensure_weight(weight_id, output_dir):
+    """Return a verified local official checkpoint, downloading if missing."""
+    try:
+        spec = WEIGHTS_BY_ID[weight_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"unknown weight id {weight_id!r}; expected one of "
+            f"{sorted(WEIGHTS_BY_ID)}"
+        ) from exc
+    return download(spec, os.path.abspath(output_dir))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -150,11 +167,20 @@ def main():
         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "pretrained_weights"),
     )
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=sorted(WEIGHTS_BY_ID),
+        help=("download only the named checkpoints; the official single-modal "
+              "suite needs: --only resnet50 alexnet"),
+    )
     args = parser.parse_args()
     output_dir = os.path.abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
     records = []
-    for spec in WEIGHTS:
+    selected = (WEIGHTS if not args.only
+                else tuple(WEIGHTS_BY_ID[name] for name in args.only))
+    for spec in selected:
         path = download(spec, output_dir)
         records.append({
             "method": spec["method"],
