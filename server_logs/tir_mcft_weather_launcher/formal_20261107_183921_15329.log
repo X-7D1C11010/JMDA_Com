@@ -160,3 +160,217 @@ All VDS2Raw methods completed. Summary: /home/lixiang/lx/JMDA_Com/runs/vds2raw/v
 [SUPERVISED] full sunny_train and every selected target_train label are available to MCFT; target_val remains evaluation-only.
 [OK] server preflight passed
 >>> [mcft_backlight] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_backlight_20261107_190010_67427.log)
+    done: mcft_backlight
+>>> [mcft_rainy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_rainy_20261107_190010_67427.log)
+    done: mcft_rainy
+>>> [mcft_foggy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_foggy_20261107_190010_67427.log)
+    done: mcft_foggy
+>>> [mcft_dark] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_dark_20261107_190010_67427.log)
+    done: mcft_dark
+阶段结束（supervised）：失败任务数=0。
+全部任务成功（supervised）。
+>>> weather MCFT seed=43
+协议=supervised 轮数=500 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/supervised
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_203359_268836
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  dark_sda_10shot_seed42.txt: rows=80 sha256=d8c18fcc4f1b
+  dark_train.txt: rows=465 sha256=4db63ec2b49b
+  dark_val.txt: rows=120 sha256=dd26c3f42268
+  foggy_sda_10shot_seed42.txt: rows=89 sha256=fd89bcf70049
+  foggy_train.txt: rows=440 sha256=a6d0f2431e47
+  foggy_val.txt: rows=115 sha256=894af8eeaed4
+  rainy_sda_10shot_seed42.txt: rows=53 sha256=60ed8c297ea8
+  rainy_train.txt: rows=96 sha256=ee98687cc862
+  rainy_val.txt: rows=26 sha256=fb713ee0fe84
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+  dark_train_pairs.tsv: rows=465 sha256=bbe671b2332c (label-free)
+  foggy_train_pairs.tsv: rows=440 sha256=50f68e9022f9 (label-free)
+  rainy_train_pairs.tsv: rows=96 sha256=30e53c1fca28 (label-free)
+运行公共配置预检...
+[OK] paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_203359_268836/paired_protocol_manifest.json (13 labelled lists, 4 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=16565/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] rainy_val.txt: 26 rows, checked 26 VIS paths and exact IR mates
+[OK] rainy_train.txt: 96 rows, checked 96 VIS paths and exact IR mates
+[OK] foggy_val.txt: 115 rows, checked 115 VIS paths and exact IR mates
+[OK] foggy_train.txt: 440 rows, checked 440 VIS paths and exact IR mates
+[OK] dark_val.txt: 120 rows, checked 120 VIS paths and exact IR mates
+[OK] dark_train.txt: 465 rows, checked 465 VIS paths and exact IR mates
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[AUDIT] rainy: partial-set, target classes=6/14, source-only labels=[1, 2, 3, 7, 9, 11, 12, 13], original support=[1, 5, 6, 7, 9, 11], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '9': 4, '11': 5}
+[AUDIT] foggy: partial-set, target classes=9/14, source-only labels=[2, 6, 11, 12, 13], original support=[1, 2, 4, 5, 6, 8, 9, 10, 11], compact map={'1': 0, '2': 1, '4': 2, '5': 3, '6': 4, '8': 5, '9': 6, '10': 7, '11': 8}
+[AUDIT] dark: partial-set, target classes=8/14, source-only labels=[2, 3, 7, 9, 12, 13], original support=[1, 2, 5, 6, 7, 9, 11, 12], compact map={'1': 0, '2': 1, '5': 2, '6': 3, '7': 4, '9': 5, '11': 6, '12': 7}
+[SUPERVISED] full sunny_train and every selected target_train label are available to MCFT; target_val remains evaluation-only.
+[OK] server preflight passed
+>>> [mcft_backlight] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_backlight_20261107_203359_268836.log)
+    done: mcft_backlight
+>>> [mcft_rainy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_rainy_20261107_203359_268836.log)
+    done: mcft_rainy
+>>> [mcft_foggy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_foggy_20261107_203359_268836.log)
+    done: mcft_foggy
+>>> [mcft_dark] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_dark_20261107_203359_268836.log)
+    done: mcft_dark
+阶段结束（supervised）：失败任务数=0。
+全部任务成功（supervised）。
+>>> weather MCFT seed=44
+协议=supervised 轮数=500 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/supervised
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_220628_418246
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  dark_sda_10shot_seed42.txt: rows=80 sha256=d8c18fcc4f1b
+  dark_train.txt: rows=465 sha256=4db63ec2b49b
+  dark_val.txt: rows=120 sha256=dd26c3f42268
+  foggy_sda_10shot_seed42.txt: rows=89 sha256=fd89bcf70049
+  foggy_train.txt: rows=440 sha256=a6d0f2431e47
+  foggy_val.txt: rows=115 sha256=894af8eeaed4
+  rainy_sda_10shot_seed42.txt: rows=53 sha256=60ed8c297ea8
+  rainy_train.txt: rows=96 sha256=ee98687cc862
+  rainy_val.txt: rows=26 sha256=fb713ee0fe84
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+  dark_train_pairs.tsv: rows=465 sha256=bbe671b2332c (label-free)
+  foggy_train_pairs.tsv: rows=440 sha256=50f68e9022f9 (label-free)
+  rainy_train_pairs.tsv: rows=96 sha256=30e53c1fca28 (label-free)
+运行公共配置预检...
+[OK] paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_220628_418246/paired_protocol_manifest.json (13 labelled lists, 4 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=16559/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] rainy_val.txt: 26 rows, checked 26 VIS paths and exact IR mates
+[OK] rainy_train.txt: 96 rows, checked 96 VIS paths and exact IR mates
+[OK] foggy_val.txt: 115 rows, checked 115 VIS paths and exact IR mates
+[OK] foggy_train.txt: 440 rows, checked 440 VIS paths and exact IR mates
+[OK] dark_val.txt: 120 rows, checked 120 VIS paths and exact IR mates
+[OK] dark_train.txt: 465 rows, checked 465 VIS paths and exact IR mates
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[AUDIT] rainy: partial-set, target classes=6/14, source-only labels=[1, 2, 3, 7, 9, 11, 12, 13], original support=[1, 5, 6, 7, 9, 11], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '9': 4, '11': 5}
+[AUDIT] foggy: partial-set, target classes=9/14, source-only labels=[2, 6, 11, 12, 13], original support=[1, 2, 4, 5, 6, 8, 9, 10, 11], compact map={'1': 0, '2': 1, '4': 2, '5': 3, '6': 4, '8': 5, '9': 6, '10': 7, '11': 8}
+[AUDIT] dark: partial-set, target classes=8/14, source-only labels=[2, 3, 7, 9, 12, 13], original support=[1, 2, 5, 6, 7, 9, 11, 12], compact map={'1': 0, '2': 1, '5': 2, '6': 3, '7': 4, '9': 5, '11': 6, '12': 7}
+[SUPERVISED] full sunny_train and every selected target_train label are available to MCFT; target_val remains evaluation-only.
+[OK] server preflight passed
+>>> [mcft_backlight] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_backlight_20261107_220628_418246.log)
+    done: mcft_backlight
+>>> [mcft_rainy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_rainy_20261107_220628_418246.log)
+    done: mcft_rainy
+>>> [mcft_foggy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_foggy_20261107_220628_418246.log)
+    done: mcft_foggy
+>>> [mcft_dark] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_dark_20261107_220628_418246.log)
+    done: mcft_dark
+阶段结束（supervised）：失败任务数=0。
+全部任务成功（supervised）。
+>>> weather MCFT seed=45
+协议=supervised 轮数=500 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/supervised
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_234339_538145
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  dark_sda_10shot_seed42.txt: rows=80 sha256=d8c18fcc4f1b
+  dark_train.txt: rows=465 sha256=4db63ec2b49b
+  dark_val.txt: rows=120 sha256=dd26c3f42268
+  foggy_sda_10shot_seed42.txt: rows=89 sha256=fd89bcf70049
+  foggy_train.txt: rows=440 sha256=a6d0f2431e47
+  foggy_val.txt: rows=115 sha256=894af8eeaed4
+  rainy_sda_10shot_seed42.txt: rows=53 sha256=60ed8c297ea8
+  rainy_train.txt: rows=96 sha256=ee98687cc862
+  rainy_val.txt: rows=26 sha256=fb713ee0fe84
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+  dark_train_pairs.tsv: rows=465 sha256=bbe671b2332c (label-free)
+  foggy_train_pairs.tsv: rows=440 sha256=50f68e9022f9 (label-free)
+  rainy_train_pairs.tsv: rows=96 sha256=30e53c1fca28 (label-free)
+运行公共配置预检...
+[OK] paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261107_234339_538145/paired_protocol_manifest.json (13 labelled lists, 4 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=16559/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] rainy_val.txt: 26 rows, checked 26 VIS paths and exact IR mates
+[OK] rainy_train.txt: 96 rows, checked 96 VIS paths and exact IR mates
+[OK] foggy_val.txt: 115 rows, checked 115 VIS paths and exact IR mates
+[OK] foggy_train.txt: 440 rows, checked 440 VIS paths and exact IR mates
+[OK] dark_val.txt: 120 rows, checked 120 VIS paths and exact IR mates
+[OK] dark_train.txt: 465 rows, checked 465 VIS paths and exact IR mates
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[AUDIT] rainy: partial-set, target classes=6/14, source-only labels=[1, 2, 3, 7, 9, 11, 12, 13], original support=[1, 5, 6, 7, 9, 11], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '9': 4, '11': 5}
+[AUDIT] foggy: partial-set, target classes=9/14, source-only labels=[2, 6, 11, 12, 13], original support=[1, 2, 4, 5, 6, 8, 9, 10, 11], compact map={'1': 0, '2': 1, '4': 2, '5': 3, '6': 4, '8': 5, '9': 6, '10': 7, '11': 8}
+[AUDIT] dark: partial-set, target classes=8/14, source-only labels=[2, 3, 7, 9, 12, 13], original support=[1, 2, 5, 6, 7, 9, 11, 12], compact map={'1': 0, '2': 1, '5': 2, '6': 3, '7': 4, '9': 5, '11': 6, '12': 7}
+[SUPERVISED] full sunny_train and every selected target_train label are available to MCFT; target_val remains evaluation-only.
+[OK] server preflight passed
+>>> [mcft_backlight] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_backlight_20261107_234339_538145.log)
+    done: mcft_backlight
+>>> [mcft_rainy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_rainy_20261107_234339_538145.log)
+    done: mcft_rainy
+>>> [mcft_foggy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_foggy_20261107_234339_538145.log)
+    done: mcft_foggy
+>>> [mcft_dark] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_dark_20261107_234339_538145.log)
+    done: mcft_dark
+阶段结束（supervised）：失败任务数=0。
+全部任务成功（supervised）。
+>>> weather MCFT seed=46
+协议=supervised 轮数=500 数据根=/mnt/data/lixiang/data/Data
+日志目录=/home/lixiang/lx/JMDA_Com/server_logs/supervised
+生成所有方法共享的精确 VIS/IR 配对样本清单...
+[OK] prepared paired protocol lists: /home/lixiang/lx/JMDA_Com/prepared_lists/20261108_012007_680282
+  backlight_sda_10shot_seed42.txt: rows=74 sha256=1fe1ef5642a9
+  backlight_train.txt: rows=113 sha256=2dee4a0ca188
+  backlight_val.txt: rows=36 sha256=c670631f54c1
+  dark_sda_10shot_seed42.txt: rows=80 sha256=d8c18fcc4f1b
+  dark_train.txt: rows=465 sha256=4db63ec2b49b
+  dark_val.txt: rows=120 sha256=dd26c3f42268
+  foggy_sda_10shot_seed42.txt: rows=89 sha256=fd89bcf70049
+  foggy_train.txt: rows=440 sha256=a6d0f2431e47
+  foggy_val.txt: rows=115 sha256=894af8eeaed4
+  rainy_sda_10shot_seed42.txt: rows=53 sha256=60ed8c297ea8
+  rainy_train.txt: rows=96 sha256=ee98687cc862
+  rainy_val.txt: rows=26 sha256=fb713ee0fe84
+  sunny_train.txt: rows=760 sha256=ff9110283d7f
+  backlight_train_pairs.tsv: rows=113 sha256=283862861d42 (label-free)
+  dark_train_pairs.tsv: rows=465 sha256=bbe671b2332c (label-free)
+  foggy_train_pairs.tsv: rows=440 sha256=50f68e9022f9 (label-free)
+  rainy_train_pairs.tsv: rows=96 sha256=30e53c1fca28 (label-free)
+运行公共配置预检...
+[OK] paired cohort manifest: /home/lixiang/lx/JMDA_Com/prepared_lists/20261108_012007_680282/paired_protocol_manifest.json (13 labelled lists, 4 label-free pair lists)
+[OK] torch=2.11.0+cu128, torchvision=0.26.0+cu128
+[OK] CUDA device: NVIDIA GeForce RTX 5090; free/total memory=16559/32110 MiB
+[OK] sunny_train.txt: 760 rows, checked 760 VIS paths and exact IR mates
+[OK] backlight_val.txt: 36 rows, checked 36 VIS paths and exact IR mates
+[OK] backlight_train.txt: 113 rows, checked 113 VIS paths and exact IR mates
+[OK] rainy_val.txt: 26 rows, checked 26 VIS paths and exact IR mates
+[OK] rainy_train.txt: 96 rows, checked 96 VIS paths and exact IR mates
+[OK] foggy_val.txt: 115 rows, checked 115 VIS paths and exact IR mates
+[OK] foggy_train.txt: 440 rows, checked 440 VIS paths and exact IR mates
+[OK] dark_val.txt: 120 rows, checked 120 VIS paths and exact IR mates
+[OK] dark_train.txt: 465 rows, checked 465 VIS paths and exact IR mates
+[AUDIT] backlight: partial-set, target classes=9/14, source-only labels=[1, 2, 3, 9, 11], original support=[1, 5, 6, 7, 8, 9, 11, 13, 14], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '8': 4, '9': 5, '11': 6, '13': 7, '14': 8}
+[AUDIT] rainy: partial-set, target classes=6/14, source-only labels=[1, 2, 3, 7, 9, 11, 12, 13], original support=[1, 5, 6, 7, 9, 11], compact map={'1': 0, '5': 1, '6': 2, '7': 3, '9': 4, '11': 5}
+[AUDIT] foggy: partial-set, target classes=9/14, source-only labels=[2, 6, 11, 12, 13], original support=[1, 2, 4, 5, 6, 8, 9, 10, 11], compact map={'1': 0, '2': 1, '4': 2, '5': 3, '6': 4, '8': 5, '9': 6, '10': 7, '11': 8}
+[AUDIT] dark: partial-set, target classes=8/14, source-only labels=[2, 3, 7, 9, 12, 13], original support=[1, 2, 5, 6, 7, 9, 11, 12], compact map={'1': 0, '2': 1, '5': 2, '6': 3, '7': 4, '9': 5, '11': 6, '12': 7}
+[SUPERVISED] full sunny_train and every selected target_train label are available to MCFT; target_val remains evaluation-only.
+[OK] server preflight passed
+>>> [mcft_backlight] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_backlight_20261108_012007_680282.log)
+    done: mcft_backlight
+>>> [mcft_rainy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_rainy_20261108_012007_680282.log)
+    done: mcft_rainy
+>>> [mcft_foggy] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_foggy_20261108_012007_680282.log)
+    done: mcft_foggy
+>>> [mcft_dark] GPU门禁: free>=4608MiB, util<=10% (日志=/home/lixiang/lx/JMDA_Com/server_logs/supervised/mcft_dark_20261108_012007_680282.log)
+    done: mcft_dark
+阶段结束（supervised）：失败任务数=0。
+全部任务成功（supervised）。
+Sequential TIR + weather MCFT workflow completed.
