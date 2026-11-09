@@ -1,0 +1,17 @@
+[GPU-WAIT] tir_seed42: require free >= 14336 MiB, util <= 10% for 3 checks; candidates=all
+[GPU-WAIT] 2026-11-08T22:14:38+08:00 tir_seed42: GPU 0: free=22760 MiB, util=0%; GPU 1: free=23986 MiB, util=99%
+[GPU-WAIT] 2026-11-08T22:15:08+08:00 tir_seed42: GPU 0: free=22760 MiB, util=0%; GPU 1: free=23986 MiB, util=71%
+[GPU-SELECT] tir_seed42: physical GPU 0; free=23002 MiB, util=0%; launching: python /home/lixiang/lx/JMDA_Com/vds2raw/train_tir.py --epochs 1 --batch-size 32 --eval-frequency 1 --clip-checkpoint /home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt --lora-lr 0.0002 --prompt-lr 0.002 --adapter-lr 0.001 --gate-lr 0.01 --lora-weight-decay 0.01 --weight-decay 0.0005 --lora-rank 16 --lora-alpha 8 --lora-dropout 0.25 --lora-encoder both --lora-params q k v --ais-dropout-probability 0.1 --nir-initial-scale 0.10 --ais-initial-scale 2.0 --modality-warmup-epochs 0 --nir-aux-loss-weight 0.2 --ais-aux-loss-weight 0.2 --tir-min-weight 0.0 --tir-max-weight 2.0 --class-weight-power 0.5 --source-loss-weight 0.4 --target-loss-weight 0.6 --label-smoothing 0.0 --scheduler none --warmup-epochs 0 --min-lr-ratio 0.1 --augment --natural-train-sampling --minibatch-updates --early-stopping-patience 0 --early-stopping-min-epochs 60 --stats-file /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_smoke_20261108_221436_2532728/normalization_stats.json --data-root /home/lixiang/lx/VDS2Raw/threeclass_ready --save-dir /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_smoke_20261108_221436_2532728/artifacts --seed 42 --num-workers 2 --skip-audit
+Deterministic kernels: False
+Normalization: {'rgb_mean': [104.1385773189484, 151.3651573867394, 202.25860718419312], 'rgb_std': [23.92844861235615, 24.27277502045296, 26.47277607798259], 'rgb_min': [0.0, 0.0, 0.0], 'rgb_max': [1094.0, 1062.0, 1057.0], 'nir_mean': [82.76378916583995], 'nir_std': [33.73508320680071], 'nir_min': [0.0], 'nir_max': [1028.0], 'fit_partitions': ['source_train', 'target_train'], 'fit_samples': 210, 'rule': 'statistics fitted only on: source_train + target_train'}
+Epoch [1/1] batch [5/7] domain_loss=1.3070
+Epoch [1/1] train accuracy=0.4476 source_accuracy=0.3534 target_accuracy=0.5638 nir_accuracy=0.3762 ais_accuracy=0.4667 source_ce=1.0289 target_ce=0.9918 nir_ce=1.1068 ais_ce=1.0379 total_loss=1.4355 stage=joint
+Epoch [1/1] target_val accuracy: 0.7143
+  Precision (Macro): 0.4640 | Recall (Macro): 0.5506 | F1 (Macro): 0.4977 | class coverage: 3/3 | samples: 28
+Epoch [1/1] target_test accuracy: 0.6970
+  Precision (Macro): 0.4758 | Recall (Macro): 0.5258 | F1 (Macro): 0.4992 | class coverage: 3/3 | samples: 33
+SELECTED target_test peak accuracy: 0.6970
+  Precision (Macro): 0.4758 | Recall (Macro): 0.5258 | F1 (Macro): 0.4992 | class coverage: 3/3 | samples: 33
+FINAL_TEST_METRICS_JSON: {"method": "TIR-RGB-NIR-AIS", "seed": 42, "selected_epoch": 1, "selection_partition": "target_test", "test_selection_bias": true, "metrics": {"accuracy": 0.696969696969697, "precision_macro": 0.47578347578347574, "recall_macro": 0.5258467023172906, "f1_macro": 0.4992063492063492, "val_present_classes": 3, "val_total_classes": 3, "val_class_coverage": 1.0, "val_samples": 33}}
+Result CSV: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_smoke_20261108_221436_2532728/artifacts/vds2raw_tir_seed42_result.csv
+Result JSON: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_smoke_20261108_221436_2532728/artifacts/vds2raw_tir_seed42_result.json
