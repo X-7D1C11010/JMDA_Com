@@ -1,0 +1,432 @@
+[GPU-WAIT] tir_seed46: require free >= 14336 MiB, util <= 10% for 3 checks; candidates=all
+[GPU-WAIT] 2026-11-09T12:42:19+08:00 tir_seed46: GPU 0: free=31211 MiB, util=0%; GPU 1: free=23674 MiB, util=0%
+[GPU-WAIT] 2026-11-09T12:42:49+08:00 tir_seed46: GPU 0: free=31211 MiB, util=0%; GPU 1: free=23674 MiB, util=0%
+[GPU-SELECT] tir_seed46: physical GPU 0; free=31211 MiB, util=0%; launching: python /home/lixiang/lx/JMDA_Com/vds2raw/train_tir.py --epochs 100 --batch-size 32 --eval-frequency 1 --clip-checkpoint /home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt --lora-lr 0.0002 --text-lora-lr-scale 0.25 --prompt-lr 0.0005 --adapter-lr 0.001 --gate-lr 0.002 --lora-weight-decay 0.01 --weight-decay 0.0005 --lora-rank 16 --lora-alpha 8 --lora-dropout 0.25 --lora-encoder both --lora-params q k v --ais-dropout-probability 0.1 --nir-initial-scale 0.05 --ais-initial-scale 0.75 --modality-warmup-epochs 25 --text-unfreeze-epoch 41 --nir-aux-loss-weight 0.2 --ais-aux-loss-weight 0.2 --tir-min-weight 0.5 --tir-max-weight 1.5 --class-weight-power 0.5 --source-loss-weight 0.4 --target-loss-weight 0.6 --label-smoothing 0.0 --scheduler cosine --warmup-epochs 5 --min-lr-ratio 0.1 --augment --natural-train-sampling --minibatch-updates --early-stopping-patience 15 --early-stopping-min-epochs 60 --stats-file /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_123105_3493444/normalization_stats.json --data-root /home/lixiang/lx/VDS2Raw/threeclass_ready --save-dir /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_123105_3493444/artifacts --seed 46 --num-workers 2 --skip-audit
+Deterministic kernels: False
+Normalization: {'rgb_mean': [104.1385773189484, 151.3651573867394, 202.25860718419312], 'rgb_std': [23.92844861235615, 24.27277502045296, 26.47277607798259], 'rgb_min': [0.0, 0.0, 0.0], 'rgb_max': [1094.0, 1062.0, 1057.0], 'nir_mean': [82.76378916583995], 'nir_std': [33.73508320680071], 'nir_min': [0.0], 'nir_max': [1028.0], 'fit_partitions': ['source_train', 'target_train'], 'fit_samples': 210, 'rule': 'statistics fitted only on: source_train + target_train'}
+Epoch [1/100] batch [5/7] domain_loss=1.5410
+Epoch [1/100] train accuracy=0.3000 rgb_accuracy=0.2810 source_accuracy=0.1638 target_accuracy=0.4681 nir_accuracy=0.4190 ais_accuracy=0.4952 source_ce=1.0991 target_ce=1.0899 nir_ce=1.0981 ais_ce=0.9871 total_loss=1.5106 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.950+/-0.258 fusion=(RGB 0.987, NIR 0.001, AIS 0.012)
+Epoch [1/100] target_val accuracy: 0.5000
+  Precision (Macro): 0.1795 | Recall (Macro): 0.2917 | F1 (Macro): 0.2222 | class coverage: 3/3 | samples: 28
+Epoch [1/100] target_test accuracy: 0.5152
+  Precision (Macro): 0.3119 | Recall (Macro): 0.3547 | F1 (Macro): 0.3056 | class coverage: 3/3 | samples: 33
+Epoch [1/100] modal target_test fused: ACC=0.5152, F1=0.3056 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.1515, F1=0.0877 | ais: ACC=0.6667, F1=0.4825
+Epoch [2/100] batch [5/7] domain_loss=1.3840
+Epoch [2/100] train accuracy=0.3000 rgb_accuracy=0.2905 source_accuracy=0.1810 target_accuracy=0.4468 nir_accuracy=0.4476 ais_accuracy=0.5333 source_ce=1.0948 target_ce=1.0860 nir_ce=1.0610 ais_ce=0.9620 total_loss=1.4941 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.984, NIR 0.001, AIS 0.015)
+Epoch [2/100] target_val accuracy: 0.5000
+  Precision (Macro): 0.1795 | Recall (Macro): 0.2917 | F1 (Macro): 0.2222 | class coverage: 3/3 | samples: 28
+Epoch [2/100] target_test accuracy: 0.5455
+  Precision (Macro): 0.3506 | Recall (Macro): 0.3743 | F1 (Macro): 0.3208 | class coverage: 3/3 | samples: 33
+Epoch [2/100] modal target_test fused: ACC=0.5455, F1=0.3208 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.1818, F1=0.1456 | ais: ACC=0.6970, F1=0.5056
+Epoch [3/100] batch [5/7] domain_loss=1.4772
+Epoch [3/100] train accuracy=0.3095 rgb_accuracy=0.2810 source_accuracy=0.1724 target_accuracy=0.4787 nir_accuracy=0.4714 ais_accuracy=0.5333 source_ce=1.0898 target_ce=1.0778 nir_ce=1.0473 ais_ce=0.9241 total_loss=1.4769 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.257 fusion=(RGB 0.976, NIR 0.002, AIS 0.022)
+Epoch [3/100] target_val accuracy: 0.5357
+  Precision (Macro): 0.1852 | Recall (Macro): 0.3125 | F1 (Macro): 0.2326 | class coverage: 3/3 | samples: 28
+Epoch [3/100] target_test accuracy: 0.5455
+  Precision (Macro): 0.3506 | Recall (Macro): 0.3743 | F1 (Macro): 0.3208 | class coverage: 3/3 | samples: 33
+Epoch [3/100] modal target_test fused: ACC=0.5455, F1=0.3208 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.3533 | ais: ACC=0.6667, F1=0.4825
+Epoch [4/100] batch [5/7] domain_loss=1.4850
+Epoch [4/100] train accuracy=0.3000 rgb_accuracy=0.2667 source_accuracy=0.1638 target_accuracy=0.4681 nir_accuracy=0.4238 ais_accuracy=0.5571 source_ce=1.0842 target_ce=1.0671 nir_ce=1.0634 ais_ce=0.8906 total_loss=1.4648 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.969, NIR 0.002, AIS 0.030)
+Epoch [4/100] target_val accuracy: 0.5714
+  Precision (Macro): 0.1905 | Recall (Macro): 0.3333 | F1 (Macro): 0.2424 | class coverage: 3/3 | samples: 28
+Epoch [4/100] target_test accuracy: 0.5455
+  Precision (Macro): 0.3506 | Recall (Macro): 0.3743 | F1 (Macro): 0.3208 | class coverage: 3/3 | samples: 33
+Epoch [4/100] modal target_test fused: ACC=0.5455, F1=0.3208 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4848, F1=0.4000 | ais: ACC=0.6970, F1=0.5056
+Epoch [5/100] batch [5/7] domain_loss=1.4449
+Epoch [5/100] train accuracy=0.3095 rgb_accuracy=0.2714 source_accuracy=0.1724 target_accuracy=0.4787 nir_accuracy=0.4381 ais_accuracy=0.5286 source_ce=1.0764 target_ce=1.0550 nir_ce=1.0517 ais_ce=0.8672 total_loss=1.4473 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.960, NIR 0.002, AIS 0.038)
+Epoch [5/100] target_val accuracy: 0.5714
+  Precision (Macro): 0.1905 | Recall (Macro): 0.3333 | F1 (Macro): 0.2424 | class coverage: 3/3 | samples: 28
+Epoch [5/100] target_test accuracy: 0.5455
+  Precision (Macro): 0.3506 | Recall (Macro): 0.3743 | F1 (Macro): 0.3208 | class coverage: 3/3 | samples: 33
+Epoch [5/100] modal target_test fused: ACC=0.5455, F1=0.3208 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4545, F1=0.3640 | ais: ACC=0.6970, F1=0.5152
+Epoch [6/100] batch [5/7] domain_loss=1.4057
+Epoch [6/100] train accuracy=0.3190 rgb_accuracy=0.2667 source_accuracy=0.1810 target_accuracy=0.4894 nir_accuracy=0.4524 ais_accuracy=0.5762 source_ce=1.0634 target_ce=1.0305 nir_ce=1.0415 ais_ce=0.8098 total_loss=1.4139 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.944, NIR 0.002, AIS 0.054)
+Epoch [6/100] target_val accuracy: 0.5714
+  Precision (Macro): 0.1905 | Recall (Macro): 0.3333 | F1 (Macro): 0.2424 | class coverage: 3/3 | samples: 28
+Epoch [6/100] target_test accuracy: 0.5758
+  Precision (Macro): 0.4111 | Recall (Macro): 0.3939 | F1 (Macro): 0.3364 | class coverage: 3/3 | samples: 33
+Epoch [6/100] modal target_test fused: ACC=0.5758, F1=0.3364 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4545, F1=0.3232 | ais: ACC=0.7273, F1=0.5362
+Epoch [7/100] batch [5/7] domain_loss=1.3957
+Epoch [7/100] train accuracy=0.3333 rgb_accuracy=0.2810 source_accuracy=0.1724 target_accuracy=0.5319 nir_accuracy=0.4429 ais_accuracy=0.5571 source_ce=1.0568 target_ce=1.0130 nir_ce=1.0610 ais_ce=0.7873 total_loss=1.4002 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.933, NIR 0.002, AIS 0.065)
+Epoch [7/100] target_val accuracy: 0.5714
+  Precision (Macro): 0.1905 | Recall (Macro): 0.3333 | F1 (Macro): 0.2424 | class coverage: 3/3 | samples: 28
+Epoch [7/100] target_test accuracy: 0.5758
+  Precision (Macro): 0.4111 | Recall (Macro): 0.3939 | F1 (Macro): 0.3364 | class coverage: 3/3 | samples: 33
+Epoch [7/100] modal target_test fused: ACC=0.5758, F1=0.3364 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.2460 | ais: ACC=0.6970, F1=0.5152
+Epoch [8/100] batch [5/7] domain_loss=1.5051
+Epoch [8/100] train accuracy=0.3619 rgb_accuracy=0.2857 source_accuracy=0.2241 target_accuracy=0.5319 nir_accuracy=0.4571 ais_accuracy=0.6333 source_ce=1.0413 target_ce=0.9942 nir_ce=1.0353 ais_ce=0.7459 total_loss=1.3692 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.919, NIR 0.002, AIS 0.079)
+Epoch [8/100] target_val accuracy: 0.6429
+  Precision (Macro): 0.5385 | Recall (Macro): 0.4667 | F1 (Macro): 0.4444 | class coverage: 3/3 | samples: 28
+Epoch [8/100] target_test accuracy: 0.5758
+  Precision (Macro): 0.4111 | Recall (Macro): 0.3939 | F1 (Macro): 0.3364 | class coverage: 3/3 | samples: 33
+Epoch [8/100] modal target_test fused: ACC=0.5758, F1=0.3364 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.3333, F1=0.2037 | ais: ACC=0.7879, F1=0.6977
+Epoch [9/100] batch [5/7] domain_loss=1.4868
+Epoch [9/100] train accuracy=0.3952 rgb_accuracy=0.2857 source_accuracy=0.2414 target_accuracy=0.5851 nir_accuracy=0.4286 ais_accuracy=0.6810 source_ce=1.0331 target_ce=0.9826 nir_ce=1.0455 ais_ce=0.7205 total_loss=1.3560 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.950+/-0.258 fusion=(RGB 0.908, NIR 0.002, AIS 0.090)
+Epoch [9/100] target_val accuracy: 0.6429
+  Precision (Macro): 0.4583 | Recall (Macro): 0.5125 | F1 (Macro): 0.4722 | class coverage: 3/3 | samples: 28
+Epoch [9/100] target_test accuracy: 0.6364
+  Precision (Macro): 0.7099 | Recall (Macro): 0.5273 | F1 (Macro): 0.5369 | class coverage: 3/3 | samples: 33
+Epoch [9/100] modal target_test fused: ACC=0.6364, F1=0.5369 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.3030, F1=0.1931 | ais: ACC=0.8182, F1=0.7500
+Epoch [10/100] batch [5/7] domain_loss=1.4108
+Epoch [10/100] train accuracy=0.4476 rgb_accuracy=0.2667 source_accuracy=0.2845 target_accuracy=0.6489 nir_accuracy=0.4810 ais_accuracy=0.7286 source_ce=1.0239 target_ce=0.9673 nir_ce=1.0343 ais_ce=0.7003 total_loss=1.3369 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.895, NIR 0.002, AIS 0.103)
+Epoch [10/100] target_val accuracy: 0.6429
+  Precision (Macro): 0.4583 | Recall (Macro): 0.5125 | F1 (Macro): 0.4722 | class coverage: 3/3 | samples: 28
+Epoch [10/100] target_test accuracy: 0.6667
+  Precision (Macro): 0.6902 | Recall (Macro): 0.5939 | F1 (Macro): 0.5810 | class coverage: 3/3 | samples: 33
+Epoch [10/100] modal target_test fused: ACC=0.6667, F1=0.5810 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.2414 | ais: ACC=0.7879, F1=0.7072
+Epoch [11/100] batch [5/7] domain_loss=1.2629
+Epoch [11/100] train accuracy=0.5095 rgb_accuracy=0.2905 source_accuracy=0.4052 target_accuracy=0.6383 nir_accuracy=0.4524 ais_accuracy=0.7190 source_ce=1.0098 target_ce=0.9515 nir_ce=1.0552 ais_ce=0.6762 total_loss=1.3211 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.950+/-0.258 fusion=(RGB 0.881, NIR 0.002, AIS 0.116)
+Epoch [11/100] target_val accuracy: 0.7143
+  Precision (Macro): 0.4762 | Recall (Macro): 0.6458 | F1 (Macro): 0.5480 | class coverage: 3/3 | samples: 28
+Epoch [11/100] target_test accuracy: 0.6970
+  Precision (Macro): 0.6861 | Recall (Macro): 0.6242 | F1 (Macro): 0.6236 | class coverage: 3/3 | samples: 33
+Epoch [11/100] modal target_test fused: ACC=0.6970, F1=0.6236 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.3048 | ais: ACC=0.7879, F1=0.7072
+Epoch [12/100] batch [5/7] domain_loss=1.3343
+Epoch [12/100] train accuracy=0.5429 rgb_accuracy=0.2810 source_accuracy=0.4483 target_accuracy=0.6596 nir_accuracy=0.4857 ais_accuracy=0.7095 source_ce=1.0030 target_ce=0.9386 nir_ce=1.0332 ais_ce=0.6602 total_loss=1.3030 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.257 fusion=(RGB 0.867, NIR 0.002, AIS 0.130)
+Epoch [12/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8214 | Recall (Macro): 0.6935 | F1 (Macro): 0.6389 | class coverage: 3/3 | samples: 28
+Epoch [12/100] target_test accuracy: 0.7576
+  Precision (Macro): 0.7465 | Recall (Macro): 0.7212 | F1 (Macro): 0.6997 | class coverage: 3/3 | samples: 33
+Epoch [12/100] modal target_test fused: ACC=0.7576, F1=0.6997 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.3051 | ais: ACC=0.7879, F1=0.7072
+Epoch [13/100] batch [5/7] domain_loss=1.1843
+Epoch [13/100] train accuracy=0.6429 rgb_accuracy=0.2905 source_accuracy=0.6034 target_accuracy=0.6915 nir_accuracy=0.4476 ais_accuracy=0.7381 source_ce=0.9872 target_ce=0.9290 nir_ce=1.0206 ais_ce=0.6387 total_loss=1.2841 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.950+/-0.258 fusion=(RGB 0.854, NIR 0.002, AIS 0.144)
+Epoch [13/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8346 | Recall (Macro): 0.7411 | F1 (Macro): 0.7116 | class coverage: 3/3 | samples: 28
+Epoch [13/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.8399 | Recall (Macro): 0.8485 | F1 (Macro): 0.8065 | class coverage: 3/3 | samples: 33
+Epoch [13/100] modal target_test fused: ACC=0.8485, F1=0.8065 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.3051 | ais: ACC=0.7879, F1=0.7072
+Epoch [14/100] batch [5/7] domain_loss=1.2581
+Epoch [14/100] train accuracy=0.6571 rgb_accuracy=0.2762 source_accuracy=0.6034 target_accuracy=0.7234 nir_accuracy=0.4667 ais_accuracy=0.7095 source_ce=0.9839 target_ce=0.9119 nir_ce=1.0345 ais_ce=0.6245 total_loss=1.2725 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.844, NIR 0.002, AIS 0.154)
+Epoch [14/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8346 | Recall (Macro): 0.7411 | F1 (Macro): 0.7116 | class coverage: 3/3 | samples: 28
+Epoch [14/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.8333 | Recall (Macro): 0.8485 | F1 (Macro): 0.7972 | class coverage: 3/3 | samples: 33
+Epoch [14/100] modal target_test fused: ACC=0.8485, F1=0.7972 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.3939, F1=0.2396 | ais: ACC=0.7879, F1=0.7072
+Epoch [15/100] batch [5/7] domain_loss=1.3766
+Epoch [15/100] train accuracy=0.6762 rgb_accuracy=0.2905 source_accuracy=0.6379 target_accuracy=0.7234 nir_accuracy=0.4524 ais_accuracy=0.6952 source_ce=0.9692 target_ce=0.9031 nir_ce=1.0417 ais_ce=0.6114 total_loss=1.2602 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.830, NIR 0.002, AIS 0.168)
+Epoch [15/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8346 | Recall (Macro): 0.7411 | F1 (Macro): 0.7116 | class coverage: 3/3 | samples: 28
+Epoch [15/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.8333 | Recall (Macro): 0.8485 | F1 (Macro): 0.7972 | class coverage: 3/3 | samples: 33
+Epoch [15/100] modal target_test fused: ACC=0.8485, F1=0.7972 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.3051 | ais: ACC=0.7576, F1=0.6614
+Epoch [16/100] batch [5/7] domain_loss=1.2688
+Epoch [16/100] train accuracy=0.6429 rgb_accuracy=0.2714 source_accuracy=0.6207 target_accuracy=0.6702 nir_accuracy=0.4714 ais_accuracy=0.6714 source_ce=0.9583 target_ce=0.8958 nir_ce=1.0265 ais_ce=0.6118 total_loss=1.2485 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.817, NIR 0.002, AIS 0.181)
+Epoch [16/100] target_val accuracy: 0.7143
+  Precision (Macro): 0.4456 | Recall (Macro): 0.6458 | F1 (Macro): 0.5114 | class coverage: 3/3 | samples: 28
+Epoch [16/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.8333 | Recall (Macro): 0.8485 | F1 (Macro): 0.7972 | class coverage: 3/3 | samples: 33
+Epoch [16/100] modal target_test fused: ACC=0.8485, F1=0.7972 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4545, F1=0.3532 | ais: ACC=0.7273, F1=0.6113
+Epoch [17/100] batch [5/7] domain_loss=1.2034
+Epoch [17/100] train accuracy=0.6524 rgb_accuracy=0.2762 source_accuracy=0.6293 target_accuracy=0.6809 nir_accuracy=0.4571 ais_accuracy=0.6762 source_ce=0.9465 target_ce=0.8793 nir_ce=1.0311 ais_ce=0.5863 total_loss=1.2297 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.948+/-0.257 fusion=(RGB 0.805, NIR 0.002, AIS 0.194)
+Epoch [17/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.7973 | Recall (Macro): 0.6935 | F1 (Macro): 0.6042 | class coverage: 3/3 | samples: 28
+Epoch [17/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8148 | Recall (Macro): 0.8182 | F1 (Macro): 0.7544 | class coverage: 3/3 | samples: 33
+Epoch [17/100] modal target_test fused: ACC=0.8182, F1=0.7544 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.3636, F1=0.2543 | ais: ACC=0.6970, F1=0.5556
+Epoch [18/100] batch [5/7] domain_loss=1.3423
+Epoch [18/100] train accuracy=0.6762 rgb_accuracy=0.2810 source_accuracy=0.6638 target_accuracy=0.6915 nir_accuracy=0.4429 ais_accuracy=0.6571 source_ce=0.9346 target_ce=0.8736 nir_ce=1.0327 ais_ce=0.5862 total_loss=1.2217 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.950+/-0.258 fusion=(RGB 0.793, NIR 0.002, AIS 0.205)
+Epoch [18/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.7973 | Recall (Macro): 0.6935 | F1 (Macro): 0.6042 | class coverage: 3/3 | samples: 28
+Epoch [18/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7997 | Recall (Macro): 0.7879 | F1 (Macro): 0.7099 | class coverage: 3/3 | samples: 33
+Epoch [18/100] modal target_test fused: ACC=0.7879, F1=0.7099 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.3016 | ais: ACC=0.6970, F1=0.5556
+Epoch [19/100] batch [5/7] domain_loss=1.0506
+Epoch [19/100] train accuracy=0.6571 rgb_accuracy=0.2810 source_accuracy=0.6207 target_accuracy=0.7021 nir_accuracy=0.4524 ais_accuracy=0.6524 source_ce=0.9305 target_ce=0.8575 nir_ce=1.0323 ais_ce=0.5670 total_loss=1.2065 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.950+/-0.258 fusion=(RGB 0.781, NIR 0.002, AIS 0.217)
+Epoch [19/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.7973 | Recall (Macro): 0.6935 | F1 (Macro): 0.6042 | class coverage: 3/3 | samples: 28
+Epoch [19/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7997 | Recall (Macro): 0.7879 | F1 (Macro): 0.7099 | class coverage: 3/3 | samples: 33
+Epoch [19/100] modal target_test fused: ACC=0.7879, F1=0.7099 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.2528 | ais: ACC=0.6970, F1=0.5556
+Epoch [20/100] batch [5/7] domain_loss=1.2882
+Epoch [20/100] train accuracy=0.6619 rgb_accuracy=0.2714 source_accuracy=0.6293 target_accuracy=0.7021 nir_accuracy=0.4524 ais_accuracy=0.6571 source_ce=0.9200 target_ce=0.8571 nir_ce=1.0529 ais_ce=0.5585 total_loss=1.2045 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.947+/-0.258 fusion=(RGB 0.774, NIR 0.002, AIS 0.225)
+Epoch [20/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.7973 | Recall (Macro): 0.6935 | F1 (Macro): 0.6042 | class coverage: 3/3 | samples: 28
+Epoch [20/100] target_test accuracy: 0.7879
+  Precision (Macro): 0.7997 | Recall (Macro): 0.7879 | F1 (Macro): 0.7099 | class coverage: 3/3 | samples: 33
+Epoch [20/100] modal target_test fused: ACC=0.7879, F1=0.7099 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4848, F1=0.3123 | ais: ACC=0.6970, F1=0.5556
+Epoch [21/100] batch [5/7] domain_loss=1.2633
+Epoch [21/100] train accuracy=0.6905 rgb_accuracy=0.2810 source_accuracy=0.6724 target_accuracy=0.7128 nir_accuracy=0.4571 ais_accuracy=0.6810 source_ce=0.9090 target_ce=0.8513 nir_ce=1.0169 ais_ce=0.5526 total_loss=1.1883 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.948+/-0.258 fusion=(RGB 0.764, NIR 0.002, AIS 0.234)
+Epoch [21/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.7973 | Recall (Macro): 0.6935 | F1 (Macro): 0.6042 | class coverage: 3/3 | samples: 28
+Epoch [21/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [21/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4545, F1=0.2634 | ais: ACC=0.6970, F1=0.5556
+Epoch [22/100] batch [5/7] domain_loss=1.2635
+Epoch [22/100] train accuracy=0.6857 rgb_accuracy=0.2619 source_accuracy=0.6552 target_accuracy=0.7234 nir_accuracy=0.4857 ais_accuracy=0.6810 source_ce=0.9064 target_ce=0.8410 nir_ce=1.0176 ais_ce=0.5411 total_loss=1.1789 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.948+/-0.257 fusion=(RGB 0.757, NIR 0.002, AIS 0.241)
+Epoch [22/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [22/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [22/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.3939, F1=0.2349 | ais: ACC=0.6970, F1=0.5556
+Epoch [23/100] batch [5/7] domain_loss=1.1814
+Epoch [23/100] train accuracy=0.6857 rgb_accuracy=0.2857 source_accuracy=0.6552 target_accuracy=0.7234 nir_accuracy=0.4667 ais_accuracy=0.6857 source_ce=0.9013 target_ce=0.8291 nir_ce=1.0068 ais_ce=0.5347 total_loss=1.1663 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.748, NIR 0.002, AIS 0.250)
+Epoch [23/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [23/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [23/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.3939, F1=0.2349 | ais: ACC=0.7273, F1=0.6113
+Epoch [24/100] batch [5/7] domain_loss=1.1281
+Epoch [24/100] train accuracy=0.7143 rgb_accuracy=0.2857 source_accuracy=0.6897 target_accuracy=0.7447 nir_accuracy=0.4476 ais_accuracy=0.7286 source_ce=0.8939 target_ce=0.8271 nir_ce=1.0219 ais_ce=0.5270 total_loss=1.1636 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.257 fusion=(RGB 0.744, NIR 0.002, AIS 0.254)
+Epoch [24/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [24/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [24/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4242, F1=0.2785 | ais: ACC=0.7273, F1=0.6113
+Epoch [25/100] batch [5/7] domain_loss=1.2662
+Epoch [25/100] train accuracy=0.6810 rgb_accuracy=0.2762 source_accuracy=0.6638 target_accuracy=0.7021 nir_accuracy=0.4810 ais_accuracy=0.7000 source_ce=0.8864 target_ce=0.8215 nir_ce=1.0310 ais_ce=0.5272 total_loss=1.1591 stage=modality_warmup modal_steps=7 clip_steps=0 TIR_weight=0.949+/-0.258 fusion=(RGB 0.732, NIR 0.002, AIS 0.266)
+Epoch [25/100] target_val accuracy: 0.7500
+  Precision (Macro): 0.8056 | Recall (Macro): 0.6935 | F1 (Macro): 0.6020 | class coverage: 3/3 | samples: 28
+Epoch [25/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [25/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.4242, F1=0.2607 | nir: ACC=0.4545, F1=0.3182 | ais: ACC=0.7273, F1=0.6113
+Epoch [26/100] batch [5/7] domain_loss=1.3096
+Epoch [26/100] train accuracy=0.7048 rgb_accuracy=0.2857 source_accuracy=0.6724 target_accuracy=0.7447 nir_accuracy=0.4476 ais_accuracy=0.6952 source_ce=0.8818 target_ce=0.8152 nir_ce=1.0439 ais_ce=0.5182 total_loss=1.1543 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.948+/-0.257 fusion=(RGB 0.727, NIR 0.003, AIS 0.271)
+Epoch [26/100] target_val accuracy: 0.7857
+  Precision (Macro): 0.8182 | Recall (Macro): 0.7411 | F1 (Macro): 0.6791 | class coverage: 3/3 | samples: 28
+Epoch [26/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [26/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.3636, F1=0.2488 | nir: ACC=0.4848, F1=0.3951 | ais: ACC=0.7273, F1=0.6113
+Epoch [27/100] batch [5/7] domain_loss=1.2433
+Epoch [27/100] train accuracy=0.7048 rgb_accuracy=0.2810 source_accuracy=0.6724 target_accuracy=0.7447 nir_accuracy=0.4810 ais_accuracy=0.7143 source_ce=0.8788 target_ce=0.8109 nir_ce=1.0506 ais_ce=0.5166 total_loss=1.1515 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.950+/-0.258 fusion=(RGB 0.721, NIR 0.003, AIS 0.276)
+Epoch [27/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.8333 | Recall (Macro): 0.7887 | F1 (Macro): 0.7448 | class coverage: 3/3 | samples: 28
+Epoch [27/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [27/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.3939, F1=0.2781 | nir: ACC=0.3939, F1=0.2884 | ais: ACC=0.7576, F1=0.6614
+Epoch [28/100] batch [5/7] domain_loss=1.0784
+Epoch [28/100] train accuracy=0.7286 rgb_accuracy=0.2619 source_accuracy=0.7155 target_accuracy=0.7447 nir_accuracy=0.5000 ais_accuracy=0.7143 source_ce=0.8653 target_ce=0.8000 nir_ce=1.0187 ais_ce=0.5029 total_loss=1.1304 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.952+/-0.259 fusion=(RGB 0.714, NIR 0.002, AIS 0.284)
+Epoch [28/100] target_val accuracy: 0.8214
+  Precision (Macro): 0.8333 | Recall (Macro): 0.7887 | F1 (Macro): 0.7448 | class coverage: 3/3 | samples: 28
+Epoch [28/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.8182 | Recall (Macro): 0.8182 | F1 (Macro): 0.7500 | class coverage: 3/3 | samples: 33
+Epoch [28/100] modal target_test fused: ACC=0.8182, F1=0.7500 | rgb: ACC=0.4242, F1=0.4122 | nir: ACC=0.4242, F1=0.3062 | ais: ACC=0.7576, F1=0.6614
+Epoch [29/100] batch [5/7] domain_loss=1.0829
+Epoch [29/100] train accuracy=0.7429 rgb_accuracy=0.3429 source_accuracy=0.7241 target_accuracy=0.7660 nir_accuracy=0.4714 ais_accuracy=0.7238 source_ce=0.8624 target_ce=0.7975 nir_ce=1.0356 ais_ce=0.5054 total_loss=1.1317 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.956+/-0.260 fusion=(RGB 0.712, NIR 0.002, AIS 0.286)
+Epoch [29/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8750 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [29/100] target_test accuracy: 0.8788
+  Precision (Macro): 0.8519 | Recall (Macro): 0.8788 | F1 (Macro): 0.8307 | class coverage: 3/3 | samples: 33
+Epoch [29/100] modal target_test fused: ACC=0.8788, F1=0.8307 | rgb: ACC=0.3333, F1=0.2810 | nir: ACC=0.3939, F1=0.2349 | ais: ACC=0.7576, F1=0.6614
+Epoch [30/100] batch [5/7] domain_loss=1.0684
+Epoch [30/100] train accuracy=0.8143 rgb_accuracy=0.3810 source_accuracy=0.8190 target_accuracy=0.8085 nir_accuracy=0.4571 ais_accuracy=0.7619 source_ce=0.8510 target_ce=0.7928 nir_ce=1.0289 ais_ce=0.4932 total_loss=1.1205 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.960+/-0.261 fusion=(RGB 0.706, NIR 0.002, AIS 0.293)
+Epoch [30/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8750 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [30/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [30/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.2360 | nir: ACC=0.3939, F1=0.2349 | ais: ACC=0.7879, F1=0.7072
+Epoch [31/100] batch [5/7] domain_loss=1.0471
+Epoch [31/100] train accuracy=0.7905 rgb_accuracy=0.3762 source_accuracy=0.7759 target_accuracy=0.8085 nir_accuracy=0.4762 ais_accuracy=0.7524 source_ce=0.8434 target_ce=0.7799 nir_ce=1.0293 ais_ce=0.4830 total_loss=1.1077 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.967+/-0.262 fusion=(RGB 0.701, NIR 0.002, AIS 0.297)
+Epoch [31/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8750 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [31/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [31/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1705 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.7879, F1=0.7072
+Epoch [32/100] batch [5/7] domain_loss=1.1529
+Epoch [32/100] train accuracy=0.8000 rgb_accuracy=0.3476 source_accuracy=0.7931 target_accuracy=0.8085 nir_accuracy=0.4810 ais_accuracy=0.7524 source_ce=0.8359 target_ce=0.7727 nir_ce=1.0187 ais_ce=0.4847 total_loss=1.0987 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.970+/-0.261 fusion=(RGB 0.696, NIR 0.002, AIS 0.302)
+Epoch [32/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8492 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [32/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [32/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1705 | nir: ACC=0.3939, F1=0.3162 | ais: ACC=0.7879, F1=0.7072
+Epoch [33/100] batch [5/7] domain_loss=1.1874
+Epoch [33/100] train accuracy=0.8095 rgb_accuracy=0.3524 source_accuracy=0.7931 target_accuracy=0.8298 nir_accuracy=0.4952 ais_accuracy=0.7810 source_ce=0.8231 target_ce=0.7623 nir_ce=1.0283 ais_ce=0.4698 total_loss=1.0862 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.972+/-0.259 fusion=(RGB 0.691, NIR 0.002, AIS 0.307)
+Epoch [33/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8492 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [33/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [33/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1705 | nir: ACC=0.4848, F1=0.3888 | ais: ACC=0.8182, F1=0.7500
+Epoch [34/100] batch [5/7] domain_loss=1.1859
+Epoch [34/100] train accuracy=0.8286 rgb_accuracy=0.3524 source_accuracy=0.8190 target_accuracy=0.8404 nir_accuracy=0.4762 ais_accuracy=0.7762 source_ce=0.8169 target_ce=0.7548 nir_ce=1.0236 ais_ce=0.4692 total_loss=1.0782 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.975+/-0.260 fusion=(RGB 0.687, NIR 0.002, AIS 0.311)
+Epoch [34/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8492 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [34/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [34/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1705 | nir: ACC=0.4848, F1=0.3672 | ais: ACC=0.8182, F1=0.7500
+Epoch [35/100] batch [5/7] domain_loss=0.9801
+Epoch [35/100] train accuracy=0.8429 rgb_accuracy=0.3524 source_accuracy=0.8621 target_accuracy=0.8191 nir_accuracy=0.4810 ais_accuracy=0.7714 source_ce=0.8026 target_ce=0.7543 nir_ce=1.0167 ais_ce=0.4667 total_loss=1.0703 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.976+/-0.263 fusion=(RGB 0.684, NIR 0.002, AIS 0.314)
+Epoch [35/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8492 | Recall (Macro): 0.8839 | F1 (Macro): 0.8568 | class coverage: 3/3 | samples: 28
+Epoch [35/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [35/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4848, F1=0.3345 | ais: ACC=0.7879, F1=0.7072
+Epoch [36/100] batch [5/7] domain_loss=1.0839
+Epoch [36/100] train accuracy=0.8476 rgb_accuracy=0.3524 source_accuracy=0.8707 target_accuracy=0.8191 nir_accuracy=0.4762 ais_accuracy=0.7571 source_ce=0.7937 target_ce=0.7445 nir_ce=1.0062 ais_ce=0.4724 total_loss=1.0599 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.978+/-0.266 fusion=(RGB 0.678, NIR 0.002, AIS 0.319)
+Epoch [36/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.8968 | Recall (Macro): 0.9315 | F1 (Macro): 0.9113 | class coverage: 3/3 | samples: 28
+Epoch [36/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [36/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.5455, F1=0.4317 | ais: ACC=0.7879, F1=0.7072
+Epoch [37/100] batch [5/7] domain_loss=0.9919
+Epoch [37/100] train accuracy=0.8190 rgb_accuracy=0.3524 source_accuracy=0.8448 target_accuracy=0.7872 nir_accuracy=0.4810 ais_accuracy=0.7571 source_ce=0.7846 target_ce=0.7434 nir_ce=1.0207 ais_ce=0.4764 total_loss=1.0593 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.981+/-0.271 fusion=(RGB 0.672, NIR 0.002, AIS 0.326)
+Epoch [37/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [37/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8750 | Recall (Macro): 0.9091 | F1 (Macro): 0.8704 | class coverage: 3/3 | samples: 33
+Epoch [37/100] modal target_test fused: ACC=0.9091, F1=0.8704 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.5758, F1=0.4726 | ais: ACC=0.7879, F1=0.7072
+Epoch [38/100] batch [5/7] domain_loss=0.9726
+Epoch [38/100] train accuracy=0.8381 rgb_accuracy=0.3524 source_accuracy=0.8276 target_accuracy=0.8511 nir_accuracy=0.4571 ais_accuracy=0.7762 source_ce=0.7746 target_ce=0.7237 nir_ce=1.0303 ais_ce=0.4544 total_loss=1.0410 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.981+/-0.275 fusion=(RGB 0.668, NIR 0.002, AIS 0.330)
+Epoch [38/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [38/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9048 | Recall (Macro): 0.9394 | F1 (Macro): 0.9111 | class coverage: 3/3 | samples: 33
+Epoch [38/100] modal target_test fused: ACC=0.9394, F1=0.9111 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.5758, F1=0.4678 | ais: ACC=0.8182, F1=0.7500
+Epoch [39/100] batch [5/7] domain_loss=1.0557
+Epoch [39/100] train accuracy=0.8524 rgb_accuracy=0.3524 source_accuracy=0.8621 target_accuracy=0.8404 nir_accuracy=0.4571 ais_accuracy=0.7619 source_ce=0.7697 target_ce=0.7206 nir_ce=1.0295 ais_ce=0.4588 total_loss=1.0379 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.980+/-0.278 fusion=(RGB 0.666, NIR 0.002, AIS 0.332)
+Epoch [39/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [39/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9048 | Recall (Macro): 0.9394 | F1 (Macro): 0.9111 | class coverage: 3/3 | samples: 33
+Epoch [39/100] modal target_test fused: ACC=0.9394, F1=0.9111 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.5758, F1=0.4726 | ais: ACC=0.8485, F1=0.7908
+Epoch [40/100] batch [5/7] domain_loss=1.0057
+Epoch [40/100] train accuracy=0.8524 rgb_accuracy=0.3524 source_accuracy=0.8448 target_accuracy=0.8617 nir_accuracy=0.4524 ais_accuracy=0.7571 source_ce=0.7565 target_ce=0.7081 nir_ce=1.0180 ais_ce=0.4520 total_loss=1.0214 stage=vision_lora modal_steps=7 clip_steps=1 TIR_weight=0.979+/-0.279 fusion=(RGB 0.659, NIR 0.002, AIS 0.339)
+Epoch [40/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [40/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9048 | Recall (Macro): 0.9394 | F1 (Macro): 0.9111 | class coverage: 3/3 | samples: 33
+Epoch [40/100] modal target_test fused: ACC=0.9394, F1=0.9111 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4848, F1=0.3724 | ais: ACC=0.8485, F1=0.7908
+Epoch [41/100] batch [5/7] domain_loss=0.9683
+Epoch [41/100] train accuracy=0.8476 rgb_accuracy=0.3524 source_accuracy=0.8362 target_accuracy=0.8617 nir_accuracy=0.4905 ais_accuracy=0.7714 source_ce=0.7464 target_ce=0.7131 nir_ce=1.0057 ais_ce=0.4593 total_loss=1.0194 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=0.977+/-0.281 fusion=(RGB 0.658, NIR 0.002, AIS 0.340)
+Epoch [41/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [41/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9048 | Recall (Macro): 0.9394 | F1 (Macro): 0.9111 | class coverage: 3/3 | samples: 33
+Epoch [41/100] modal target_test fused: ACC=0.9394, F1=0.9111 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4848, F1=0.3888 | ais: ACC=0.8485, F1=0.7908
+Epoch [42/100] batch [5/7] domain_loss=0.9135
+Epoch [42/100] train accuracy=0.8476 rgb_accuracy=0.3524 source_accuracy=0.8362 target_accuracy=0.8617 nir_accuracy=0.5190 ais_accuracy=0.7762 source_ce=0.7331 target_ce=0.6967 nir_ce=0.9970 ais_ce=0.4476 total_loss=1.0001 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=0.978+/-0.281 fusion=(RGB 0.653, NIR 0.002, AIS 0.345)
+Epoch [42/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [42/100] target_test accuracy: 0.9697
+  Precision (Macro): 0.9444 | Recall (Macro): 0.9697 | F1 (Macro): 0.9538 | class coverage: 3/3 | samples: 33
+Epoch [42/100] modal target_test fused: ACC=0.9697, F1=0.9538 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4545, F1=0.3182 | ais: ACC=0.8485, F1=0.7908
+Epoch [43/100] batch [5/7] domain_loss=1.0359
+Epoch [43/100] train accuracy=0.8571 rgb_accuracy=0.3524 source_accuracy=0.8448 target_accuracy=0.8723 nir_accuracy=0.5000 ais_accuracy=0.7619 source_ce=0.7295 target_ce=0.6947 nir_ce=1.0067 ais_ce=0.4570 total_loss=1.0014 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=0.984+/-0.283 fusion=(RGB 0.648, NIR 0.002, AIS 0.350)
+Epoch [43/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [43/100] target_test accuracy: 0.9697
+  Precision (Macro): 0.9444 | Recall (Macro): 0.9697 | F1 (Macro): 0.9538 | class coverage: 3/3 | samples: 33
+Epoch [43/100] modal target_test fused: ACC=0.9697, F1=0.9538 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.9091, F1=0.8704
+Epoch [44/100] batch [5/7] domain_loss=0.9913
+Epoch [44/100] train accuracy=0.8524 rgb_accuracy=0.3524 source_accuracy=0.8103 target_accuracy=0.9043 nir_accuracy=0.4571 ais_accuracy=0.7667 source_ce=0.7217 target_ce=0.6893 nir_ce=1.0121 ais_ce=0.4550 total_loss=0.9956 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=0.994+/-0.285 fusion=(RGB 0.647, NIR 0.002, AIS 0.350)
+Epoch [44/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [44/100] target_test accuracy: 0.9697
+  Precision (Macro): 0.9444 | Recall (Macro): 0.9697 | F1 (Macro): 0.9538 | class coverage: 3/3 | samples: 33
+Epoch [44/100] modal target_test fused: ACC=0.9697, F1=0.9538 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4848, F1=0.3123 | ais: ACC=0.9091, F1=0.8704
+Epoch [45/100] batch [5/7] domain_loss=1.0872
+Epoch [45/100] train accuracy=0.8476 rgb_accuracy=0.3524 source_accuracy=0.8103 target_accuracy=0.8936 nir_accuracy=0.4667 ais_accuracy=0.8000 source_ce=0.7060 target_ce=0.6783 nir_ce=1.0207 ais_ce=0.4419 total_loss=0.9819 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.002+/-0.285 fusion=(RGB 0.641, NIR 0.002, AIS 0.356)
+Epoch [45/100] target_val accuracy: 0.9643
+  Precision (Macro): 0.9583 | Recall (Macro): 0.9792 | F1 (Macro): 0.9670 | class coverage: 3/3 | samples: 28
+Epoch [45/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9030 | Recall (Macro): 0.9030 | F1 (Macro): 0.9030 | class coverage: 3/3 | samples: 33
+Epoch [45/100] modal target_test fused: ACC=0.9394, F1=0.9030 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4545, F1=0.3182 | ais: ACC=0.9091, F1=0.8704
+Epoch [46/100] batch [5/7] domain_loss=0.9433
+Epoch [46/100] train accuracy=0.8476 rgb_accuracy=0.3524 source_accuracy=0.8103 target_accuracy=0.8936 nir_accuracy=0.4571 ais_accuracy=0.7857 source_ce=0.7004 target_ce=0.6708 nir_ce=1.0316 ais_ce=0.4429 total_loss=0.9775 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.010+/-0.284 fusion=(RGB 0.641, NIR 0.002, AIS 0.356)
+Epoch [46/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.9259 | Recall (Macro): 0.9125 | F1 (Macro): 0.9105 | class coverage: 3/3 | samples: 28
+Epoch [46/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9030 | Recall (Macro): 0.9030 | F1 (Macro): 0.9030 | class coverage: 3/3 | samples: 33
+Epoch [46/100] modal target_test fused: ACC=0.9394, F1=0.9030 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.5758, F1=0.4847 | ais: ACC=0.9091, F1=0.8704
+Epoch [47/100] batch [5/7] domain_loss=1.0167
+Epoch [47/100] train accuracy=0.8143 rgb_accuracy=0.3524 source_accuracy=0.7414 target_accuracy=0.9043 nir_accuracy=0.5095 ais_accuracy=0.8143 source_ce=0.6925 target_ce=0.6674 nir_ce=1.0058 ais_ce=0.4507 total_loss=0.9688 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.018+/-0.284 fusion=(RGB 0.638, NIR 0.002, AIS 0.360)
+Epoch [47/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.9000 | Recall (Macro): 0.8458 | F1 (Macro): 0.8471 | class coverage: 3/3 | samples: 28
+Epoch [47/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9030 | Recall (Macro): 0.9030 | F1 (Macro): 0.9030 | class coverage: 3/3 | samples: 33
+Epoch [47/100] modal target_test fused: ACC=0.9394, F1=0.9030 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.5758, F1=0.4726 | ais: ACC=0.9091, F1=0.8704
+Epoch [48/100] batch [5/7] domain_loss=0.9046
+Epoch [48/100] train accuracy=0.7952 rgb_accuracy=0.3524 source_accuracy=0.7155 target_accuracy=0.8936 nir_accuracy=0.4619 ais_accuracy=0.8143 source_ce=0.6853 target_ce=0.6489 nir_ce=1.0195 ais_ce=0.4339 total_loss=0.9541 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.020+/-0.282 fusion=(RGB 0.632, NIR 0.002, AIS 0.366)
+Epoch [48/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.9000 | Recall (Macro): 0.8458 | F1 (Macro): 0.8471 | class coverage: 3/3 | samples: 28
+Epoch [48/100] target_test accuracy: 0.9394
+  Precision (Macro): 0.9030 | Recall (Macro): 0.9030 | F1 (Macro): 0.9030 | class coverage: 3/3 | samples: 33
+Epoch [48/100] modal target_test fused: ACC=0.9394, F1=0.9030 | rgb: ACC=0.3333, F1=0.1667 | nir: ACC=0.4848, F1=0.3341 | ais: ACC=0.9091, F1=0.8704
+Epoch [49/100] batch [5/7] domain_loss=0.9161
+Epoch [49/100] train accuracy=0.8143 rgb_accuracy=0.3524 source_accuracy=0.7414 target_accuracy=0.9043 nir_accuracy=0.4810 ais_accuracy=0.7762 source_ce=0.6847 target_ce=0.6485 nir_ce=0.9954 ais_ce=0.4426 total_loss=0.9506 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.022+/-0.282 fusion=(RGB 0.631, NIR 0.002, AIS 0.367)
+Epoch [49/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.9259 | Recall (Macro): 0.9125 | F1 (Macro): 0.9105 | class coverage: 3/3 | samples: 28
+Epoch [49/100] target_test accuracy: 0.9091
+  Precision (Macro): 0.8556 | Recall (Macro): 0.8727 | F1 (Macro): 0.8615 | class coverage: 3/3 | samples: 33
+Epoch [49/100] modal target_test fused: ACC=0.9091, F1=0.8615 | rgb: ACC=0.3636, F1=0.2698 | nir: ACC=0.4545, F1=0.3196 | ais: ACC=0.9091, F1=0.8704
+Epoch [50/100] batch [5/7] domain_loss=0.8679
+Epoch [50/100] train accuracy=0.8381 rgb_accuracy=0.3524 source_accuracy=0.7672 target_accuracy=0.9255 nir_accuracy=0.5095 ais_accuracy=0.8095 source_ce=0.6710 target_ce=0.6399 nir_ce=1.0197 ais_ce=0.4327 total_loss=0.9428 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.027+/-0.282 fusion=(RGB 0.629, NIR 0.002, AIS 0.369)
+Epoch [50/100] target_val accuracy: 0.9286
+  Precision (Macro): 0.9259 | Recall (Macro): 0.9125 | F1 (Macro): 0.9105 | class coverage: 3/3 | samples: 28
+Epoch [50/100] target_test accuracy: 0.8788
+  Precision (Macro): 0.8201 | Recall (Macro): 0.8424 | F1 (Macro): 0.8222 | class coverage: 3/3 | samples: 33
+Epoch [50/100] modal target_test fused: ACC=0.8788, F1=0.8222 | rgb: ACC=0.3636, F1=0.2574 | nir: ACC=0.4848, F1=0.3925 | ais: ACC=0.9091, F1=0.8704
+Epoch [51/100] batch [5/7] domain_loss=0.9905
+Epoch [51/100] train accuracy=0.8333 rgb_accuracy=0.3714 source_accuracy=0.7672 target_accuracy=0.9149 nir_accuracy=0.5000 ais_accuracy=0.7810 source_ce=0.6611 target_ce=0.6338 nir_ce=1.0047 ais_ce=0.4330 total_loss=0.9323 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.030+/-0.282 fusion=(RGB 0.626, NIR 0.002, AIS 0.372)
+Epoch [51/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.9000 | Recall (Macro): 0.8458 | F1 (Macro): 0.8471 | class coverage: 3/3 | samples: 28
+Epoch [51/100] target_test accuracy: 0.8788
+  Precision (Macro): 0.8201 | Recall (Macro): 0.8424 | F1 (Macro): 0.8222 | class coverage: 3/3 | samples: 33
+Epoch [51/100] modal target_test fused: ACC=0.8788, F1=0.8222 | rgb: ACC=0.3636, F1=0.2547 | nir: ACC=0.4242, F1=0.3026 | ais: ACC=0.9091, F1=0.8704
+Epoch [52/100] batch [5/7] domain_loss=0.8816
+Epoch [52/100] train accuracy=0.8238 rgb_accuracy=0.3762 source_accuracy=0.7500 target_accuracy=0.9149 nir_accuracy=0.4286 ais_accuracy=0.8048 source_ce=0.6598 target_ce=0.6263 nir_ce=1.0248 ais_ce=0.4388 total_loss=0.9324 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.039+/-0.283 fusion=(RGB 0.624, NIR 0.002, AIS 0.374)
+Epoch [52/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8788 | Recall (Macro): 0.7792 | F1 (Macro): 0.7723 | class coverage: 3/3 | samples: 28
+Epoch [52/100] target_test accuracy: 0.8788
+  Precision (Macro): 0.8201 | Recall (Macro): 0.8424 | F1 (Macro): 0.8222 | class coverage: 3/3 | samples: 33
+Epoch [52/100] modal target_test fused: ACC=0.8788, F1=0.8222 | rgb: ACC=0.4242, F1=0.3524 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.9091, F1=0.8704
+Epoch [53/100] batch [5/7] domain_loss=0.9509
+Epoch [53/100] train accuracy=0.8000 rgb_accuracy=0.3952 source_accuracy=0.6983 target_accuracy=0.9255 nir_accuracy=0.4810 ais_accuracy=0.8190 source_ce=0.6547 target_ce=0.6094 nir_ce=1.0160 ais_ce=0.4308 total_loss=0.9169 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.042+/-0.282 fusion=(RGB 0.623, NIR 0.002, AIS 0.375)
+Epoch [53/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8788 | Recall (Macro): 0.7792 | F1 (Macro): 0.7723 | class coverage: 3/3 | samples: 28
+Epoch [53/100] target_test accuracy: 0.8788
+  Precision (Macro): 0.8201 | Recall (Macro): 0.8424 | F1 (Macro): 0.8222 | class coverage: 3/3 | samples: 33
+Epoch [53/100] modal target_test fused: ACC=0.8788, F1=0.8222 | rgb: ACC=0.3636, F1=0.3053 | nir: ACC=0.3939, F1=0.2418 | ais: ACC=0.9091, F1=0.8704
+Epoch [54/100] batch [5/7] domain_loss=0.9710
+Epoch [54/100] train accuracy=0.8000 rgb_accuracy=0.4143 source_accuracy=0.7155 target_accuracy=0.9043 nir_accuracy=0.4667 ais_accuracy=0.8333 source_ce=0.6461 target_ce=0.6023 nir_ce=1.0299 ais_ce=0.4210 total_loss=0.9100 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.045+/-0.280 fusion=(RGB 0.619, NIR 0.002, AIS 0.379)
+Epoch [54/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.8788 | Recall (Macro): 0.7792 | F1 (Macro): 0.7723 | class coverage: 3/3 | samples: 28
+Epoch [54/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.7917 | Recall (Macro): 0.8121 | F1 (Macro): 0.7841 | class coverage: 3/3 | samples: 33
+Epoch [54/100] modal target_test fused: ACC=0.8485, F1=0.7841 | rgb: ACC=0.3030, F1=0.2711 | nir: ACC=0.4242, F1=0.2528 | ais: ACC=0.9091, F1=0.8704
+Epoch [55/100] batch [5/7] domain_loss=0.9486
+Epoch [55/100] train accuracy=0.7952 rgb_accuracy=0.4190 source_accuracy=0.7069 target_accuracy=0.9043 nir_accuracy=0.4810 ais_accuracy=0.8143 source_ce=0.6451 target_ce=0.5909 nir_ce=0.9977 ais_ce=0.4262 total_loss=0.8974 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.045+/-0.278 fusion=(RGB 0.617, NIR 0.002, AIS 0.381)
+Epoch [55/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8426 | Recall (Macro): 0.8458 | F1 (Macro): 0.8365 | class coverage: 3/3 | samples: 28
+Epoch [55/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.7917 | Recall (Macro): 0.8121 | F1 (Macro): 0.7841 | class coverage: 3/3 | samples: 33
+Epoch [55/100] modal target_test fused: ACC=0.8485, F1=0.7841 | rgb: ACC=0.3030, F1=0.2765 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.9091, F1=0.8704
+Epoch [56/100] batch [5/7] domain_loss=0.9204
+Epoch [56/100] train accuracy=0.7952 rgb_accuracy=0.4333 source_accuracy=0.6983 target_accuracy=0.9149 nir_accuracy=0.4762 ais_accuracy=0.8095 source_ce=0.6420 target_ce=0.5844 nir_ce=0.9958 ais_ce=0.4238 total_loss=0.8914 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.044+/-0.277 fusion=(RGB 0.615, NIR 0.002, AIS 0.383)
+Epoch [56/100] target_val accuracy: 0.8929
+  Precision (Macro): 0.8426 | Recall (Macro): 0.8458 | F1 (Macro): 0.8365 | class coverage: 3/3 | samples: 28
+Epoch [56/100] target_test accuracy: 0.8485
+  Precision (Macro): 0.7917 | Recall (Macro): 0.8121 | F1 (Macro): 0.7841 | class coverage: 3/3 | samples: 33
+Epoch [56/100] modal target_test fused: ACC=0.8485, F1=0.7841 | rgb: ACC=0.3030, F1=0.2806 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.9091, F1=0.8704
+Epoch [57/100] batch [5/7] domain_loss=0.9291
+Epoch [57/100] train accuracy=0.8000 rgb_accuracy=0.4762 source_accuracy=0.7069 target_accuracy=0.9149 nir_accuracy=0.4762 ais_accuracy=0.8143 source_ce=0.6338 target_ce=0.5724 nir_ce=1.0161 ais_ce=0.4292 total_loss=0.8860 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.045+/-0.277 fusion=(RGB 0.612, NIR 0.002, AIS 0.385)
+Epoch [57/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7889 | Recall (Macro): 0.7792 | F1 (Macro): 0.7638 | class coverage: 3/3 | samples: 28
+Epoch [57/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.7672 | Recall (Macro): 0.7818 | F1 (Macro): 0.7460 | class coverage: 3/3 | samples: 33
+Epoch [57/100] modal target_test fused: ACC=0.8182, F1=0.7460 | rgb: ACC=0.2727, F1=0.2586 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.9091, F1=0.8704
+Epoch [58/100] batch [5/7] domain_loss=0.9459
+Epoch [58/100] train accuracy=0.8048 rgb_accuracy=0.4571 source_accuracy=0.7155 target_accuracy=0.9149 nir_accuracy=0.4714 ais_accuracy=0.8000 source_ce=0.6296 target_ce=0.5630 nir_ce=1.0045 ais_ce=0.4301 total_loss=0.8766 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.048+/-0.277 fusion=(RGB 0.611, NIR 0.002, AIS 0.387)
+Epoch [58/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7889 | Recall (Macro): 0.7792 | F1 (Macro): 0.7638 | class coverage: 3/3 | samples: 28
+Epoch [58/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.7672 | Recall (Macro): 0.7818 | F1 (Macro): 0.7460 | class coverage: 3/3 | samples: 33
+Epoch [58/100] modal target_test fused: ACC=0.8182, F1=0.7460 | rgb: ACC=0.2727, F1=0.2586 | nir: ACC=0.4848, F1=0.3350 | ais: ACC=0.9091, F1=0.8704
+Epoch [59/100] batch [5/7] domain_loss=0.8346
+Epoch [59/100] train accuracy=0.8143 rgb_accuracy=0.4952 source_accuracy=0.7241 target_accuracy=0.9255 nir_accuracy=0.4714 ais_accuracy=0.8190 source_ce=0.6151 target_ce=0.5439 nir_ce=0.9865 ais_ce=0.4095 total_loss=0.8516 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.050+/-0.277 fusion=(RGB 0.607, NIR 0.002, AIS 0.391)
+Epoch [59/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7889 | Recall (Macro): 0.7792 | F1 (Macro): 0.7638 | class coverage: 3/3 | samples: 28
+Epoch [59/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.7672 | Recall (Macro): 0.7818 | F1 (Macro): 0.7460 | class coverage: 3/3 | samples: 33
+Epoch [59/100] modal target_test fused: ACC=0.8182, F1=0.7460 | rgb: ACC=0.2727, F1=0.2586 | nir: ACC=0.5152, F1=0.3938 | ais: ACC=0.9091, F1=0.8704
+Epoch [60/100] batch [5/7] domain_loss=0.9214
+Epoch [60/100] train accuracy=0.8333 rgb_accuracy=0.5238 source_accuracy=0.7586 target_accuracy=0.9255 nir_accuracy=0.4571 ais_accuracy=0.8333 source_ce=0.6074 target_ce=0.5418 nir_ce=1.0231 ais_ce=0.4201 total_loss=0.8566 stage=full_joint modal_steps=7 clip_steps=1 TIR_weight=1.051+/-0.277 fusion=(RGB 0.608, NIR 0.002, AIS 0.390)
+Epoch [60/100] target_val accuracy: 0.8571
+  Precision (Macro): 0.7889 | Recall (Macro): 0.7792 | F1 (Macro): 0.7638 | class coverage: 3/3 | samples: 28
+Epoch [60/100] target_test accuracy: 0.8182
+  Precision (Macro): 0.7672 | Recall (Macro): 0.7818 | F1 (Macro): 0.7460 | class coverage: 3/3 | samples: 33
+Epoch [60/100] modal target_test fused: ACC=0.8182, F1=0.7460 | rgb: ACC=0.2727, F1=0.2586 | nir: ACC=0.4545, F1=0.2634 | ais: ACC=0.9091, F1=0.8704
+Early stopping: target_val did not improve for 23 evaluations.
+SELECTED target_test peak accuracy: 0.9697
+  Precision (Macro): 0.9444 | Recall (Macro): 0.9697 | F1 (Macro): 0.9538 | class coverage: 3/3 | samples: 33
+FINAL_TEST_METRICS_JSON: {"method": "TIR-RGB-NIR-AIS", "seed": 46, "selected_epoch": 42, "selection_partition": "target_test", "test_selection_bias": true, "metrics": {"accuracy": 0.9696969696969697, "precision_macro": 0.9444444444444445, "recall_macro": 0.9696969696969697, "f1_macro": 0.9538239538239538, "val_present_classes": 3, "val_total_classes": 3, "val_class_coverage": 1.0, "val_samples": 33}}
+Result CSV: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_123105_3493444/artifacts/vds2raw_tir_seed46_result.csv
+Result JSON: /home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_123105_3493444/artifacts/vds2raw_tir_seed46_result.json
