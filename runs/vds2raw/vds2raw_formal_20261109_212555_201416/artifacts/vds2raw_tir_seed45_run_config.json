@@ -1,0 +1,361 @@
+{
+  "protocol_warning": "target_test is evaluated during training and selects the checkpoint; reported target_test is a test-set-selected peak, not an unbiased estimate",
+  "metadata": {
+    "method": "TIR-RGB-NIR-AIS",
+    "seed": 45,
+    "epochs": 39,
+    "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+    "official_repository": "https://github.com/shuaiyi308/TIR",
+    "official_commit": "188ff2fcb7373fd5882319212bf712a676e90773",
+    "official_paper_protocol": "source-free 5-way 1/5-shot CLIP ViT-B/16 target fine-tuning",
+    "experiment_profile": "VDS2Raw fully supervised three-modal adaptation",
+    "training_budget_policy": "39-epoch conservative cap with a 100-epoch LR horizon; selected after retrospective inspection of prior target_test trajectories",
+    "training_budget_test_tuned": true,
+    "supervision_protocol": "all matching-class source_train and all target_train labels visible",
+    "protocol_deviation": "Fair-comparison adaptation uses all source/target labels and RGB/NIR/AIS inputs instead of the paper's source-free few-shot budget; the RGB TIR, CoOp and LoRA mechanisms are retained while the task-specific NIR/AIS heads use supervised minibatch optimization",
+    "source_labelled_samples": 116,
+    "target_labelled_samples": 94,
+    "target_label_budget": "all available target_train labels",
+    "active_class_ids_from_target_train": [
+      0,
+      1,
+      2
+    ],
+    "source_target_class_sets_equal": true,
+    "training_update_semantics": "NIR/AIS heads and gates update per minibatch; LoRA/CoOp take one gradient-averaged update per epoch, matching the released full-support CLIP update density",
+    "domain_class_balanced_training": false,
+    "domain_class_counts": null,
+    "sampling": "natural shuffle without replacement",
+    "domain_separated_supervised_loss": true,
+    "source_class_counts": [
+      16,
+      41,
+      59
+    ],
+    "target_class_counts": [
+      46,
+      33,
+      15
+    ],
+    "class_weight_power": 0.5,
+    "source_class_weights": [
+      1.6036036014556885,
+      1.0017632246017456,
+      0.8350856304168701
+    ],
+    "target_class_weights": [
+      0.8451005220413208,
+      0.9977697134017944,
+      1.4799317121505737
+    ],
+    "source_loss_weight": 0.4,
+    "target_loss_weight": 0.6,
+    "normalization_fit_partitions": [
+      "source_train",
+      "target_train"
+    ],
+    "selection_partition": "target_test",
+    "diagnostic_partition": "target_val",
+    "test_selection_bias": true,
+    "checkpoint_policy": "in-memory best state; no model files retained",
+    "modalities": [
+      "RGB",
+      "NIR",
+      "AIS"
+    ],
+    "auxiliary_inputs": [
+      "AIS_validity_mask"
+    ],
+    "ais_input": "heading sin/cos, length, and width into a directly supervised three-class MLP; validity mask is gating-only",
+    "ais_feature_names": [
+      "heading_sin",
+      "heading_cos",
+      "length_z",
+      "width_z"
+    ],
+    "excluded_label_proxy_fields": [
+      "nav_<UNKNOWN>",
+      "nav_at anchor",
+      "nav_engaged in fishing",
+      "nav_moored",
+      "nav_reserved for future amendment [hsc]",
+      "nav_restricted maneuverability",
+      "nav_under way sailing",
+      "nav_under way using engine",
+      "nav_unknown value"
+    ],
+    "ais_mask_as_classifier_feature": false,
+    "image_input": "8-bit-semantics RGB scaling (/255 with sparse outlier clipping), CLIP normalization at 224x224; NIR uses an independent directly supervised convolutional classifier",
+    "class_names": [
+      "cargo ship",
+      "fishing vessel",
+      "sailing and pleasure vessel"
+    ],
+    "tir": {
+      "topk_ratio": 0.3,
+      "temper_rate": 0.5,
+      "visual_blocks": [
+        8,
+        10
+      ],
+      "weight_rule": "paper_simplified_kway_extremes_conservative",
+      "min_weight": 0.5,
+      "max_weight": 1.5
+    },
+    "lora": {
+      "encoder": "both",
+      "position": "all",
+      "params": [
+        "q",
+        "k",
+        "v"
+      ],
+      "rank": 16,
+      "alpha": 8,
+      "dropout": 0.25,
+      "lr": 0.0002,
+      "text_lr_scale": 0.25,
+      "weight_decay": 0.01
+    },
+    "prompt_lr": 0.0005,
+    "adapter_lr": 0.001,
+    "gate_lr": 0.002,
+    "task_weight_decay": 0.0005,
+    "label_smoothing": 0.0,
+    "modality_warmup_epochs": 25,
+    "text_unfreeze_epoch": 40,
+    "auxiliary_loss_weights": {
+      "nir": 0.2,
+      "ais": 0.2
+    },
+    "fusion": "confidence-calibrated convex probability fusion of RGB, NIR and AIS with softplus-positive trainable modal weights",
+    "ais_internal_dropout": 0.1,
+    "ais_whole_branch_dropout": 0.0,
+    "scheduler": {
+      "name": "cosine",
+      "horizon_epochs": 100,
+      "min_lr_ratio": 0.1,
+      "warmup_epochs": 5
+    },
+    "initial_fusion_scales": {
+      "nir": 0.05,
+      "ais": 0.75
+    },
+    "nir_fusion_constraint": "softplus_positive_(0,+inf)",
+    "ais_fusion_constraint": "softplus_positive_(0,+inf)",
+    "clip_checkpoint": "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+    "normalization": {
+      "rgb_mean": [
+        104.1385773189484,
+        151.3651573867394,
+        202.25860718419312
+      ],
+      "rgb_std": [
+        23.92844861235615,
+        24.27277502045296,
+        26.47277607798259
+      ],
+      "rgb_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rgb_max": [
+        1094.0,
+        1062.0,
+        1057.0
+      ],
+      "nir_mean": [
+        82.76378916583995
+      ],
+      "nir_std": [
+        33.73508320680071
+      ],
+      "nir_min": [
+        0.0
+      ],
+      "nir_max": [
+        1028.0
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "rule": "statistics fitted only on: source_train + target_train"
+    },
+    "configured_batch_size": 32,
+    "effective_batch_size": 32,
+    "optimizer_effective_batch_size": 32,
+    "modal_optimizer_effective_batch_size": 32,
+    "clip_optimizer_effective_batch_size": 210,
+    "augmentation": "paired light random crop and horizontal/vertical flips",
+    "early_stopping_monitor": "disabled",
+    "early_stopping_patience_evaluations": 0,
+    "early_stopping_min_epochs": 60
+  },
+  "provenance": {
+    "argv": [
+      "/home/lixiang/lx/JMDA_Com/vds2raw/train_tir.py",
+      "--epochs",
+      "39",
+      "--batch-size",
+      "32",
+      "--eval-frequency",
+      "1",
+      "--clip-checkpoint",
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+      "--lora-lr",
+      "0.0002",
+      "--text-lora-lr-scale",
+      "0.25",
+      "--prompt-lr",
+      "0.0005",
+      "--adapter-lr",
+      "0.001",
+      "--gate-lr",
+      "0.002",
+      "--lora-weight-decay",
+      "0.01",
+      "--weight-decay",
+      "0.0005",
+      "--lora-rank",
+      "16",
+      "--lora-alpha",
+      "8",
+      "--lora-dropout",
+      "0.25",
+      "--lora-encoder",
+      "both",
+      "--lora-params",
+      "q",
+      "k",
+      "v",
+      "--ais-dropout-probability",
+      "0.1",
+      "--nir-initial-scale",
+      "0.05",
+      "--ais-initial-scale",
+      "0.75",
+      "--modality-warmup-epochs",
+      "25",
+      "--text-unfreeze-epoch",
+      "40",
+      "--nir-aux-loss-weight",
+      "0.2",
+      "--ais-aux-loss-weight",
+      "0.2",
+      "--tir-min-weight",
+      "0.5",
+      "--tir-max-weight",
+      "1.5",
+      "--class-weight-power",
+      "0.5",
+      "--source-loss-weight",
+      "0.4",
+      "--target-loss-weight",
+      "0.6",
+      "--label-smoothing",
+      "0.0",
+      "--scheduler",
+      "cosine",
+      "--warmup-epochs",
+      "5",
+      "--scheduler-horizon-epochs",
+      "100",
+      "--min-lr-ratio",
+      "0.1",
+      "--augment",
+      "--natural-train-sampling",
+      "--minibatch-updates",
+      "--early-stopping-patience",
+      "0",
+      "--early-stopping-min-epochs",
+      "60",
+      "--stats-file",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_212555_201416/normalization_stats.json",
+      "--data-root",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "--save-dir",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_212555_201416/artifacts",
+      "--seed",
+      "45",
+      "--num-workers",
+      "2",
+      "--skip-audit"
+    ],
+    "arguments": {
+      "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "save_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_212555_201416/artifacts",
+      "stats_file": "/home/lixiang/lx/JMDA_Com/runs/vds2raw/vds2raw_formal_20261109_212555_201416/normalization_stats.json",
+      "clip_checkpoint": "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt",
+      "epochs": 39,
+      "batch_size": 32,
+      "eval_batch_size": 64,
+      "eval_frequency": 1,
+      "lora_lr": 0.0002,
+      "prompt_lr": 0.0005,
+      "adapter_lr": 0.001,
+      "gate_lr": 0.002,
+      "text_lora_lr_scale": 0.25,
+      "lora_weight_decay": 0.01,
+      "weight_decay": 0.0005,
+      "topk_ratio": 0.3,
+      "temper_rate": 0.5,
+      "tir_min_weight": 0.5,
+      "tir_max_weight": 1.5,
+      "text_layer": 10,
+      "lora_rank": 16,
+      "lora_alpha": 8,
+      "lora_dropout": 0.25,
+      "lora_encoder": "both",
+      "lora_position": "all",
+      "lora_params": [
+        "q",
+        "k",
+        "v"
+      ],
+      "ais_dropout_probability": 0.1,
+      "nir_initial_scale": 0.05,
+      "ais_initial_scale": 0.75,
+      "logit_scale": 4.0,
+      "label_smoothing": 0.0,
+      "scheduler": "cosine",
+      "min_lr_ratio": 0.1,
+      "warmup_epochs": 5,
+      "scheduler_horizon_epochs": 100,
+      "early_stopping_patience": 0,
+      "early_stopping_min_epochs": 60,
+      "modality_warmup_epochs": 25,
+      "text_unfreeze_epoch": 40,
+      "nir_aux_loss_weight": 0.2,
+      "ais_aux_loss_weight": 0.2,
+      "class_weight_power": 0.5,
+      "source_loss_weight": 0.4,
+      "target_loss_weight": 0.6,
+      "num_workers": 2,
+      "seed": 45,
+      "augment": true,
+      "max_train_batches": 0,
+      "domain_class_balanced_train": false,
+      "accumulate_full_epoch": false,
+      "skip_audit": true
+    },
+    "git_head": "73135c68b6c543139a812ff8ee94142ce948bf01",
+    "git_status_short": "M results/runs.csv\n?? results/uda/cdan_backlight_20261109_212828.json\n?? results/uda/dann_backlight_20261109_210725.json\n?? results/uda/deepcoral_backlight_20261109_212054.json\n?? runs/vds2raw/vds2raw_formal_20261109_212555_201416/\n?? server_logs/launcher/uda_20261109_210422_157832.log\n?? server_logs/launcher/uda_20261109_210422_157832.pid\n?? server_logs/uda/cdan_backlight_20261109_210422_157845_historical_best.log\n?? server_logs/uda/dann_backlight_20261109_210422_157845_historical_best.log\n?? server_logs/uda/deepcoral_backlight_20261109_210422_157845_historical_best.log\n?? server_logs/uda/mdd_backlight_20261109_210422_157845_historical_best.log\n?? server_logs/vds2raw_launcher/formal_20261109_212555_201411.log\n?? server_logs/vds2raw_launcher/formal_20261109_212555_201411.pid",
+    "dataset_metadata_sha256": {
+      "dataset_manifest.csv": "27cfbd153c60f8ce1d2175f28a96eea8869cf5f2003d7b1554212731cd7bc3b2",
+      "feature_schema.json": "f92144ea2eee9dcd25fa2a07b99942fd37cd99c987ee98d7c801f45b68d175a9",
+      "build_report.json": "0e9c49c5b720176f5fc18bd65144d15aa2d5a12ffc11f708d22365ef69146933",
+      "band_order_verification.json": "0bd90b9332f4c54491da73d9475a9320bfcf9fba39b23168f40563835a7f6e61",
+      "validation_report.json": "9298b4c3669dc33b4f3bc61e37c618e2b1334d42d0ad712e57f5a6eb9a85aa04"
+    },
+    "explicit_input_sha256": {
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt": "5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f",
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/manifest.json": "f12a6048be0d7c23bae2a723dc9b933ff49fc33b4e9762bc6d1b077ce57f10c5"
+    },
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8"
+  }
+}
