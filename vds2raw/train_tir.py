@@ -20,6 +20,7 @@ from TIR.vds2raw_adapter import (
     TIRVDS2Raw,
 )
 from tools.reproducibility import seed_everything
+from tools.classification_metrics import classification_metrics
 from vds2raw.common import (
     better_metrics,
     capture_selected_state,
@@ -165,6 +166,44 @@ def better_validation_metrics(candidate, incumbent):
     )
 
 
+def gradient_l2_norm(parameters):
+    """Return a synchronization-safe scalar gradient norm for diagnostics."""
+
+    squared = None
+    for parameter in parameters:
+        if parameter.grad is None:
+            continue
+        value = parameter.grad.detach().float().square().sum()
+        squared = value if squared is None else squared + value
+    return 0.0 if squared is None else float(squared.sqrt().cpu())
+
+
+def evaluate_tir_modalities(model, loader, device):
+    """Evaluate fused, RGB, NIR and AIS predictions on the same samples."""
+
+    model.eval()
+    labels = []
+    predictions = {name: [] for name in ("fused", "rgb", "nir", "ais")}
+    with torch.no_grad():
+        for batch in loader:
+            outputs = model(
+                batch["rgb"].to(device),
+                batch["nir"].to(device),
+                batch["ais"].to(device),
+                batch["ais_mask"].to(device),
+                labels=None,
+                compute_auxiliary=False,
+            )
+            truth = batch["label"].tolist()
+            labels.extend(truth)
+            for name, logits in zip(predictions, outputs):
+                predictions[name].extend(logits.argmax(1).cpu().tolist())
+    return {
+        name: classification_metrics(labels, values, num_classes=len(DEFAULT_CLASS_NAMES))
+        for name, values in predictions.items()
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Official TIR core with RGB+NIR+AIS VDS2Raw adapters"
@@ -191,15 +230,16 @@ def main():
         help="Evaluate target_val and target_test every epoch and select the peak.",
     )
     parser.add_argument("--lora-lr", type=float, default=2e-4)
-    parser.add_argument("--prompt-lr", type=float, default=2e-3)
+    parser.add_argument("--prompt-lr", type=float, default=5e-4)
     parser.add_argument("--adapter-lr", type=float, default=1e-3)
-    parser.add_argument("--gate-lr", type=float, default=1e-2)
+    parser.add_argument("--gate-lr", type=float, default=2e-3)
+    parser.add_argument("--text-lora-lr-scale", type=float, default=0.25)
     parser.add_argument("--lora-weight-decay", type=float, default=1e-2)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--topk-ratio", type=float, default=0.3)
     parser.add_argument("--temper-rate", type=float, default=0.5)
-    parser.add_argument("--tir-min-weight", type=float, default=0.0)
-    parser.add_argument("--tir-max-weight", type=float, default=2.0)
+    parser.add_argument("--tir-min-weight", type=float, default=0.5)
+    parser.add_argument("--tir-max-weight", type=float, default=1.5)
     parser.add_argument("--text-layer", type=int, default=10)
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=8)
@@ -215,8 +255,8 @@ def main():
         default=("q", "k", "v"),
     )
     parser.add_argument("--ais-dropout-probability", type=float, default=0.1)
-    parser.add_argument("--nir-initial-scale", type=float, default=0.10)
-    parser.add_argument("--ais-initial-scale", type=float, default=2.0)
+    parser.add_argument("--nir-initial-scale", type=float, default=0.05)
+    parser.add_argument("--ais-initial-scale", type=float, default=0.75)
     parser.add_argument(
         "--logit-scale",
         type=float,
@@ -225,10 +265,10 @@ def main():
     )
     parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument(
-        "--scheduler", choices=("none", "cosine"), default="none"
+        "--scheduler", choices=("none", "cosine"), default="cosine"
     )
     parser.add_argument("--min-lr-ratio", type=float, default=0.1)
-    parser.add_argument("--warmup-epochs", type=int, default=0)
+    parser.add_argument("--warmup-epochs", type=int, default=5)
     parser.add_argument("--early-stopping-patience", type=int, default=15)
     parser.add_argument("--early-stopping-min-epochs", type=int, default=60)
     parser.add_argument(
@@ -238,6 +278,15 @@ def main():
         help=(
             "Train the new NIR/AIS classifiers and fusion gates before "
             "unfreezing CoOp/LoRA for joint fine-tuning."
+        ),
+    )
+    parser.add_argument(
+        "--text-unfreeze-epoch",
+        type=int,
+        default=41,
+        help=(
+            "First epoch that enables text LoRA and CoOp. Vision LoRA is "
+            "enabled after modality warmup, avoiding an abrupt all-branch update."
         ),
     )
     parser.add_argument("--nir-aux-loss-weight", type=float, default=0.2)
@@ -265,15 +314,16 @@ def main():
         "--accumulate-full-epoch",
         dest="accumulate_full_epoch",
         action="store_true",
-        help=(
-            "Use batch-size as a memory microbatch and take one optimizer "
-            "step per epoch, matching the official full-support update."
-        ),
+        help="Take one update per epoch for every trainable component.",
     )
     parser.add_argument(
         "--minibatch-updates",
         dest="accumulate_full_epoch",
         action="store_false",
+        help=(
+            "Update NIR/AIS heads per minibatch while accumulating exactly one "
+            "LoRA/CoOp update per epoch, matching official CLIP update density."
+        ),
     )
     parser.add_argument("--skip-audit", action="store_true")
     parser.set_defaults(
@@ -287,6 +337,8 @@ def main():
         raise ValueError("epochs, batch-size and eval-frequency must be positive")
     if min(args.lora_lr, args.prompt_lr, args.adapter_lr, args.gate_lr) <= 0:
         raise ValueError("all learning rates must be positive")
+    if not 0.0 < args.text_lora_lr_scale <= 1.0:
+        raise ValueError("text-lora-lr-scale must be in (0, 1]")
     if min(args.lora_weight_decay, args.weight_decay) < 0:
         raise ValueError("weight decays must be non-negative")
     if not 0.0 < args.topk_ratio <= 1.0:
@@ -305,6 +357,10 @@ def main():
         raise ValueError("early stopping settings cannot be negative")
     if not 0 <= args.modality_warmup_epochs < args.epochs:
         raise ValueError("modality-warmup-epochs must be in [0, epochs)")
+    if not args.modality_warmup_epochs < args.text_unfreeze_epoch <= args.epochs + 1:
+        raise ValueError(
+            "text-unfreeze-epoch must be after modality warmup and at most epochs+1"
+        )
     if min(args.nir_aux_loss_weight, args.ais_aux_loss_weight) < 0:
         raise ValueError("auxiliary loss weights must be non-negative")
     if args.logit_scale <= 0:
@@ -413,9 +469,23 @@ def main():
     groups = model.parameter_groups()
     if not groups["lora"]:
         raise RuntimeError("LoRA injection produced no trainable parameters")
+    lora_parameter_groups = []
+    lora_group_indices = {}
+    if groups["lora_vision"]:
+        lora_group_indices["vision"] = len(lora_parameter_groups)
+        lora_parameter_groups.append(
+            {"params": groups["lora_vision"], "lr": args.lora_lr}
+        )
+    if groups["lora_text"]:
+        lora_group_indices["text"] = len(lora_parameter_groups)
+        lora_parameter_groups.append(
+            {
+                "params": groups["lora_text"],
+                "lr": args.lora_lr * args.text_lora_lr_scale,
+            }
+        )
     lora_optimizer = torch.optim.AdamW(
-        groups["lora"],
-        lr=args.lora_lr,
+        lora_parameter_groups,
         weight_decay=args.lora_weight_decay,
     )
     prompt_optimizer = torch.optim.SGD(
@@ -484,8 +554,9 @@ def main():
             "one accumulated full-epoch update over source+target training data"
             if args.accumulate_full_epoch
             else (
-                "minibatch updates; modality classifiers warm up first, then "
-                "CoOp/LoRA joint fine-tuning"
+                "NIR/AIS heads and gates update per minibatch; LoRA/CoOp take "
+                "one gradient-averaged update per epoch, matching the released "
+                "full-support CLIP update density"
             )
         ),
         "domain_class_balanced_training": args.domain_class_balanced_train,
@@ -527,7 +598,7 @@ def main():
             "topk_ratio": args.topk_ratio,
             "temper_rate": args.temper_rate,
             "visual_blocks": [8, 10],
-            "weight_rule": "paper_simplified_kway_extremes_bounded",
+            "weight_rule": "paper_simplified_kway_extremes_conservative",
             "min_weight": args.tir_min_weight,
             "max_weight": args.tir_max_weight,
         },
@@ -539,6 +610,7 @@ def main():
             "alpha": args.lora_alpha,
             "dropout": args.lora_dropout,
             "lr": args.lora_lr,
+            "text_lr_scale": args.text_lora_lr_scale,
             "weight_decay": args.lora_weight_decay,
         },
         "prompt_lr": args.prompt_lr,
@@ -547,13 +619,14 @@ def main():
         "task_weight_decay": args.weight_decay,
         "label_smoothing": args.label_smoothing,
         "modality_warmup_epochs": args.modality_warmup_epochs,
+        "text_unfreeze_epoch": args.text_unfreeze_epoch,
         "auxiliary_loss_weights": {
             "nir": args.nir_aux_loss_weight,
             "ais": args.ais_aux_loss_weight,
         },
         "fusion": (
-            "visual logits + positive NIR gate * supervised NIR logits + "
-            "positive AIS gate * supervised AIS logits"
+            "confidence-calibrated convex probability fusion of RGB, NIR and "
+            "AIS with softplus-positive trainable modal weights"
         ),
         "ais_internal_dropout": args.ais_dropout_probability,
         "ais_whole_branch_dropout": 0.0,
@@ -584,6 +657,12 @@ def main():
                 else min(args.batch_size, len(train_data))
             )
         ),
+        "modal_optimizer_effective_batch_size": (
+            len(train_data)
+            if args.accumulate_full_epoch
+            else min(args.batch_size, len(train_data))
+        ),
+        "clip_optimizer_effective_batch_size": len(train_data),
         "augmentation": (
             "paired light random crop and horizontal/vertical flips"
             if args.augment
@@ -615,36 +694,69 @@ def main():
     stopped_early = False
     completed_epoch = 0
     for epoch in range(1, args.epochs + 1):
-        joint_finetune = epoch > args.modality_warmup_epochs
-        for parameter in groups["lora"] + groups["prompt"]:
-            parameter.requires_grad_(joint_finetune)
+        vision_lora_active = bool(groups["lora_vision"]) and (
+            epoch > args.modality_warmup_epochs
+        )
+        text_lora_active = bool(groups["lora_text"]) and (
+            epoch >= args.text_unfreeze_epoch
+        )
+        prompt_active = epoch >= args.text_unfreeze_epoch
+        clip_active = vision_lora_active or text_lora_active or prompt_active
+        training_stage = (
+            "modality_warmup"
+            if epoch <= args.modality_warmup_epochs
+            else (
+                "vision_lora"
+                if epoch < args.text_unfreeze_epoch
+                else "full_joint"
+            )
+        )
+        for parameter in groups["lora_vision"]:
+            parameter.requires_grad_(vision_lora_active)
+        for parameter in groups["lora_text"]:
+            parameter.requires_grad_(text_lora_active)
+        for parameter in groups["prompt"]:
+            parameter.requires_grad_(prompt_active)
         for parameter in groups["adapters"] + groups["gates"]:
             parameter.requires_grad_(True)
         model.train()
-        epoch_lora_lr = (
-            lora_optimizer.param_groups[0]["lr"] if joint_finetune else 0.0
+        epoch_vision_lora_lr = (
+            lora_optimizer.param_groups[lora_group_indices["vision"]]["lr"]
+            if vision_lora_active
+            else 0.0
         )
+        epoch_text_lora_lr = (
+            lora_optimizer.param_groups[lora_group_indices["text"]]["lr"]
+            if text_lora_active
+            else 0.0
+        )
+        epoch_lora_lr = max(epoch_vision_lora_lr, epoch_text_lora_lr)
         epoch_prompt_lr = (
-            prompt_optimizer.param_groups[0]["lr"] if joint_finetune else 0.0
+            prompt_optimizer.param_groups[0]["lr"] if prompt_active else 0.0
         )
         epoch_adapter_lr = adapter_optimizer.param_groups[0]["lr"]
         epoch_gate_lr = adapter_optimizer.param_groups[1]["lr"]
-        train_items = train_correct = 0
+        train_items = train_correct = visual_correct = 0
         nir_correct = ais_correct = 0
         source_items = source_correct = target_items = target_correct = 0
         source_loss_sum = target_loss_sum = 0.0
         source_nir_loss_sum = target_nir_loss_sum = 0.0
         source_ais_loss_sum = target_ais_loss_sum = 0.0
         epoch_tir_stats = []
-        optimizer_steps = 0
+        epoch_fusion_stats = []
+        modal_optimizer_steps = 0
+        clip_optimizer_steps = 0
         optimizers = (lora_optimizer, prompt_optimizer, adapter_optimizer)
         if args.accumulate_full_epoch:
             for optimizer in optimizers:
                 optimizer.zero_grad(set_to_none=True)
+        elif clip_active:
+            lora_optimizer.zero_grad(set_to_none=True)
+            prompt_optimizer.zero_grad(set_to_none=True)
         for batch_index, batch in enumerate(train_loader, 1):
             labels = batch["label"].to(device)
             domains = batch["domain"].to(device)
-            logits, nir_logits, ais_logits = model(
+            logits, visual_logits, nir_logits, ais_logits = model(
                 batch["rgb"].to(device),
                 batch["nir"].to(device),
                 batch["ais"].to(device),
@@ -734,16 +846,15 @@ def main():
             if args.accumulate_full_epoch:
                 loss.backward()
             else:
-                for optimizer in optimizers:
-                    optimizer.zero_grad(set_to_none=True)
+                adapter_optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                if joint_finetune:
-                    lora_optimizer.step()
-                    prompt_optimizer.step()
                 adapter_optimizer.step()
-                optimizer_steps += 1
+                modal_optimizer_steps += 1
             train_items += items
             train_correct += int((logits.argmax(1) == labels).sum().item())
+            visual_correct += int(
+                (visual_logits.argmax(1) == labels).sum().item()
+            )
             nir_correct += int((nir_logits.argmax(1) == labels).sum().item())
             ais_correct += int((ais_logits.argmax(1) == labels).sum().item())
             source_items += source_batch_items
@@ -767,6 +878,7 @@ def main():
             source_ais_loss_sum += float(source_ais_loss.detach().item())
             target_ais_loss_sum += float(target_ais_loss.detach().item())
             epoch_tir_stats.extend(getattr(model, "last_tir_stats", ()))
+            epoch_fusion_stats.append(dict(model.last_fusion_stats))
             if batch_index % 5 == 0:
                 print(
                     f"Epoch [{epoch}/{args.epochs}] batch "
@@ -775,12 +887,36 @@ def main():
                 )
             if args.max_train_batches and batch_index >= args.max_train_batches:
                 break
+        lora_gradient_norm = 0.0
+        prompt_gradient_norm = 0.0
         if args.accumulate_full_epoch:
-            if joint_finetune:
+            lora_gradient_norm = gradient_l2_norm(groups["lora"])
+            prompt_gradient_norm = gradient_l2_norm(groups["prompt"])
+            if vision_lora_active or text_lora_active:
                 lora_optimizer.step()
+            if prompt_active:
                 prompt_optimizer.step()
             adapter_optimizer.step()
-            optimizer_steps = 1
+            modal_optimizer_steps = 1
+            clip_optimizer_steps = int(clip_active)
+        elif clip_active:
+            active_clip_groups = {}
+            if vision_lora_active:
+                active_clip_groups["vision_lora"] = groups["lora_vision"]
+            if text_lora_active:
+                active_clip_groups["text_lora"] = groups["lora_text"]
+            if prompt_active:
+                active_clip_groups["prompt"] = groups["prompt"]
+            normalize_accumulated_gradients(
+                active_clip_groups, max(modal_optimizer_steps, 1)
+            )
+            lora_gradient_norm = gradient_l2_norm(groups["lora"])
+            prompt_gradient_norm = gradient_l2_norm(groups["prompt"])
+            if vision_lora_active or text_lora_active:
+                lora_optimizer.step()
+            if prompt_active:
+                prompt_optimizer.step()
+            clip_optimizer_steps = 1
         tir_tokens = sum(int(stats["tokens"]) for stats in epoch_tir_stats)
 
         def sum_tir_stat(name):
@@ -792,10 +928,33 @@ def main():
 
         tir_discriminative = sum_tir_stat("discriminative")
         tir_sink = sum_tir_stat("sink")
+        tir_amplified = sum_tir_stat("amplified")
         tir_suppressed = sum_tir_stat("suppressed")
+        tir_neutral = sum_tir_stat("neutral")
         tir_clipped = sum_tir_stat("clipped")
-        if joint_finetune:
+        tir_weight_sum = sum(
+            float(stats["weight_sum"].cpu()) for stats in epoch_tir_stats
+        )
+        tir_weight_sq_sum = sum(
+            float(stats["weight_sq_sum"].cpu()) for stats in epoch_tir_stats
+        )
+        tir_weight_mean = tir_weight_sum / max(tir_tokens, 1)
+        tir_weight_variance = max(
+            tir_weight_sq_sum / max(tir_tokens, 1) - tir_weight_mean**2,
+            0.0,
+        )
+        fusion_samples = sum(stats["samples"] for stats in epoch_fusion_stats)
+
+        def mean_fusion_stat(name):
+            if not epoch_fusion_stats:
+                return 0.0
+            return sum(
+                float(stats[name].cpu()) for stats in epoch_fusion_stats
+            ) / max(fusion_samples, 1)
+
+        if vision_lora_active or text_lora_active:
             lora_scheduler.step()
+        if prompt_active:
             prompt_scheduler.step()
         adapter_scheduler.step()
         completed_epoch = epoch
@@ -825,10 +984,9 @@ def main():
         train_history.append(
             {
                 "epoch": epoch,
-                "training_stage": (
-                    "joint_finetune" if joint_finetune else "modality_warmup"
-                ),
+                "training_stage": training_stage,
                 "accuracy": train_correct / max(train_items, 1),
+                "rgb_accuracy": visual_correct / max(train_items, 1),
                 "nir_accuracy": nir_correct / max(train_items, 1),
                 "ais_accuracy": ais_correct / max(train_items, 1),
                 "source_accuracy": source_correct / max(source_items, 1),
@@ -840,30 +998,57 @@ def main():
                 "target_weighted_ce": target_epoch_ce,
                 "total_loss": weighted_total_loss,
                 "lora_lr": epoch_lora_lr,
+                "vision_lora_lr": epoch_vision_lora_lr,
+                "text_lora_lr": epoch_text_lora_lr,
                 "prompt_lr": epoch_prompt_lr,
                 "adapter_lr": epoch_adapter_lr,
                 "gate_lr": epoch_gate_lr,
-                "lora_lr_after_scheduler": lora_optimizer.param_groups[0]["lr"],
+                "vision_lora_lr_after_scheduler": (
+                    lora_optimizer.param_groups[lora_group_indices["vision"]]["lr"]
+                    if "vision" in lora_group_indices
+                    else 0.0
+                ),
+                "text_lora_lr_after_scheduler": (
+                    lora_optimizer.param_groups[lora_group_indices["text"]]["lr"]
+                    if "text" in lora_group_indices
+                    else 0.0
+                ),
                 "prompt_lr_after_scheduler": prompt_optimizer.param_groups[0]["lr"],
                 "adapter_lr_after_scheduler": adapter_optimizer.param_groups[0]["lr"],
                 "gate_lr_after_scheduler": adapter_optimizer.param_groups[1]["lr"],
                 "samples": train_items,
                 "source_samples": source_items,
                 "target_samples": target_items,
-                "optimizer_steps": optimizer_steps,
+                "optimizer_steps": modal_optimizer_steps,
+                "modal_optimizer_steps": modal_optimizer_steps,
+                "clip_optimizer_steps": clip_optimizer_steps,
+                "lora_gradient_norm": lora_gradient_norm,
+                "prompt_gradient_norm": prompt_gradient_norm,
                 "tir_discriminative_fraction": tir_discriminative
                 / max(tir_tokens, 1),
                 "tir_sink_fraction": tir_sink / max(tir_tokens, 1),
+                "tir_amplified_fraction": tir_amplified / max(tir_tokens, 1),
                 "tir_suppressed_fraction": tir_suppressed
                 / max(tir_tokens, 1),
+                "tir_neutral_fraction": tir_neutral / max(tir_tokens, 1),
                 "tir_clipped_fraction": tir_clipped / max(tir_tokens, 1),
+                "tir_weight_mean": tir_weight_mean,
+                "tir_weight_std": math.sqrt(tir_weight_variance),
                 "nir_scale": float(model.effective_nir_scale().detach().cpu()),
                 "ais_scale": float(model.effective_ais_scale().detach().cpu()),
+                "fusion_visual_fraction": mean_fusion_stat(
+                    "visual_fraction_sum"
+                ),
+                "fusion_nir_fraction": mean_fusion_stat("nir_fraction_sum"),
+                "fusion_ais_fraction": mean_fusion_stat("ais_fraction_sum"),
+                "nir_confidence": mean_fusion_stat("nir_confidence_sum"),
+                "ais_confidence": mean_fusion_stat("ais_confidence_sum"),
             }
         )
         print(
             f"Epoch [{epoch}/{args.epochs}] train accuracy="
             f"{train_correct / max(train_items, 1):.4f} "
+            f"rgb_accuracy={visual_correct / max(train_items, 1):.4f} "
             f"source_accuracy={source_correct / max(source_items, 1):.4f} "
             f"target_accuracy={target_correct / max(target_items, 1):.4f} "
             f"nir_accuracy={nir_correct / max(train_items, 1):.4f} "
@@ -872,17 +1057,43 @@ def main():
             f"nir_ce={weighted_nir_epoch_ce:.4f} "
             f"ais_ce={weighted_ais_epoch_ce:.4f} "
             f"total_loss={weighted_total_loss:.4f} "
-            f"stage={'joint' if joint_finetune else 'modality_warmup'}"
+            f"stage={training_stage} modal_steps={modal_optimizer_steps} "
+            f"clip_steps={clip_optimizer_steps} "
+            f"TIR_weight={tir_weight_mean:.3f}+/-{math.sqrt(tir_weight_variance):.3f} "
+            f"fusion=(RGB {mean_fusion_stat('visual_fraction_sum'):.3f}, "
+            f"NIR {mean_fusion_stat('nir_fraction_sum'):.3f}, "
+            f"AIS {mean_fusion_stat('ais_fraction_sum'):.3f})"
         )
 
         should_evaluate = epoch == 1 or epoch == args.epochs or epoch % args.eval_frequency == 0
         if should_evaluate:
-            val_metrics = evaluate_multimodal(model, val_loader, device)
-            test_metrics = evaluate_multimodal(model, test_loader, device)
+            val_modal_metrics = evaluate_tir_modalities(model, val_loader, device)
+            test_modal_metrics = evaluate_tir_modalities(model, test_loader, device)
+            val_metrics = val_modal_metrics["fused"]
+            test_metrics = test_modal_metrics["fused"]
+            for split, branch_metrics in (
+                ("target_val", val_modal_metrics),
+                ("target_test", test_modal_metrics),
+            ):
+                for branch, metrics in branch_metrics.items():
+                    train_history[-1][f"{split}_{branch}_ACC"] = metrics[
+                        "accuracy"
+                    ]
+                    train_history[-1][f"{split}_{branch}_F1_macro"] = metrics[
+                        "f1_macro"
+                    ]
             val_history.append((epoch, val_metrics))
             test_history.append((epoch, test_metrics))
             print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_val", val_metrics))
             print(metric_line(f"Epoch [{epoch}/{args.epochs}] target_test", test_metrics))
+            print(
+                f"Epoch [{epoch}/{args.epochs}] modal target_test "
+                + " | ".join(
+                    f"{name}: ACC={metrics['accuracy']:.4f}, "
+                    f"F1={metrics['f1_macro']:.4f}"
+                    for name, metrics in test_modal_metrics.items()
+                )
+            )
             if better_metrics(test_metrics, best_test_metrics):
                 best_test_metrics = dict(test_metrics)
                 selected = capture_selected_state(
@@ -918,6 +1129,11 @@ def main():
     selected_test, test_predictions = evaluate_multimodal(
         model, test_loader, device, return_predictions=True
     )
+    selected_modal_metrics = {
+        "target_val": evaluate_tir_modalities(model, val_loader, device),
+        "target_test": evaluate_tir_modalities(model, test_loader, device),
+    }
+    metadata["selected_modal_metrics"] = selected_modal_metrics
     print(metric_line("SELECTED target_test peak", selected_test))
     prediction_artifacts = {
         "target_val": save_prediction_artifacts(

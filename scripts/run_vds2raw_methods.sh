@@ -29,9 +29,10 @@ MCFT_EARLY_MIN_EPOCHS="${VDS2RAW_MCFT_EARLY_STOPPING_MIN_EPOCHS:-60}"
 TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"
 TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"
 TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0002}"
-TIR_PROMPT_LR="${VDS2RAW_TIR_PROMPT_LR:-0.002}"
+TIR_TEXT_LORA_LR_SCALE="${VDS2RAW_TIR_TEXT_LORA_LR_SCALE:-0.25}"
+TIR_PROMPT_LR="${VDS2RAW_TIR_PROMPT_LR:-0.0005}"
 TIR_ADAPTER_LR="${VDS2RAW_TIR_ADAPTER_LR:-0.001}"
-TIR_GATE_LR="${VDS2RAW_TIR_GATE_LR:-0.01}"
+TIR_GATE_LR="${VDS2RAW_TIR_GATE_LR:-0.002}"
 TIR_LORA_WEIGHT_DECAY="${VDS2RAW_TIR_LORA_WEIGHT_DECAY:-0.01}"
 TIR_TASK_WEIGHT_DECAY="${VDS2RAW_TIR_TASK_WEIGHT_DECAY:-0.0005}"
 TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-16}"
@@ -39,18 +40,20 @@ TIR_LORA_ALPHA="${VDS2RAW_TIR_LORA_ALPHA:-8}"
 TIR_LORA_DROPOUT="${VDS2RAW_TIR_LORA_DROPOUT:-0.25}"
 TIR_LABEL_SMOOTHING="${VDS2RAW_TIR_LABEL_SMOOTHING:-0.0}"
 TIR_AIS_DROPOUT="${VDS2RAW_TIR_AIS_DROPOUT:-0.1}"
-TIR_NIR_INITIAL_SCALE="${VDS2RAW_TIR_NIR_INITIAL_SCALE:-0.10}"
-TIR_AIS_INITIAL_SCALE="${VDS2RAW_TIR_AIS_INITIAL_SCALE:-2.0}"
+TIR_NIR_INITIAL_SCALE="${VDS2RAW_TIR_NIR_INITIAL_SCALE:-0.05}"
+TIR_AIS_INITIAL_SCALE="${VDS2RAW_TIR_AIS_INITIAL_SCALE:-0.75}"
 TIR_MODALITY_WARMUP_EPOCHS="${VDS2RAW_TIR_MODALITY_WARMUP_EPOCHS:-25}"
+TIR_TEXT_UNFREEZE_EPOCH="${VDS2RAW_TIR_TEXT_UNFREEZE_EPOCH:-41}"
 TIR_NIR_AUX_WEIGHT="${VDS2RAW_TIR_NIR_AUX_LOSS_WEIGHT:-0.2}"
 TIR_AIS_AUX_WEIGHT="${VDS2RAW_TIR_AIS_AUX_LOSS_WEIGHT:-0.2}"
-TIR_MIN_TOKEN_WEIGHT="${VDS2RAW_TIR_MIN_TOKEN_WEIGHT:-0.0}"
-TIR_MAX_TOKEN_WEIGHT="${VDS2RAW_TIR_MAX_TOKEN_WEIGHT:-2.0}"
+TIR_MIN_TOKEN_WEIGHT="${VDS2RAW_TIR_MIN_TOKEN_WEIGHT:-0.5}"
+TIR_MAX_TOKEN_WEIGHT="${VDS2RAW_TIR_MAX_TOKEN_WEIGHT:-1.5}"
 TIR_CLASS_WEIGHT_POWER="${VDS2RAW_TIR_CLASS_WEIGHT_POWER:-0.5}"
 TIR_SOURCE_LOSS_WEIGHT="${VDS2RAW_TIR_SOURCE_LOSS_WEIGHT:-0.4}"
 TIR_TARGET_LOSS_WEIGHT="${VDS2RAW_TIR_TARGET_LOSS_WEIGHT:-0.6}"
 TIR_MIN_LR_RATIO="${VDS2RAW_TIR_MIN_LR_RATIO:-0.1}"
-TIR_WARMUP_EPOCHS="${VDS2RAW_TIR_WARMUP_EPOCHS:-0}"
+TIR_SCHEDULER="${VDS2RAW_TIR_SCHEDULER:-cosine}"
+TIR_WARMUP_EPOCHS="${VDS2RAW_TIR_WARMUP_EPOCHS:-5}"
 TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-15}"
 TIR_EARLY_MIN_EPOCHS="${VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS:-60}"
 TIR_CLIP_CHECKPOINT="${VDS2RAW_TIR_CLIP_CHECKPOINT:-$HERE/pretrained_weights/clip/ViT-B-16.pt}"
@@ -100,6 +103,7 @@ if [ "$MODE" = smoke ]; then
   MCFT_EARLY_PATIENCE=0; TIR_EARLY_PATIENCE=0
   TIR_WARMUP_EPOCHS=0
   TIR_MODALITY_WARMUP_EPOCHS=0
+  TIR_TEXT_UNFREEZE_EPOCH=1
   MCFT_MAX_BATCH_ARGS=(--max-train-batches 1)
 fi
 
@@ -114,7 +118,7 @@ mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SUMMARY_DIR"
 echo "Run directory: $RUN_DIR"
 echo "Method order: ${METHOD_ORDER[*]}"
 if [ "$seen_tir" -gt 0 ]; then
-  echo "TIR AIS initial gate: $TIR_AIS_INITIAL_SCALE (trainable softplus-positive)"
+  echo "TIR AIS initial weight: $TIR_AIS_INITIAL_SCALE (positive confidence fusion)"
 fi
 "$PYTHON_BIN" "$HERE/vds2raw/audit.py" --data-root "$DATA_ROOT" \
   --stats-file "$STATS_FILE" --report-file "$RUN_DIR/dataset_audit.json"
@@ -163,7 +167,9 @@ for seed in "${SEEDS[@]}"; do
           --epochs "$TIR_EPOCHS" --batch-size "$TIR_BATCH" \
           --eval-frequency 1 \
           --clip-checkpoint "$TIR_CLIP_CHECKPOINT" \
-          --lora-lr "$TIR_LORA_LR" --prompt-lr "$TIR_PROMPT_LR" \
+          --lora-lr "$TIR_LORA_LR" \
+          --text-lora-lr-scale "$TIR_TEXT_LORA_LR_SCALE" \
+          --prompt-lr "$TIR_PROMPT_LR" \
           --adapter-lr "$TIR_ADAPTER_LR" --gate-lr "$TIR_GATE_LR" \
           --lora-weight-decay "$TIR_LORA_WEIGHT_DECAY" \
           --weight-decay "$TIR_TASK_WEIGHT_DECAY" \
@@ -174,6 +180,7 @@ for seed in "${SEEDS[@]}"; do
           --nir-initial-scale "$TIR_NIR_INITIAL_SCALE" \
           --ais-initial-scale "$TIR_AIS_INITIAL_SCALE" \
           --modality-warmup-epochs "$TIR_MODALITY_WARMUP_EPOCHS" \
+          --text-unfreeze-epoch "$TIR_TEXT_UNFREEZE_EPOCH" \
           --nir-aux-loss-weight "$TIR_NIR_AUX_WEIGHT" \
           --ais-aux-loss-weight "$TIR_AIS_AUX_WEIGHT" \
           --tir-min-weight "$TIR_MIN_TOKEN_WEIGHT" \
@@ -182,7 +189,7 @@ for seed in "${SEEDS[@]}"; do
           --source-loss-weight "$TIR_SOURCE_LOSS_WEIGHT" \
           --target-loss-weight "$TIR_TARGET_LOSS_WEIGHT" \
           --label-smoothing "$TIR_LABEL_SMOOTHING" \
-          --scheduler none --warmup-epochs "$TIR_WARMUP_EPOCHS" \
+          --scheduler "$TIR_SCHEDULER" --warmup-epochs "$TIR_WARMUP_EPOCHS" \
           --min-lr-ratio "$TIR_MIN_LR_RATIO" --augment \
           --natural-train-sampling --minibatch-updates \
           --early-stopping-patience "$TIR_EARLY_PATIENCE" \

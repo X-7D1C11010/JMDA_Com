@@ -37,6 +37,7 @@
 #     DANN,DeepCORAL,CDAN。服务器重方法可设为 MDD,MCC
 #   CDAN_NUM_ITERATIONS  CDAN 总迭代数（多模态协议默认 2000）
 #   UDA_IMAGE_BATCH_SIZE  JMDA式 VIS+IR 编码器每域批次（默认32）
+#   UDA_TRAINING_PROFILE  current（常规配置）或 historical_best（固定历史配置）
 #   UDA_NUM_WORKERS / UDA_PREFETCH_FACTOR  对比方法加载进程/每进程预取（默认8/4）
 #   UDA_PIN_MEMORY / UDA_PERSISTENT_WORKERS  对比方法 pinned/persistent worker（默认1/1）
 #   DEEPCORAL_ALEXNET_WEIGHTS  可选的离线 torchvision AlexNet 权重文件
@@ -129,6 +130,7 @@ UDA_CDAN_COEFF_MAX_ITERATIONS="${UDA_CDAN_COEFF_MAX_ITERATIONS:-6000}"
 UDA_CDAN_TEST_INTERVAL="${UDA_CDAN_TEST_INTERVAL:-100}"
 UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-32}"
 UDA_METHODS="${UDA_METHODS:-DANN,DeepCORAL,CDAN}"
+UDA_TRAINING_PROFILE="${UDA_TRAINING_PROFILE:-current}"
 UDA_NUM_WORKERS="${UDA_NUM_WORKERS:-8}"
 UDA_PREFETCH_FACTOR="${UDA_PREFETCH_FACTOR:-4}"
 UDA_PIN_MEMORY="${UDA_PIN_MEMORY:-1}"
@@ -205,7 +207,12 @@ uda_method_enabled() {
   [ "${UDA_METHOD_ENABLED[$requested_key]:-0}" = "1" ]
 }
 
-if [[ "$PROTOCOL" = "uda" ]]; then
+if [[ "$PROTOCOL" = "uda" && "$UDA_TRAINING_PROFILE" != "current" &&
+      "$UDA_TRAINING_PROFILE" != "historical_best" ]]; then
+  echo "未知 UDA_TRAINING_PROFILE: $UDA_TRAINING_PROFILE"
+  exit 1
+fi
+if [[ "$PROTOCOL" = "uda" && "$UDA_TRAINING_PROFILE" = "current" ]]; then
   if uda_method_enabled dann; then
     require_positive_integer "UDA_DANN_EPOCHS" "$UDA_DANN_EPOCHS"
   fi
@@ -637,8 +644,12 @@ elif [ "$PROTOCOL" = "jmda_oracle_shared_uda" ]; then
          --checkpoint_dir '$CHECKPOINT_ROOT/jmda_net_oracle_shared_uda_$t'"
   done
 
+elif [ "$PROTOCOL" = "uda" ] && [ "$UDA_TRAINING_PROFILE" = "historical_best" ]; then
+  source "$HERE/scripts/uda_historical_best.sh" || exit 1
+  run_historical_uda_suite "${UDA_HISTORICAL_VARIANT:-historical_best}" || exit 1
+
 elif [ "$PROTOCOL" = "uda" ]; then
-  # ---- VIS+IR exact-paired multimodal extensions; final epoch, no checkpoints ----
+  # ---- VIS+IR exact-paired multimodal extensions ----
   RESNET18_WEIGHT="$TORCH_HOME/hub/checkpoints/resnet18-f37072fd.pth"
   if [ ! -f "$RESNET18_WEIGHT" ]; then
     echo "缺少 JMDA VIS ResNet-18 ImageNet 权重: $RESNET18_WEIGHT"

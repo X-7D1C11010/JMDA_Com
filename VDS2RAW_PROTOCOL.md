@@ -58,33 +58,38 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 - RGB：文件虽使用 uint16 容器，但训练像素99%分位约为179/225/262，超过1000的值
   只是稀疏异常高值。因此按官方8-bit `ToTensor` 语义除以255并截断少量高值，再使用
   CLIP 224×224 归一化；避免按全局最大值缩放导致主体图像整体过暗；
-- NIR：训练分区统计 z-score 后，由独立轻量CNN直接输出三分类logits，并使用独立
-  辅助CE约束；不再以极小残差注入RGB；
+- NIR：训练分区统计 z-score 后裁剪到 `[-5,5]`，避免极少数传感器异常高值主导
+  梯度；由三层轻量CNN直接输出三分类概率，并使用独立辅助CE约束；
 - AIS：只使用与 MCFT 相同的4个基础字段，mask仅作缺失值门控；由轻量MLP直接输出
-  三分类logits并使用独立辅助CE，不再强制拟合CLIP文本嵌入；
+  三分类概率并使用独立辅助CE，不再强制拟合CLIP文本嵌入；四个异构物理字段不再做
+  单样本LayerNorm，以免抹除船长/船宽的绝对尺度信息；
 - TIR 发布代码中的 `1 - beta * (Sum - 3)` 以5-way的 `Sum=3` 为中点；直接用于三分类
   时所有权重均不小于1，无法抑制 `Sum=K` attention-sink token。三分类因此采用论文
-  附录明确提出的通用 K-way 简化排序，三分类权重显式限制在 `[0, 2]`，即保留
-  `Sum=K` sink token 的完全抑制和 `Sum=1` 类别特异token的2倍增强；官方五分类
+  附录明确提出的通用 K-way 简化排序；针对上一轮联合微调后约40% token被2倍增强的
+  漂移，三分类默认采用保守范围 `[0.5, 1.5]`，避免完全删除或2倍放大；官方五分类
   权重公式保持不变；
 - CLIP 权重必须精确匹配全部键和形状，任何缺失、额外或 shape 不匹配都会报错，
   禁止静默漏载。
 
 官方发布代码对每个5-way episode使用完整support set，每轮一次更新，共100轮；没有给出
 适用于本项目210样本三模态监督任务的专门日程。随机初始化NIR/AIS头在原日程中明显
-欠拟合，因此当前默认正式配置为100 epoch、batch size 32正常小批次更新：前25轮冻结
-CoOp/LoRA，只预热NIR/AIS分类头和融合门控，之后进行联合微调；target_val连续15次无提升
-且至少完成60轮后早停。LoRA同时作用于视觉/文本编码器Q/K/V，rank 16 / alpha 8 /
-dropout 0.25；LoRA/CoOp/modality-head/gate学习率分别为 `2e-4`、`2e-3`、`1e-3`、
-`1e-2`，task weight decay为 `5e-4`，label smoothing为0。源域和目标域监督CE分开计算并
+欠拟合，因此当前默认正式配置为100 epoch、batch size 32：前25轮仅预热NIR/AIS头和
+融合权重，第26--40轮只开启视觉LoRA，第41轮起再开启文本LoRA和CoOp，避免同时突变。
+模态头每个mini-batch更新；LoRA/CoOp梯度跨整轮平均后只更新一次，从而恢复官方每个
+episode一次CLIP更新的密度。target_val连续15次无提升且至少完成60轮后早停。LoRA作用于
+视觉/文本编码器Q/K/V，rank 16 / alpha 8 / dropout 0.25；视觉LoRA、文本LoRA、CoOp、
+modality-head/gate的峰值学习率分别为 `2e-4`、`5e-5`、`5e-4`、`1e-3`、`2e-3`，默认
+5轮warmup后cosine衰减。task weight decay为 `5e-4`，label smoothing为0。源域和目标域监督CE分开计算并
 以0.4/0.6合并；NIR/AIS辅助CE权重各为0.2。每个域
 分别根据自身类别计数使用平方根逆频率权重，避免源域Sailing样本掩盖目标域Sailing不足。
-自然无放回shuffle保证每轮全部210个样本各使用一次。NIR门控默认从0.10开始，AIS门控
-默认从2.0开始且仍可由启动参数覆盖；两者都使用softplus约束在(0,+inf)。AIS仅保留MLP
-内部dropout 0.1，删除整分支随机丢弃。默认增强为RGB/NIR同步轻裁剪和水平/垂直
+自然无放回shuffle保证每轮全部210个样本各使用一次。NIR/AIS正值权重默认从0.05/0.75
+开始且仍可由启动参数覆盖。RGB、NIR、AIS先分别转为概率；NIR/AIS再乘以归一化熵置信度
+和softplus正值权重，最后进行归一化凸融合，避免不同logit尺度和无界AIS放大。AIS仅保留
+MLP内部dropout 0.1。默认增强为RGB/NIR同步轻裁剪和水平/垂直
 翻转。每轮仍评估target_val和target_test，汇总记录完整100轮中的target_test ACC峰值并
 明确test-selection bias。逐轮额外记录源/目标训练ACC和加权CE、TIR sink/discriminative/
-clipped token比例、NIR/AIS独立训练ACC/CE、正值门控尺度、训练阶段与实际optimizer step数。
+token比例及权重均值/标准差、RGB/NIR/AIS独立训练与target_val/target_test ACC/F1、
+模态置信度和实际融合占比、正值权重、LoRA/Prompt梯度范数、训练阶段与各optimizer step数。
 VDS2Raw 的 NIR/AIS 分支及固定三分类测试划分不是论文原生设置，必须作为适配披露。
 所有官方协议差异均写入结果元数据。
 
@@ -116,9 +121,9 @@ export VDS2RAW_RUN_COMPLEXITY_BENCHMARK=0
 bash scripts/run_vds2raw_background.sh smoke
 ```
 
-TIR smoke 使用batch 32遍历完整210样本并执行正常小批次更新，不使用只含2个样本的
-截断batch；模态预热在单轮smoke中自动设为0，从而验证两域分离损失、三个分类分支、
-辅助CE、正值门控和CoOp/LoRA联合反向传播的完整路径。
+TIR smoke 使用batch 32遍历完整210样本，不使用只含2个样本的截断batch；模态预热设为
+0、文本解冻轮设为1，从而验证两域分离损失、三个分类分支、辅助CE、置信度融合以及
+CoOp/LoRA整轮梯度平均更新的完整路径。
 
 只运行一种方法可设置 `VDS2RAW_METHOD_ORDER="mcft3"` 或
 `VDS2RAW_METHOD_ORDER="tir"`。GPU 门槛默认分别为 6144 MiB 与 14336 MiB，启动器会

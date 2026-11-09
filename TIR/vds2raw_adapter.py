@@ -9,11 +9,12 @@ here:
 * only proxy-safe AIS heading, length and width values are encoded by a
   directly supervised MLP; validity bits gate missing values but are not
   classifier inputs.
-* NIR and AIS class logits are fused with the visual logits through trainable
-  softplus-positive gates, and are also constrained by auxiliary CE losses.
+* NIR and AIS predictions are confidence-calibrated before bounded probability
+  fusion. Their trainable softplus-positive gates therefore cannot change the
+  logit scale without bound, and both heads retain auxiliary CE supervision.
 * the paper's simplified K-way ordering is used for three-class VDS2Raw, with
-  bounded weights to avoid complete token deletion or 2x amplification. The
-  released five-way path remains unchanged.
+  conservative configurable weights that avoid complete token deletion or 2x
+  amplification. The released five-way path remains unchanged.
 
 These adaptations preserve the TIR mechanism but are not claimed to be the
 paper's original single-image, source-free 5-way protocol.
@@ -146,21 +147,21 @@ class TokenImportanceRecalibration(nn.Module):
             # VDS2Raw has only three classes. Keep the paper's simplified
             # K-way extremes by default, while exposing explicit bounds for
             # controlled ablations.
-            weights = torch.ones_like(sum_scores)
-            weights = torch.where(sum_scores.eq(1), weights.new_tensor(2.0), weights)
-            weights = torch.where(
-                sum_scores.eq(class_count), weights.new_tensor(0.0), weights
-            )
-            min_weight = float(getattr(params, "tir_min_weight", 0.0))
-            max_weight = float(getattr(params, "tir_max_weight", 2.0))
+            min_weight = float(getattr(params, "tir_min_weight", 0.5))
+            max_weight = float(getattr(params, "tir_max_weight", 1.5))
             if not 0.0 <= min_weight <= max_weight:
                 raise ValueError(
                     "TIR K-way weight bounds must satisfy "
                     f"0 <= min <= max; got {min_weight}, {max_weight}"
                 )
-            raw_weights = weights
-            weights = weights.clamp(min=min_weight, max=max_weight)
-            rule = "paper_simplified_kway_extremes_bounded"
+            weights = torch.ones_like(sum_scores)
+            weights = torch.where(
+                sum_scores.eq(1), weights.new_tensor(max_weight), weights
+            )
+            weights = torch.where(
+                sum_scores.eq(class_count), weights.new_tensor(min_weight), weights
+            )
+            rule = "paper_simplified_kway_extremes_conservative"
         if params is not None:
             params.aux_container["tir_last_sum_scores"] = sum_scores.detach()
             params.aux_container["tir_last_weights"] = weights.detach()
@@ -174,16 +175,12 @@ class TokenImportanceRecalibration(nn.Module):
                     # to every inference/complexity measurement.
                     "discriminative": sum_scores.eq(1).sum().detach(),
                     "sink": sum_scores.eq(class_count).sum().detach(),
-                    "suppressed": (
-                        raw_weights.eq(0).sum().detach()
-                        if class_count != 5
-                        else weights.eq(0).sum().detach()
-                    ),
-                    "clipped": (
-                        raw_weights.ne(weights).sum().detach()
-                        if class_count != 5
-                        else weights.new_zeros((), dtype=torch.long)
-                    ),
+                    "amplified": weights.gt(1).sum().detach(),
+                    "suppressed": weights.lt(1).sum().detach(),
+                    "neutral": weights.eq(1).sum().detach(),
+                    "weight_sum": weights.sum().detach(),
+                    "weight_sq_sum": weights.square().sum().detach(),
+                    "clipped": weights.new_zeros((), dtype=torch.long),
                 }
             )
         recalibrated = patches * weights.unsqueeze(-1)
@@ -226,8 +223,8 @@ class TIRRuntime:
     topk_ratio: float = 0.3
     temper_rate: float = 0.5
     text_layer: int = 10
-    tir_min_weight: float = 0.0
-    tir_max_weight: float = 2.0
+    tir_min_weight: float = 0.5
+    tir_max_weight: float = 1.5
     aux_container: dict = field(default_factory=dict)
 
     def as_namespace(self):
@@ -251,8 +248,8 @@ class TIRVDS2Raw(nn.Module):
         topk_ratio: float = 0.3,
         temper_rate: float = 0.5,
         text_layer: int = 10,
-        tir_min_weight: float = 0.0,
-        tir_max_weight: float = 2.0,
+        tir_min_weight: float = 0.5,
+        tir_max_weight: float = 1.5,
         lora_rank: int = 16,
         lora_alpha: int = 8,
         lora_dropout: float = 0.25,
@@ -260,8 +257,8 @@ class TIRVDS2Raw(nn.Module):
         lora_position: str = "all",
         lora_params: Sequence[str] = ("q", "k", "v"),
         ais_dropout_probability: float = 0.1,
-        nir_initial_scale: float = 0.10,
-        ais_initial_scale: float = 2.0,
+        nir_initial_scale: float = 0.05,
+        ais_initial_scale: float = 0.75,
         logit_scale: float = 4.0,
     ):
         super().__init__()
@@ -307,21 +304,24 @@ class TIRVDS2Raw(nn.Module):
         # directly supervised NIR classifier instead of injecting a tiny,
         # randomly initialised residual into the frozen CLIP RGB input.
         self.nir_classifier = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1, bias=False),
+            nn.Conv2d(1, 16, 3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(16),
             nn.GELU(),
             nn.Conv2d(16, 32, 3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.GELU(),
+            nn.Conv2d(32, 64, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.GELU(),
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Linear(32, class_count),
+            nn.Dropout(0.1),
+            nn.Linear(64, class_count),
         )
         # The AIS fields are already compact tabular measurements.  A direct
         # supervised classifier is substantially better conditioned than
         # forcing four values to imitate a 512-D CLIP text embedding.
         self.ais_classifier = nn.Sequential(
-            nn.LayerNorm(4),
             nn.Linear(4, 64),
             nn.GELU(),
             nn.Dropout(self.ais_dropout_probability),
@@ -361,10 +361,20 @@ class TIRVDS2Raw(nn.Module):
         return final, intermediate
 
     def parameter_groups(self) -> dict[str, list[nn.Parameter]]:
-        lora = [
-            parameter
+        lora_named = [
+            (name, parameter)
             for name, parameter in self.clip_model.named_parameters()
             if "lora_" in name and parameter.requires_grad
+        ]
+        lora = [
+            parameter
+            for _, parameter in lora_named
+        ]
+        lora_vision = [
+            parameter for name, parameter in lora_named if name.startswith("visual.")
+        ]
+        lora_text = [
+            parameter for name, parameter in lora_named if not name.startswith("visual.")
         ]
         prompt = list(self.prompt_learner.parameters())
         adapters = list(self.nir_classifier.parameters()) + list(
@@ -372,6 +382,8 @@ class TIRVDS2Raw(nn.Module):
         )
         return {
             "lora": lora,
+            "lora_vision": lora_vision,
+            "lora_text": lora_text,
             "prompt": prompt,
             "adapters": adapters,
             "gates": [self.nir_scale, self.ais_scale],
@@ -395,6 +407,23 @@ class TIRVDS2Raw(nn.Module):
         """Return the trainable AIS contribution constrained to be positive."""
 
         return F.softplus(self.ais_scale)
+
+    @staticmethod
+    def _probabilities_and_confidence(logits: torch.Tensor):
+        """Return probabilities and a detached normalized-entropy confidence.
+
+        Detaching the confidence prevents a modal head from reducing the fused
+        loss merely by becoming uncertain; its probabilities still receive the
+        fused gradient and its auxiliary CE remains fully differentiable.
+        """
+
+        probabilities = logits.softmax(dim=-1)
+        class_count = logits.shape[-1]
+        entropy = -(
+            probabilities.clamp_min(1e-8).log() * probabilities
+        ).sum(dim=-1)
+        confidence = (1.0 - entropy / math.log(class_count)).clamp(0.0, 1.0)
+        return probabilities, confidence.detach()
 
     def forward(
         self,
@@ -426,12 +455,31 @@ class TIRVDS2Raw(nn.Module):
             )
         nir_logits = self.nir_classifier(nir)
         ais_logits = self.ais_classifier(ais * ais_mask)
-        logits = (
-            visual_logits
-            + self.effective_nir_scale() * nir_logits
-            + self.effective_ais_scale() * ais_logits
+        visual_probabilities = visual_logits.softmax(dim=-1)
+        nir_probabilities, nir_confidence = self._probabilities_and_confidence(
+            nir_logits
         )
-        return logits, nir_logits, ais_logits
+        ais_probabilities, ais_confidence = self._probabilities_and_confidence(
+            ais_logits
+        )
+        nir_weight = self.effective_nir_scale() * nir_confidence
+        ais_weight = self.effective_ais_scale() * ais_confidence
+        denominator = 1.0 + nir_weight + ais_weight
+        fused_probabilities = (
+            visual_probabilities
+            + nir_weight.unsqueeze(1) * nir_probabilities
+            + ais_weight.unsqueeze(1) * ais_probabilities
+        ) / denominator.unsqueeze(1)
+        logits = fused_probabilities.clamp_min(1e-8).log()
+        self.last_fusion_stats = {
+            "visual_fraction_sum": (1.0 / denominator).sum().detach(),
+            "nir_fraction_sum": (nir_weight / denominator).sum().detach(),
+            "ais_fraction_sum": (ais_weight / denominator).sum().detach(),
+            "nir_confidence_sum": nir_confidence.sum().detach(),
+            "ais_confidence_sum": ais_confidence.sum().detach(),
+            "samples": int(logits.shape[0]),
+        }
+        return logits, visual_logits, nir_logits, ais_logits
 
 
 __all__ = [

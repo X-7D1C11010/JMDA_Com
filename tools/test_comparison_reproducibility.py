@@ -32,14 +32,20 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         )
         self.assertIn("self.nir_classifier = nn.Sequential", adapter)
         self.assertIn("self.ais_classifier = nn.Sequential", adapter)
-        self.assertIn("self.effective_nir_scale() * nir_logits", adapter)
-        self.assertIn("self.effective_ais_scale() * ais_logits", adapter)
+        self.assertIn("nir_weight = self.effective_nir_scale() * nir_confidence", adapter)
+        self.assertIn("ais_weight = self.effective_ais_scale() * ais_confidence", adapter)
+        self.assertIn("fused_probabilities", adapter)
+        self.assertIn("lora_vision", adapter)
+        self.assertIn("lora_text", adapter)
         self.assertNotIn("fused_image = rgb +", adapter)
         self.assertNotIn("ais_features = ais_features * keep", adapter)
+        self.assertNotIn("nn.LayerNorm(4)", adapter)
         self.assertIn('"training_stage"', train)
         self.assertIn('"nir_aux_ce"', train)
         self.assertIn('"ais_aux_ce"', train)
         self.assertIn("--minibatch-updates", runner)
+        self.assertIn("--text-unfreeze-epoch", runner)
+        self.assertIn('TIR_SCHEDULER="${VDS2RAW_TIR_SCHEDULER:-cosine}"', runner)
 
     def test_clip_checkpoint_loading_is_strict(self):
         adapter = (ROOT / "TIR" / "vds2raw_adapter.py").read_text(
@@ -167,7 +173,7 @@ class ComparisonReproducibilityTests(unittest.TestCase):
         self.assertIn('VDS2RAW_TIR_AIS_INITIAL_SCALE="$AIS_INITIAL_SCALE"', launcher)
         self.assertIn("math.isfinite(value) and value > 0.0", launcher)
         self.assertIn("math.isfinite(value) and value > 0.0", vds_runner)
-        self.assertIn("trainable softplus-positive", vds_runner)
+        self.assertIn("positive confidence fusion", vds_runner)
         self.assertIn(
             'run_tir_mcft_rainy_dark_sequential.sh"', background
         )

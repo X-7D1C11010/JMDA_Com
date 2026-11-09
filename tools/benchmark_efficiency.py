@@ -266,7 +266,7 @@ def adapter_vds_tir():
         }
     def forward_loss(model, inp):
         labels = torch.randint(0, 3, (inp['rgb'].size(0),), device=inp['rgb'].device)
-        logits, _, _ = model(
+        logits, _, _, _ = model(
             inp['rgb'], inp['nir'], inp['ais'], inp['ais_mask'], labels
         )
         return nn.CrossEntropyLoss()(logits, labels)

@@ -1,65 +1,25 @@
 #!/usr/bin/env bash
-# Launch all five tuned multimodal UDA baselines sequentially in one detached
-# server job. run_server.sh checks GPU free memory and utilization before every
-# method, so an SSH disconnect is safe and no two methods overlap.
+# Launch pinned VIS+IR baselines or a controlled experiment in one detached job.
+# Usage: bash scripts/run_server_all_uda_background.sh [target] [seed] [variant] [methods_csv]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${1:-backlight}"
 SEED="${2:-42}"
+VARIANT="${3:-historical_best}"
+case "$VARIANT" in
+  historical_best|compare|tuned|mcc_source_only|sampling|augmentation|ir_pretrain|ema_teacher) ;;
+  *) echo "Unknown historical UDA variant: $VARIANT" >&2; exit 2 ;;
+esac
 
 export JMDA_TARGETS="$TARGET"
 export JMDA_SEED="$SEED"
 export JMDA_CLASS_NAMES_FILE="${JMDA_CLASS_NAMES_FILE:-$HERE/class.txt}"
 export UDA_METHODS="DANN,DeepCORAL,CDAN,MDD,MCC"
-export UDA_IMAGE_BATCH_SIZE="${UDA_IMAGE_BATCH_SIZE:-16}"
-
-# Recalibrated from the first shared-JMDA-front-end training curves.
-export UDA_DANN_EPOCHS="${UDA_DANN_EPOCHS:-36}"
-export UDA_DANN_LR="${UDA_DANN_LR:-0.0003}"
-export UDA_DANN_DOMAIN_LOSS_WEIGHT="${UDA_DANN_DOMAIN_LOSS_WEIGHT:-0.35}"
-export UDA_DANN_GRL_MAX_ITERATIONS="${UDA_DANN_GRL_MAX_ITERATIONS:-5000}"
-export UDA_DANN_LR_SCHEDULER="${UDA_DANN_LR_SCHEDULER:-constant}"
-export UDA_DANN_MIN_LR_RATIO="${UDA_DANN_MIN_LR_RATIO:-0.1}"
-export UDA_DANN_TARGET_EVAL_INTERVAL="${UDA_DANN_TARGET_EVAL_INTERVAL:-1}"
-
-export UDA_DEEPCORAL_EPOCHS="${UDA_DEEPCORAL_EPOCHS:-30}"
-export UDA_DEEPCORAL_LR="${UDA_DEEPCORAL_LR:-0.0004}"
-export UDA_DEEPCORAL_MAX_WEIGHT="${UDA_DEEPCORAL_MAX_WEIGHT:-0.3}"
-export UDA_DEEPCORAL_WARMUP_EPOCHS="${UDA_DEEPCORAL_WARMUP_EPOCHS:-2}"
-export UDA_DEEPCORAL_HEAD_LR_MULT="${UDA_DEEPCORAL_HEAD_LR_MULT:-5.0}"
-export UDA_DEEPCORAL_VIS_LR_MULT="${UDA_DEEPCORAL_VIS_LR_MULT:-0.1}"
-export UDA_DEEPCORAL_IR_LR_MULT="${UDA_DEEPCORAL_IR_LR_MULT:-1.0}"
-export UDA_DEEPCORAL_TARGET_EVAL_INTERVAL="${UDA_DEEPCORAL_TARGET_EVAL_INTERVAL:-1}"
-export UDA_DEEPCORAL_WEIGHT_DECAY="${UDA_DEEPCORAL_WEIGHT_DECAY:-0.0005}"
-export UDA_DEEPCORAL_LABEL_SMOOTHING="${UDA_DEEPCORAL_LABEL_SMOOTHING:-0.05}"
-
-export CDAN_NUM_ITERATIONS="${CDAN_NUM_ITERATIONS:-2000}"
-export UDA_CDAN_LR="${UDA_CDAN_LR:-0.0005}"
-export UDA_CDAN_HEAD_LR_MULT="${UDA_CDAN_HEAD_LR_MULT:-3.0}"
-export UDA_CDAN_AD_LR_MULT="${UDA_CDAN_AD_LR_MULT:-3.0}"
-export UDA_CDAN_TRADE_OFF="${UDA_CDAN_TRADE_OFF:-0.6}"
-export UDA_CDAN_SOURCE_WARMUP_ITERATIONS="${UDA_CDAN_SOURCE_WARMUP_ITERATIONS:-300}"
-export UDA_CDAN_LABEL_SMOOTHING="${UDA_CDAN_LABEL_SMOOTHING:-0.05}"
-export UDA_CDAN_COEFF_MAX_ITERATIONS="${UDA_CDAN_COEFF_MAX_ITERATIONS:-6000}"
-export UDA_CDAN_TEST_INTERVAL="${UDA_CDAN_TEST_INTERVAL:-100}"
-
-export UDA_MDD_EPOCHS="${UDA_MDD_EPOCHS:-40}"
-export UDA_MDD_LR="${UDA_MDD_LR:-0.0025}"
-export UDA_MDD_ITERS_PER_EPOCH="${UDA_MDD_ITERS_PER_EPOCH:-60}"
-export UDA_MDD_TRADE_OFF="${UDA_MDD_TRADE_OFF:-0.35}"
-export UDA_MDD_TRADE_OFF_WARMUP_EPOCHS="${UDA_MDD_TRADE_OFF_WARMUP_EPOCHS:-16}"
-
-export UDA_MCC_EPOCHS="${UDA_MCC_EPOCHS:-24}"
-export UDA_MCC_LR="${UDA_MCC_LR:-0.001}"
-export UDA_MCC_ITERS_PER_EPOCH="${UDA_MCC_ITERS_PER_EPOCH:-40}"
-export UDA_MCC_TRADE_OFF="${UDA_MCC_TRADE_OFF:-0.05}"
-export UDA_MCC_TRADE_OFF_WARMUP_EPOCHS="${UDA_MCC_TRADE_OFF_WARMUP_EPOCHS:-10}"
-export UDA_MCC_SOURCE_WARMUP_EPOCHS="${UDA_MCC_SOURCE_WARMUP_EPOCHS:-5}"
-export UDA_MCC_LABEL_SMOOTHING="${UDA_MCC_LABEL_SMOOTHING:-0.10}"
-
-export JMDA_DETERMINISTIC="${JMDA_DETERMINISTIC:-1}"
-export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
+if [ "$#" -ge 4 ]; then export UDA_METHODS="$4"; fi
+export UDA_TRAINING_PROFILE=historical_best
+export UDA_HISTORICAL_VARIANT="$VARIANT"
+export JMDA_SUITE_ID="${JMDA_SUITE_ID:-uda_${VARIANT}_$(date +%Y%m%d_%H%M%S)_$$}"
 export JMDA_GPU_SCHEDULER=1
 export JMDA_GPU_CANDIDATES="${JMDA_GPU_CANDIDATES:-0,1}"
 export JMDA_GPU_MAX_UTIL_PERCENT="${JMDA_GPU_MAX_UTIL_PERCENT:-10}"
@@ -71,7 +31,7 @@ export GPU_MIN_FREE_CDAN_MIB="${GPU_MIN_FREE_CDAN_MIB:-18000}"
 export GPU_MIN_FREE_MDD_MIB="${GPU_MIN_FREE_MDD_MIB:-20000}"
 export GPU_MIN_FREE_MCC_MIB="${GPU_MIN_FREE_MCC_MIB:-18000}"
 
-echo "Sequential UDA suite: DANN -> DeepCORAL -> CDAN -> MDD -> MCC"
-echo "Target=$TARGET Seed=$SEED BatchSize=$UDA_IMAGE_BATCH_SIZE"
+echo "Sequential UDA suite: DANN -> DeepCORAL -> CDAN -> MDD -> MCC (when selected)"
+echo "Target=$TARGET Seed=$SEED Variant=$VARIANT Methods=$UDA_METHODS BatchSize=16 per domain"
 echo "GPU candidates=$JMDA_GPU_CANDIDATES; utilization<=${JMDA_GPU_MAX_UTIL_PERCENT}%"
 exec bash "$HERE/scripts/run_server_background.sh" uda

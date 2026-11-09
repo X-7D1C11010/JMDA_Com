@@ -487,7 +487,10 @@ class VDS2RawTIRDataset(Dataset):
         # 1000 makes normal vessels unnaturally dark for CLIP. Match the
         # official 8-bit ToTensor semantics and clip only sparse high outliers.
         rgb = (rgb / 255.0).clamp_(0.0, 1.0)
-        nir = (nir - self.nir_mean) / self.nir_std
+        # Rare raw sensor spikes exceed 20 standard deviations and destabilise
+        # the small supervised NIR head. Robust clipping preserves virtually
+        # all train-fitted signal while preventing a few pixels from dominating.
+        nir = ((nir - self.nir_mean) / self.nir_std).clamp_(-5.0, 5.0)
         if self.augment:
             top, left, height, width = transforms.RandomResizedCrop.get_params(
                 rgb, scale=(0.9, 1.0), ratio=(0.95, 1.05)

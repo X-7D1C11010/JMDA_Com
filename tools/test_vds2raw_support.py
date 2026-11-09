@@ -283,11 +283,11 @@ class TIRCoreTests(unittest.TestCase):
         )
         torch.testing.assert_close(
             runtime.aux_container["tir_last_weights"],
-            torch.tensor([[2.0, 2.0, 2.0, 1.0]]),
+            torch.tensor([[1.5, 1.5, 1.5, 1.0]]),
         )
         self.assertEqual(
             runtime.aux_container["tir_weight_rule"],
-            "paper_simplified_kway_extremes_bounded",
+            "paper_simplified_kway_extremes_conservative",
         )
         self.assertEqual(output.shape, tokens.shape)
 
@@ -308,8 +308,17 @@ class TIRCoreTests(unittest.TestCase):
         )
         torch.testing.assert_close(
             runtime.aux_container["tir_last_weights"],
-            torch.tensor([[0.0, 1.0, 1.0, 1.0]]),
+            torch.tensor([[0.5, 1.0, 1.0, 1.0]]),
         )
+
+    def test_modal_entropy_confidence_is_bounded_and_detects_uniform_logits(self):
+        uniform = torch.zeros(2, 3)
+        _, uniform_confidence = TIRVDS2Raw._probabilities_and_confidence(uniform)
+        torch.testing.assert_close(uniform_confidence, torch.zeros(2))
+        confident = torch.tensor([[10.0, -10.0, -10.0]])
+        _, confident_score = TIRVDS2Raw._probabilities_and_confidence(confident)
+        self.assertGreater(float(confident_score), 0.99)
+        self.assertFalse(confident_score.requires_grad)
 
     def test_five_way_rule_stays_identical_to_released_linear_rule(self):
         tokens = torch.tensor(
@@ -410,10 +419,14 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertIn('--eval-frequency 1', linux)
         self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0002}"', linux)
         self.assertIn('TIR_LORA_RANK="${VDS2RAW_TIR_LORA_RANK:-16}"', linux)
-        self.assertIn('--scheduler none', linux)
+        self.assertIn('TIR_SCHEDULER="${VDS2RAW_TIR_SCHEDULER:-cosine}"', linux)
         self.assertIn('--natural-train-sampling', linux)
         self.assertIn('--minibatch-updates', linux)
-        self.assertIn('TIR_GATE_LR="${VDS2RAW_TIR_GATE_LR:-0.01}"', linux)
+        self.assertIn('TIR_GATE_LR="${VDS2RAW_TIR_GATE_LR:-0.002}"', linux)
+        self.assertIn(
+            'TIR_TEXT_UNFREEZE_EPOCH="${VDS2RAW_TIR_TEXT_UNFREEZE_EPOCH:-41}"',
+            linux,
+        )
         self.assertIn(
             'TIR_MODALITY_WARMUP_EPOCHS="${VDS2RAW_TIR_MODALITY_WARMUP_EPOCHS:-25}"',
             linux,
@@ -432,6 +445,9 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertIn("nir_logits, ais_logits = model", tir_train)
         self.assertIn("args.nir_aux_loss_weight * nir_aux_loss", tir_train)
         self.assertIn("args.ais_aux_loss_weight * ais_aux_loss", tir_train)
+        self.assertIn('"clip_optimizer_steps"', tir_train)
+        self.assertIn("evaluate_tir_modalities", tir_train)
+        self.assertIn('"fusion_ais_fraction"', tir_train)
         self.assertIn("DomainTaggedDataset(source, 0)", tir_train)
         self.assertIn("DomainTaggedDataset(target, 1)", tir_train)
         self.assertIn('"domain_separated_supervised_loss": True', tir_train)

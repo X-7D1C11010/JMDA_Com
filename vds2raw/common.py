@@ -79,7 +79,7 @@ def evaluate_multimodal(model, loader, device, return_predictions=False):
     with torch.no_grad():
         for batch in loader:
             truth = batch["label"]
-            logits, _, _ = model(
+            outputs = model(
                 batch["rgb"].to(device),
                 batch["nir"].to(device),
                 batch["ais"].to(device),
@@ -87,6 +87,7 @@ def evaluate_multimodal(model, loader, device, return_predictions=False):
                 labels=None,
                 compute_auxiliary=False,
             )
+            logits = outputs[0]
             batch_truth = truth.tolist()
             batch_predictions = logits.argmax(1).cpu().tolist()
             batch_logits = logits.detach().cpu().tolist()

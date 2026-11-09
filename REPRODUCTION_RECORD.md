@@ -1147,3 +1147,17 @@ MCC烟测覆盖了ACC并列时选取更早epoch。Python编译通过，相关39�
 - 逐轮记录NIR/AIS独立ACC和CE、融合门控、训练阶段与实际更新次数；现有结果文件和
   启动接口保持兼容。
 
+## 25. TIR 联合微调与融合校准修复（2026-11-09）
+
+- 针对最新5-seed日志中4次峰值位于第25轮前、target-train接近100%而测试末轮下降，
+  将NIR/AIS头保留为mini-batch更新，但LoRA/CoOp改为每轮梯度平均后只更新一次，恢复
+  官方full-support CLIP更新密度。
+- 解冻日程改为前25轮模态预热、第26--40轮视觉LoRA、第41轮起文本LoRA+CoOp；文本
+  LoRA使用视觉LoRA的0.25倍学习率，CoOp学习率降至5e-4，并使用5轮warmup+cosine。
+- 三分类TIR token权重由 `[0,2]` 收紧为 `[0.5,1.5]`，避免联合微调后大面积token被
+  2倍增强；新增逐轮token权重均值、标准差和增强/抑制/中性比例。
+- 删除AIS四个异构物理字段上的单样本LayerNorm；NIR增加稳健z-score裁剪和第三层卷积。
+  融合改为归一化熵置信度控制的概率凸融合，默认NIR/AIS权重为0.05/0.75。
+- 新增逐轮RGB/NIR/AIS在target_val和target_test上的独立ACC/F1、实际模态融合占比、
+  置信度、LoRA/Prompt梯度范数以及CLIP/模态优化器步数，供后续定位性能瓶颈。
+
