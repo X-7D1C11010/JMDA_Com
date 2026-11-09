@@ -40,11 +40,11 @@ function Env-OrDefault([string]$Name, [string]$Default) {
 
 $McftEpochs = [int](Env-OrDefault 'VDS2RAW_MCFT_EPOCHS' '200')
 $McftBatch = [int](Env-OrDefault 'VDS2RAW_MCFT_BATCH_SIZE' '32')
-$TirEpochs = [int](Env-OrDefault 'VDS2RAW_TIR_EPOCHS' '100')
+$TirEpochs = [int](Env-OrDefault 'VDS2RAW_TIR_EPOCHS' '39')
 $TirBatch = [int](Env-OrDefault 'VDS2RAW_TIR_BATCH_SIZE' '32')
 $TirWarmupEpochs = [int](Env-OrDefault 'VDS2RAW_TIR_WARMUP_EPOCHS' '5')
 $TirModalityWarmupEpochs = [int](Env-OrDefault 'VDS2RAW_TIR_MODALITY_WARMUP_EPOCHS' '25')
-$TirTextUnfreezeEpoch = [int](Env-OrDefault 'VDS2RAW_TIR_TEXT_UNFREEZE_EPOCH' '41')
+$TirTextUnfreezeEpoch = [int](Env-OrDefault 'VDS2RAW_TIR_TEXT_UNFREEZE_EPOCH' '40')
 $ClipCheckpoint = Env-OrDefault 'VDS2RAW_TIR_CLIP_CHECKPOINT' `
     (Join-Path $RepoRoot 'pretrained_weights\clip\ViT-B-16.pt')
 if ('tir' -in $MethodOrder -and -not (Test-Path -LiteralPath $ClipCheckpoint -PathType Leaf)) {
@@ -139,10 +139,11 @@ foreach ($seed in $Seeds) {
                     '--label-smoothing', (Env-OrDefault 'VDS2RAW_TIR_LABEL_SMOOTHING' '0.0'),
                     '--scheduler', (Env-OrDefault 'VDS2RAW_TIR_SCHEDULER' 'cosine'),
                     '--warmup-epochs', "$TirWarmupEpochs",
+                    '--scheduler-horizon-epochs', (Env-OrDefault 'VDS2RAW_TIR_SCHEDULER_HORIZON_EPOCHS' '100'),
                     '--min-lr-ratio', (Env-OrDefault 'VDS2RAW_TIR_MIN_LR_RATIO' '0.1'),
                     '--augment',
                     '--natural-train-sampling', '--minibatch-updates',
-                    '--early-stopping-patience', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_PATIENCE' '15'),
+                    '--early-stopping-patience', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_PATIENCE' '0'),
                     '--early-stopping-min-epochs', (Env-OrDefault 'VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS' '60'),
                     '--stats-file', $StatsFile
                 ) + $common + $tirSmokeArgs

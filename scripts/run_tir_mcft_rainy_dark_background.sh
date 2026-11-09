@@ -5,7 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AIS_INITIAL_SCALE="${1:-${VDS2RAW_TIR_AIS_INITIAL_SCALE:-0.75}}"
 MCFT_EPOCHS="${2:-${MCFT_RAINY_DARK_EPOCHS:-100}}"
-TIR_EPOCHS="${3:-${VDS2RAW_TIR_EPOCHS:-100}}"
+TIR_EPOCHS="${3:-${VDS2RAW_TIR_EPOCHS:-39}}"
 
 LOG_DIR="$HERE/server_logs/tir_mcft_rainy_dark_launcher"
 mkdir -p "$LOG_DIR"

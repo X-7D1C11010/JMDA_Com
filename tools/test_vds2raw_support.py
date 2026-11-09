@@ -414,7 +414,7 @@ class LauncherAndSamplingTests(unittest.TestCase):
             self.assertNotIn("train_dsne", source.lower())
         linux = (root / "scripts/run_vds2raw_methods.sh").read_text(encoding="utf-8")
         self.assertIn('METHOD_ORDER:-tir', linux)
-        self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-100}"', linux)
+        self.assertIn('TIR_EPOCHS="${VDS2RAW_TIR_EPOCHS:-39}"', linux)
         self.assertIn('TIR_BATCH="${VDS2RAW_TIR_BATCH_SIZE:-32}"', linux)
         self.assertIn('--eval-frequency 1', linux)
         self.assertIn('TIR_LORA_LR="${VDS2RAW_TIR_LORA_LR:-0.0002}"', linux)
@@ -424,7 +424,11 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertIn('--minibatch-updates', linux)
         self.assertIn('TIR_GATE_LR="${VDS2RAW_TIR_GATE_LR:-0.002}"', linux)
         self.assertIn(
-            'TIR_TEXT_UNFREEZE_EPOCH="${VDS2RAW_TIR_TEXT_UNFREEZE_EPOCH:-41}"',
+            'TIR_TEXT_UNFREEZE_EPOCH="${VDS2RAW_TIR_TEXT_UNFREEZE_EPOCH:-40}"',
+            linux,
+        )
+        self.assertIn(
+            'TIR_SCHEDULER_HORIZON="${VDS2RAW_TIR_SCHEDULER_HORIZON_EPOCHS:-100}"',
             linux,
         )
         self.assertIn(
@@ -437,7 +441,7 @@ class LauncherAndSamplingTests(unittest.TestCase):
         self.assertIn('MCFT_BATCH=2; TIR_BATCH=32', linux)
         self.assertIn('MCFT_MAX_BATCH_ARGS=(--max-train-batches 1)', linux)
         self.assertNotIn('TIR_MAX_BATCH_ARGS=(--max-train-batches 1)', linux)
-        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-15}"', linux)
+        self.assertIn('TIR_EARLY_PATIENCE="${VDS2RAW_TIR_EARLY_STOPPING_PATIENCE:-0}"', linux)
         self.assertIn('TIR_EARLY_MIN_EPOCHS="${VDS2RAW_TIR_EARLY_STOPPING_MIN_EPOCHS:-60}"', linux)
         tir_train = (root / "vds2raw/train_tir.py").read_text(encoding="utf-8")
         self.assertIn("domain_class_balanced_train=False", tir_train)

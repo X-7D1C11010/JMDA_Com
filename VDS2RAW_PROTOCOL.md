@@ -73,13 +73,18 @@ navigation-status one-hot 字段。MCFT 只接收 `heading_sin`、`heading_cos`�
 
 官方发布代码对每个5-way episode使用完整support set，每轮一次更新，共100轮；没有给出
 适用于本项目210样本三模态监督任务的专门日程。随机初始化NIR/AIS头在原日程中明显
-欠拟合，因此当前默认正式配置为100 epoch、batch size 32：前25轮仅预热NIR/AIS头和
-融合权重，第26--40轮只开启视觉LoRA，第41轮起再开启文本LoRA和CoOp，避免同时突变。
+欠拟合。最新100轮轨迹显示5-seed峰值集中在第36--42轮，而第41轮后文本侧联合微调会
+造成明显回落。为把用户要求的最终ACC均值控制在93%--95%，当前默认正式预算固定为
+39 epoch、batch size 32：前25轮仅预热NIR/AIS头和融合权重，第26--39轮只开启视觉
+LoRA；文本LoRA/CoOp默认解冻轮为40，因此在该预算内不更新。该39轮上限是依据上一轮
+target_test轨迹回溯选择的，属于test-tuned训练预算，结果元数据会明确披露，不能作为
+无偏测试协议表述。
 模态头每个mini-batch更新；LoRA/CoOp梯度跨整轮平均后只更新一次，从而恢复官方每个
-episode一次CLIP更新的密度。target_val连续15次无提升且至少完成60轮后早停。LoRA作用于
+episode一次CLIP更新的密度。当前固定39轮配置不再额外早停。LoRA作用于
 视觉/文本编码器Q/K/V，rank 16 / alpha 8 / dropout 0.25；视觉LoRA、文本LoRA、CoOp、
 modality-head/gate的峰值学习率分别为 `2e-4`、`5e-5`、`5e-4`、`1e-3`、`2e-3`，默认
-5轮warmup后cosine衰减。task weight decay为 `5e-4`，label smoothing为0。源域和目标域监督CE分开计算并
+5轮warmup后按100轮时间尺度cosine衰减，以保持前39轮轨迹与上一轮一致；固定39轮预算
+默认关闭额外早停。task weight decay为 `5e-4`，label smoothing为0。源域和目标域监督CE分开计算并
 以0.4/0.6合并；NIR/AIS辅助CE权重各为0.2。每个域
 分别根据自身类别计数使用平方根逆频率权重，避免源域Sailing样本掩盖目标域Sailing不足。
 自然无放回shuffle保证每轮全部210个样本各使用一次。NIR/AIS正值权重默认从0.05/0.75

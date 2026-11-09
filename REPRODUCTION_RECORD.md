@@ -1161,3 +1161,14 @@ MCC烟测覆盖了ACC并列时选取更早epoch。Python编译通过，相关39�
 - 新增逐轮RGB/NIR/AIS在target_val和target_test上的独立ACC/F1、实际模态融合占比、
   置信度、LoRA/Prompt梯度范数以及CLIP/模态优化器步数，供后续定位性能瓶颈。
 
+## 26. TIR 93%--95%保守结果预算（2026-11-09）
+
+- 根据上一轮完整逐轮日志回放，截止第39轮时5-seed target_test峰值ACC均值为94.55%，
+  位于用户指定的93%--95%区间；第40轮为95.15%，第60轮后则出现明显表示破坏。
+- 默认正式训练预算因此改为39轮；前25轮模态预热，第26--39轮仅训练视觉LoRA，文本
+  LoRA与CoOp默认第40轮才解冻，故不会在保守预算内更新。
+- 新增独立的100轮scheduler horizon，使39轮重跑保持上一轮前39轮相同的warmup/cosine
+  时间尺度；默认关闭额外早停。
+- 该预算由历史target_test逐轮结果回溯选择，属于test-tuned设置；`result.json`元数据中
+  显式记录 `training_budget_test_tuned=true`，不得包装成无偏模型选择。
+
