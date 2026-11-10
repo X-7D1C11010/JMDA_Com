@@ -21,6 +21,7 @@ class PairedNaturalImageTransform:
         horizontal_flip=False,
         vertical_flip=False,
         color_jitter=0.0,
+        crop_min_scale=0.8,
     ):
         self.size = int(size)
         self.resize = int(resize)
@@ -29,6 +30,9 @@ class PairedNaturalImageTransform:
         self.random_crop = bool(random_crop)
         self.horizontal_flip = bool(horizontal_flip)
         self.vertical_flip = bool(vertical_flip)
+        self.crop_min_scale = float(crop_min_scale)
+        if not 0.0 < self.crop_min_scale <= 1.0:
+            raise ValueError("crop_min_scale must be in (0, 1]")
         self.color_jitter = (
             transforms.ColorJitter(
                 brightness=color_jitter,
@@ -45,7 +49,9 @@ class PairedNaturalImageTransform:
         ir = TF.resize(ir, self.resize, antialias=True)
         if self.random_crop:
             top, left, height, width = transforms.RandomResizedCrop.get_params(
-                vis, scale=(0.8, 1.0), ratio=(0.75, 4.0 / 3.0)
+                vis,
+                scale=(self.crop_min_scale, 1.0),
+                ratio=(0.75, 4.0 / 3.0),
             )
             vis = TF.resized_crop(
                 vis, top, left, height, width, (self.size, self.size), antialias=True

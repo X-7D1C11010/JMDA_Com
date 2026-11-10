@@ -14,12 +14,8 @@ prepare_historical_trainer() {
     return 1
   fi
   HISTORICAL_UDA_ENTRY["$method"]="$snapshot/$entry"
-  case "$variant:$method" in
-    tuned:dann|mcc_source_only:mcc|sampling:deepcoral|augmentation:*|ir_pretrain:*|ema_teacher:*)
-      "$PYTHON" -B "$HERE/tools/prepare_historical_uda_variant.py" \
-        "$snapshot/$entry" "$method" "$variant" || return 1
-      ;;
-  esac
+  "$PYTHON" -B "$HERE/tools/prepare_historical_uda_variant.py" \
+    "$snapshot/$entry" "$method" "$variant" || return 1
   echo "[$variant] $method revision=$revision reference_run=$evidence"
 }
 
@@ -36,8 +32,8 @@ historical_method_enabled() {
   local variant="$1" method="$2"
   uda_method_enabled "$method" || return 1
   case "$variant:$method" in
-    mcc_source_only:mcc|sampling:deepcoral|ir_pretrain:dann|ir_pretrain:mdd|ir_pretrain:mcc) return 0 ;;
-    mcc_source_only:*|sampling:*|ir_pretrain:*) return 1 ;;
+    dann_capped:dann|dann_ir_pretrain:dann|coral_lr5:deepcoral|sampling:deepcoral|cdan_source_only:cdan|cdan_grl_cap:cdan|mdd_ramp8:mdd|mdd_ramp4:mdd|mcc_source_only:mcc|mcc_joint_zero:mcc|ir_pretrain:dann|ir_pretrain:mdd|ir_pretrain:mcc) return 0 ;;
+    dann_capped:*|dann_ir_pretrain:*|coral_lr5:*|sampling:*|cdan_source_only:*|cdan_grl_cap:*|mdd_ramp8:*|mdd_ramp4:*|mcc_source_only:*|mcc_joint_zero:*|ir_pretrain:*) return 1 ;;
   esac
   return 0
 }
@@ -80,7 +76,7 @@ prepare_historical_uda() {
 
 run_historical_uda_target() {
   local variant="$1" target="$2"
-  local coral_head_mult=10 cdan_updates=1200 mdd_weight=0.45 mdd_ramp=12
+  local coral_head_mult=10 cdan_updates=1200 cdan_weight=1 mdd_weight=0.45 mdd_ramp=12
   local mcc_weight=0.02 mcc_ramp=10 mcc_warmup=2
   if [ "$variant" = "tuned" ]; then
     coral_head_mult=5
@@ -89,10 +85,17 @@ run_historical_uda_target() {
     mdd_ramp=8
     mcc_weight=0.006
     mcc_ramp=3
-  elif [ "$variant" = "mcc_source_only" ]; then
-    mcc_weight=0
-    mcc_warmup=14
   fi
+  case "$variant" in
+    coral_lr5|sampling) coral_head_mult=5 ;;
+    cdan_source_only) cdan_weight=0 ;;
+    mdd_ramp8) mdd_weight=0.30; mdd_ramp=8 ;;
+    mdd_ramp4) mdd_weight=0.30; mdd_ramp=4 ;;
+    mcc_source_only) mcc_weight=0; mcc_warmup=14 ;;
+    mcc_joint_zero) mcc_weight=0 ;;
+  esac
+  local EFF_DIR="$EFF_DIR/$SUITE_ID/$target"
+  mkdir -p "$EFF_DIR" || return 1
   local -a common=(
     --target "$target" --seed "$SEED" --data-dir "$FAIR_LIST_DIR"
     --efficiency_output_dir "$EFF_DIR" --save-dir "$CHECKPOINT_ROOT"
@@ -117,7 +120,7 @@ run_historical_uda_target() {
     run "cdan_$target" --record-epochs 0 "$PYTHON" -B -u "${HISTORICAL_UDA_ENTRY[cdan]}" \
       "${common[@]}" --num-workers 2 --backbone ResNet50 --batch-size 16 \
       --method CDAN+E --num-iterations "$cdan_updates" --test-interval 100 --lr 0.0005 \
-      --head-lr-mult 3 --ad-lr-mult 10 --trade-off 1 --coeff-max-iter 10000 --coeff-alpha 10
+      --head-lr-mult 3 --ad-lr-mult 10 --trade-off "$cdan_weight" --coeff-max-iter 10000 --coeff-alpha 10
   fi
   if historical_method_enabled "$variant" mdd; then
     run "mdd_$target" --record-epochs 36 "$PYTHON" -B -u "${HISTORICAL_UDA_ENTRY[mdd]}" \
@@ -130,41 +133,60 @@ run_historical_uda_target() {
       --epochs 14 --iters-per-epoch 100 --lr 0.002 --trade-off "$mcc_weight" \
       --source-warmup-epochs "$mcc_warmup" --trade-off-warmup-epochs "$mcc_ramp" --label-smoothing 0.10
   fi
+  "$PYTHON" -B "$HERE/tools/efficiency_common.py" "$EFF_DIR" || return 1
+  if [ -f "$EFF_DIR/efficiency_summary.csv" ]; then
+    echo "Efficiency summary: $EFF_DIR/efficiency_summary.csv"
+  fi
 }
 
 run_historical_uda_suite() {
-  local requested="$1" phase target
+  local requested="$1" phase target method SEED
   local base_run_id="$RUN_ID" base_suite_id="$SUITE_ID"
   local RUN_ID="$base_run_id" SUITE_ID="$base_suite_id"
+  local seeds_csv="${UDA_HISTORICAL_SEEDS:-${JMDA_SEED:-42}}"
+  if [[ ! "$seeds_csv" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    echo "Invalid historical UDA seed list: $seeds_csv" >&2
+    return 1
+  fi
+  local -a seeds
+  IFS=, read -r -a seeds <<< "$seeds_csv"
   local -a phases=("$requested")
   case "$requested" in
     compare) phases=(historical_best mcc_source_only tuned) ;;
-    historical_best|tuned|mcc_source_only|sampling|augmentation|ir_pretrain|ema_teacher) ;;
+    diagnose) phases=(coral_lr5 sampling historical_best cdan_source_only cdan_grl_cap
+                      mcc_source_only mcc_joint_zero dann_capped dann_ir_pretrain mdd_ramp8 mdd_ramp4) ;;
+    historical_best|tuned|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
     *) echo "Unknown historical UDA variant: $requested" >&2; return 1 ;;
   esac
   for phase in "${phases[@]}"; do
     # The first MCC comparison must measure adaptation against source-only.
     # Run its new weight schedule separately after examining that comparison.
     local -A UDA_METHOD_ENABLED=()
-    local method
     for method in "${UDA_METHOD_ARRAY[@]}"; do
-      if [ "$requested:$phase:${method,,}" != "compare:tuned:mcc" ]; then
-        UDA_METHOD_ENABLED["${method,,}"]=1
-      fi
+      case "$requested:$phase:${method,,}" in
+        compare:tuned:mcc|diagnose:historical_best:dann|diagnose:historical_best:deepcoral|diagnose:historical_best:mdd) continue ;;
+      esac
+      UDA_METHOD_ENABLED["${method,,}"]=1
     done
-    if [ "$requested" = "compare" ]; then
+    RUN_ID="$base_run_id"
+    SUITE_ID="$base_suite_id"
+    if [ "${#phases[@]}" -gt 1 ]; then
       RUN_ID="${base_run_id}_$phase"
       SUITE_ID="${base_suite_id}_$phase"
     fi
     prepare_historical_uda "$phase" || return 1
     if [ "${#HISTORICAL_UDA_ENTRY[@]}" -eq 0 ]; then
-      if [ "$requested" = "compare" ]; then continue; fi
+      if [ "${#phases[@]}" -gt 1 ]; then continue; fi
       echo "No selected method supports $phase" >&2
       return 1
     fi
-    echo "Historical UDA variant=$phase suite=$SUITE_ID"
-    for target in "${TARGETS[@]}"; do
-      run_historical_uda_target "$phase" "$target"
+    local phase_run_id="$RUN_ID"
+    for SEED in "${seeds[@]}"; do
+      if [ "${#seeds[@]}" -gt 1 ]; then RUN_ID="${phase_run_id}_seed$SEED"; fi
+      echo "Historical UDA variant=$phase suite=$SUITE_ID seed=$SEED"
+      for target in "${TARGETS[@]}"; do
+        run_historical_uda_target "$phase" "$target" || return 1
+      done
     done
   done
 }

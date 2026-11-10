@@ -32,9 +32,9 @@ def get_run_id():
     return uuid.uuid4().hex[:12]
 
 
-def _cuda_sync():
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
+def _cuda_sync(device=None):
+    if torch.cuda.is_available() and (device is None or torch.device(device).type == 'cuda'):
+        torch.cuda.synchronize(device)
 
 
 def _reset_memory():
@@ -174,20 +174,20 @@ def measure_inference_latency(model, inputs, device,
     # Warmup — use no_grad (not inference_mode) when forward_fn is provided,
     # because some models (e.g. CLIP-based prompt learners) need grad enabled
     # internally for their hooks.
-    grad_ctx = torch.no_grad() if forward_fn is not None else torch.inference_mode()
-    with grad_ctx:
+    grad_context = torch.no_grad if forward_fn is not None else torch.inference_mode
+    with grad_context():
         for _ in range(warmup):
             _call()
-    _cuda_sync()
+    _cuda_sync(device)
 
     # Measure
     times_ms = []
-    with grad_ctx:
+    with grad_context():
         for _ in range(iters):
-            _cuda_sync()
+            _cuda_sync(device)
             t0 = time.perf_counter()
             _call()
-            _cuda_sync()
+            _cuda_sync(device)
             t1 = time.perf_counter()
             times_ms.append((t1 - t0) * 1000)
 
@@ -493,11 +493,14 @@ def generate_summary_files(output_dir):
 
             if trimodal_methods:
                 f.write(f'### Table ({protocol}): Trimodal / Dual-modal Methods (VIS+IR[+AIS])\n\n')
-                cols = ['total_params', 'inference_GFLOPs', 'latency_mean_ms',
-                        'throughput_samples_s', 'train_step_mean_ms',
-                        'peak_train_allocated_gb', 'peak_infer_allocated_gb']
-                col_names = ['Params', 'GFLOPs', 'Latency(ms)', 'Throughput(s/s)',
-                             'Train Step(ms)', 'Train Mem(GB)', 'Infer Mem(GB)']
+                cols = ['total_params', 'trainable_params', 'inference_GFLOPs',
+                        'total_train_time_s', 'train_epoch_mean_s', 'latency_mean_ms',
+                        'throughput_samples_s', 'peak_train_reserved_gb',
+                        'train_step_mean_ms', 'peak_train_allocated_gb', 'peak_infer_allocated_gb']
+                col_names = ['Params', 'Trainable params', 'GFLOPs',
+                             'Train time (s)', 'Train unit mean (s)', 'Latency (ms)',
+                             'Throughput (samples/s)', 'Train reserved (GiB)',
+                             'Train Step(ms)', 'Train Allocated(GiB)', 'Infer Allocated(GiB)']
                 f.write('| Method | ' + ' | '.join(col_names) + ' |\n')
                 f.write('|--------|' + '|'.join(['---'] * len(col_names)) + '|\n')
                 for m in sorted(trimodal_methods):
@@ -603,8 +606,8 @@ class EfficiencyLogger:
                         'peak_alloc_gb', 'peak_reserved_gb'])
 
     def epoch_start(self, epoch):
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
+        if torch.device(self.device).type == 'cuda' and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(self.device)
         self._epoch_start = time.perf_counter()
         self._current_epoch_steps = []
         self._current_epoch_dl = []
@@ -641,9 +644,9 @@ class EfficiencyLogger:
         self._total_train_time += epoch_time
 
         avg_step = np.mean(self._current_epoch_steps) if self._current_epoch_steps else 0
-        if torch.cuda.is_available():
-            peak_a = torch.cuda.max_memory_allocated()
-            peak_r = torch.cuda.max_memory_reserved()
+        if torch.device(self.device).type == 'cuda' and torch.cuda.is_available():
+            peak_a = torch.cuda.max_memory_allocated(self.device)
+            peak_r = torch.cuda.max_memory_reserved(self.device)
         else:
             peak_a = peak_r = 0
 
@@ -791,3 +794,11 @@ def run_profiler_summary(model, inputs, device, run_dir,
         f.write(f"Device: {device}\n\n")
         f.write(summary)
     return path
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Summarize a directory of efficiency runs.')
+    parser.add_argument('output_dir')
+    generate_summary_files(parser.parse_args().output_dir)

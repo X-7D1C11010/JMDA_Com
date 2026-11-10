@@ -197,6 +197,8 @@ def parse_args():
     parser.add_argument("--ir-initial-scale", type=float, default=0.1)
     parser.add_argument("--ir-dropout", type=float, default=0.1)
     parser.add_argument("--ir-aux-loss-weight", type=float, default=0.2)
+    parser.add_argument("--color-jitter", type=float, default=0.1)
+    parser.add_argument("--crop-min-scale", type=float, default=0.8)
     parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument("--class-weight-power", type=float, default=0.5)
     parser.add_argument("--source-loss-weight", type=float, default=0.5)
@@ -236,6 +238,10 @@ def main():
         raise ValueError("invalid label smoothing or IR dropout")
     if args.ir_initial_scale <= 0 or args.ir_aux_loss_weight < 0:
         raise ValueError("IR scale must be positive and auxiliary weight non-negative")
+    if not 0 <= args.color_jitter <= 0.5:
+        raise ValueError("color-jitter must be in [0, 0.5]")
+    if not 0 < args.crop_min_scale <= 1:
+        raise ValueError("crop-min-scale must be in (0, 1]")
     if not 0 <= args.class_weight_power <= 1:
         raise ValueError("class-weight-power must be in [0, 1]")
     if args.source_loss_weight < 0 or args.target_loss_weight < 0:
@@ -289,7 +295,8 @@ def main():
         random_crop=True,
         horizontal_flip=True,
         vertical_flip=False,
-        color_jitter=0.1,
+        color_jitter=args.color_jitter,
+        crop_min_scale=args.crop_min_scale,
     )
     eval_transform = PairedNaturalImageTransform(
         size=224,
@@ -300,6 +307,7 @@ def main():
         horizontal_flip=False,
         vertical_flip=False,
         color_jitter=0.0,
+        crop_min_scale=1.0,
     )
     source = PairedUdaImageListDataset(
         data_dir / "sunny_train.txt", transform=train_transform, label_map=label_map
@@ -401,10 +409,21 @@ def main():
     )
     adapter_optimizer = torch.optim.AdamW(
         [
-            {"params": groups["adapters"], "lr": args.adapter_lr},
-            {"params": groups["gates"], "lr": args.gate_lr},
+            {
+                "params": groups["adapters"],
+                "lr": args.adapter_lr,
+                "weight_decay": args.weight_decay,
+            },
+            {
+                "params": groups["gates"],
+                "lr": args.gate_lr,
+                # The gate is stored in inverse-softplus space. AdamW decay
+                # toward raw zero would increase a small positive effective
+                # gate toward softplus(0)=0.693, the opposite of regularizing
+                # its modal contribution.
+                "weight_decay": 0.0,
+            },
         ],
-        weight_decay=args.weight_decay,
     )
 
     source_weights, source_counts = mild_class_weights(
@@ -451,7 +470,11 @@ def main():
         "source_loss_weight": args.source_loss_weight,
         "target_loss_weight": args.target_loss_weight,
         "modalities": ["VIS_RGB", "IR_grayscale"],
-        "augmentation": "paired random resized crop + horizontal flip; VIS-only mild color jitter",
+        "augmentation": {
+            "geometry": "paired random resized crop + horizontal flip",
+            "crop_min_scale": args.crop_min_scale,
+            "vis_only_color_jitter": args.color_jitter,
+        },
         "normalization": {"VIS": "CLIP ViT-B/16", "IR": "mean=0.5,std=0.5"},
         "training_update_semantics": (
             "IR head/gate update per minibatch; LoRA/CoOp gradients are averaged "

@@ -82,7 +82,56 @@ run_worker() {
   echo "Epochs per independent run: $epochs"
 
   local target seed tag log
+  local profile lora_lr text_lora_lr_scale prompt_lr adapter_lr gate_lr
+  local lora_weight_decay task_weight_decay lora_dropout ir_initial_scale
+  local ir_dropout ir_aux_weight label_smoothing color_jitter crop_min_scale
+  local early_patience early_min_epochs
   for target in "${targets[@]}"; do
+    case "$target" in
+      rainy)
+        profile="baseline"
+        lora_lr="${TIR_WEATHER_LORA_LR:-0.0002}"
+        text_lora_lr_scale="${TIR_WEATHER_TEXT_LORA_LR_SCALE:-0.25}"
+        prompt_lr="${TIR_WEATHER_PROMPT_LR:-0.0005}"
+        adapter_lr="${TIR_WEATHER_ADAPTER_LR:-0.001}"
+        gate_lr="${TIR_WEATHER_GATE_LR:-0.002}"
+        lora_weight_decay="${TIR_WEATHER_LORA_WEIGHT_DECAY:-0.01}"
+        task_weight_decay="${TIR_WEATHER_WEIGHT_DECAY:-0.0005}"
+        lora_dropout="${TIR_WEATHER_LORA_DROPOUT:-0.25}"
+        ir_initial_scale="${TIR_WEATHER_IR_INITIAL_SCALE:-0.1}"
+        ir_dropout="${TIR_WEATHER_IR_DROPOUT:-0.1}"
+        ir_aux_weight="${TIR_WEATHER_IR_AUX_WEIGHT:-0.2}"
+        label_smoothing="${TIR_WEATHER_LABEL_SMOOTHING:-0.0}"
+        color_jitter="${TIR_WEATHER_COLOR_JITTER:-0.1}"
+        crop_min_scale="${TIR_WEATHER_CROP_MIN_SCALE:-0.8}"
+        early_patience="${TIR_WEATHER_EARLY_STOPPING_PATIENCE:-0}"
+        early_min_epochs="${TIR_WEATHER_EARLY_STOPPING_MIN_EPOCHS:-50}"
+        ;;
+      backlight|foggy|dark)
+        profile="regularized"
+        lora_lr="${TIR_WEATHER_REGULARIZED_LORA_LR:-${TIR_WEATHER_LORA_LR:-0.0001}}"
+        text_lora_lr_scale="${TIR_WEATHER_REGULARIZED_TEXT_LORA_LR_SCALE:-${TIR_WEATHER_TEXT_LORA_LR_SCALE:-0.2}}"
+        prompt_lr="${TIR_WEATHER_REGULARIZED_PROMPT_LR:-${TIR_WEATHER_PROMPT_LR:-0.00025}}"
+        adapter_lr="${TIR_WEATHER_REGULARIZED_ADAPTER_LR:-${TIR_WEATHER_ADAPTER_LR:-0.00075}}"
+        gate_lr="${TIR_WEATHER_REGULARIZED_GATE_LR:-${TIR_WEATHER_GATE_LR:-0.0002}}"
+        lora_weight_decay="${TIR_WEATHER_REGULARIZED_LORA_WEIGHT_DECAY:-${TIR_WEATHER_LORA_WEIGHT_DECAY:-0.02}}"
+        task_weight_decay="${TIR_WEATHER_REGULARIZED_WEIGHT_DECAY:-${TIR_WEATHER_WEIGHT_DECAY:-0.001}}"
+        lora_dropout="${TIR_WEATHER_REGULARIZED_LORA_DROPOUT:-${TIR_WEATHER_LORA_DROPOUT:-0.35}}"
+        ir_initial_scale="${TIR_WEATHER_REGULARIZED_IR_INITIAL_SCALE:-${TIR_WEATHER_IR_INITIAL_SCALE:-0.05}}"
+        ir_dropout="${TIR_WEATHER_REGULARIZED_IR_DROPOUT:-${TIR_WEATHER_IR_DROPOUT:-0.25}}"
+        ir_aux_weight="${TIR_WEATHER_REGULARIZED_IR_AUX_WEIGHT:-${TIR_WEATHER_IR_AUX_WEIGHT:-0.15}}"
+        label_smoothing="${TIR_WEATHER_REGULARIZED_LABEL_SMOOTHING:-${TIR_WEATHER_LABEL_SMOOTHING:-0.05}}"
+        color_jitter="${TIR_WEATHER_REGULARIZED_COLOR_JITTER:-${TIR_WEATHER_COLOR_JITTER:-0.15}}"
+        crop_min_scale="${TIR_WEATHER_REGULARIZED_CROP_MIN_SCALE:-${TIR_WEATHER_CROP_MIN_SCALE:-0.75}}"
+        early_patience="${TIR_WEATHER_REGULARIZED_EARLY_STOPPING_PATIENCE:-${TIR_WEATHER_EARLY_STOPPING_PATIENCE:-15}}"
+        early_min_epochs="${TIR_WEATHER_REGULARIZED_EARLY_STOPPING_MIN_EPOCHS:-${TIR_WEATHER_EARLY_STOPPING_MIN_EPOCHS:-60}}"
+        ;;
+    esac
+    if [ "$mode" = smoke ]; then
+      early_patience=0
+      early_min_epochs=0
+    fi
+    echo "Target profile: target=$target profile=$profile lora_lr=$lora_lr prompt_lr=$prompt_lr adapter_lr=$adapter_lr gate_lr=$gate_lr label_smoothing=$label_smoothing"
     for seed in "${seeds[@]}"; do
       tag="tir_weather_${target}_seed${seed}"
       log="$log_dir/${tag}.log"
@@ -104,22 +153,25 @@ run_worker() {
           --clip-checkpoint "$clip_checkpoint" \
           --epochs "$epochs" --batch-size "$batch_size" \
           --eval-frequency 1 --num-workers "$num_workers" \
-          --lora-lr "${TIR_WEATHER_LORA_LR:-0.0002}" \
-          --text-lora-lr-scale "${TIR_WEATHER_TEXT_LORA_LR_SCALE:-0.25}" \
-          --prompt-lr "${TIR_WEATHER_PROMPT_LR:-0.0005}" \
-          --adapter-lr "${TIR_WEATHER_ADAPTER_LR:-0.001}" \
-          --gate-lr "${TIR_WEATHER_GATE_LR:-0.002}" \
-          --lora-weight-decay "${TIR_WEATHER_LORA_WEIGHT_DECAY:-0.01}" \
-          --weight-decay "${TIR_WEATHER_WEIGHT_DECAY:-0.0005}" \
+          --lora-lr "$lora_lr" \
+          --text-lora-lr-scale "$text_lora_lr_scale" \
+          --prompt-lr "$prompt_lr" \
+          --adapter-lr "$adapter_lr" \
+          --gate-lr "$gate_lr" \
+          --lora-weight-decay "$lora_weight_decay" \
+          --weight-decay "$task_weight_decay" \
           --lora-rank "${TIR_WEATHER_LORA_RANK:-16}" \
           --lora-alpha "${TIR_WEATHER_LORA_ALPHA:-8}" \
-          --lora-dropout "${TIR_WEATHER_LORA_DROPOUT:-0.25}" \
+          --lora-dropout "$lora_dropout" \
           --lora-encoder both --lora-params q k v \
           --tir-min-weight "${TIR_WEATHER_MIN_TOKEN_WEIGHT:-0.5}" \
           --tir-max-weight "${TIR_WEATHER_MAX_TOKEN_WEIGHT:-1.5}" \
-          --ir-initial-scale "${TIR_WEATHER_IR_INITIAL_SCALE:-0.1}" \
-          --ir-dropout "${TIR_WEATHER_IR_DROPOUT:-0.1}" \
-          --ir-aux-loss-weight "${TIR_WEATHER_IR_AUX_WEIGHT:-0.2}" \
+          --ir-initial-scale "$ir_initial_scale" \
+          --ir-dropout "$ir_dropout" \
+          --ir-aux-loss-weight "$ir_aux_weight" \
+          --label-smoothing "$label_smoothing" \
+          --color-jitter "$color_jitter" \
+          --crop-min-scale "$crop_min_scale" \
           --class-weight-power "${TIR_WEATHER_CLASS_WEIGHT_POWER:-0.5}" \
           --source-loss-weight "${TIR_WEATHER_SOURCE_LOSS_WEIGHT:-0.5}" \
           --target-loss-weight "${TIR_WEATHER_TARGET_LOSS_WEIGHT:-0.5}" \
@@ -128,7 +180,8 @@ run_worker() {
           --lr-warmup-steps "$lr_warmup" \
           --min-lr-ratio "${TIR_WEATHER_MIN_LR_RATIO:-0.1}" \
           --grad-clip "${TIR_WEATHER_GRAD_CLIP:-1.0}" \
-          --early-stopping-patience "${TIR_WEATHER_EARLY_STOPPING_PATIENCE:-0}" \
+          --early-stopping-patience "$early_patience" \
+          --early-stopping-min-epochs "$early_min_epochs" \
           "${max_batch_args[@]}" > "$log" 2>&1; then
         echo "    completed: $tag"
       else
