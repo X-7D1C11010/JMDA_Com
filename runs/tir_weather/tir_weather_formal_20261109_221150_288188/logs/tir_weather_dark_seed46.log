@@ -1,0 +1,416 @@
+[GPU-WAIT] tir_weather_dark_seed46: require free >= 14336 MiB, util <= 10% for 3 checks; candidates=all
+[GPU-WAIT] 2026-11-10T01:13:29+08:00 tir_weather_dark_seed46: GPU 0: free=20169 MiB, util=0%; GPU 1: free=18173 MiB, util=100%
+[GPU-WAIT] 2026-11-10T01:13:59+08:00 tir_weather_dark_seed46: GPU 0: free=20167 MiB, util=28%; GPU 1: free=18173 MiB, util=100%
+[GPU-WAIT] 2026-11-10T01:14:29+08:00 tir_weather_dark_seed46: GPU 0: free=20167 MiB, util=0%; GPU 1: free=18173 MiB, util=100%
+[GPU-WAIT] 2026-11-10T01:14:59+08:00 tir_weather_dark_seed46: GPU 0: free=20167 MiB, util=0%; GPU 1: free=18173 MiB, util=100%
+[GPU-SELECT] tir_weather_dark_seed46: physical GPU 0; free=20167 MiB, util=0%; launching: /home/lixiang/envs/lx_pytorch/bin/python /home/lixiang/lx/JMDA_Com/weather/train_tir.py --target dark --seed 46 --data-dir /home/lixiang/lx/JMDA_Com/data_lists --save-dir /home/lixiang/lx/JMDA_Com/runs/tir_weather/tir_weather_formal_20261109_221150_288188/artifacts --class-names-file /home/lixiang/lx/JMDA_Com/class.txt --clip-checkpoint /home/lixiang/lx/JMDA_Com/pretrained_weights/clip/ViT-B-16.pt --epochs 100 --batch-size 32 --eval-frequency 1 --num-workers 2 --lora-lr 0.0002 --text-lora-lr-scale 0.25 --prompt-lr 0.0005 --adapter-lr 0.001 --gate-lr 0.002 --lora-weight-decay 0.01 --weight-decay 0.0005 --lora-rank 16 --lora-alpha 8 --lora-dropout 0.25 --lora-encoder both --lora-params q k v --tir-min-weight 0.5 --tir-max-weight 1.5 --ir-initial-scale 0.1 --ir-dropout 0.1 --ir-aux-loss-weight 0.2 --class-weight-power 0.5 --source-loss-weight 0.5 --target-loss-weight 0.5 --modality-warmup-epochs 10 --text-unfreeze-epoch 31 --lr-warmup-steps 5 --min-lr-ratio 0.1 --grad-clip 1.0 --early-stopping-patience 0
+Deterministic kernels: True
+Target-driven class space: original_ids=[0, 1, 4, 5, 6, 8, 10, 11], names=['Bulk Cargo Ship', 'Inland Utility Vessel', 'Tugboat', 'Ferry', 'Inland Transport Barge', 'Police Speedboat', 'Steel Fishing Trawler', 'Construction Barge'], remapped=0..7
+Source sunny train: kept=546, label_dropped=357, unpaired_dropped=83
+Target dark train (all labels visible): kept=465, label_dropped=0, unpaired_dropped=0
+Target dark val: kept=120, unpaired_dropped=0
+Device: cuda; fresh model initialization for seed 46
+Epoch [1/100] batch [10/32] loss=2.3456
+Epoch [1/100] batch [20/32] loss=2.3325
+Epoch [1/100] batch [30/32] loss=2.4130
+Epoch [1/100] target_val ACC=0.1333 P=0.1632 R=0.1096 F1=0.1095 VIS_ACC=0.1333 IR_ACC=0.2167
+Epoch [2/100] batch [10/32] loss=2.4393
+Epoch [2/100] batch [20/32] loss=2.3713
+Epoch [2/100] batch [30/32] loss=2.5452
+Epoch [2/100] target_val ACC=0.1417 P=0.1625 R=0.1145 F1=0.1151 VIS_ACC=0.1333 IR_ACC=0.2000
+Epoch [3/100] batch [10/32] loss=2.3594
+Epoch [3/100] batch [20/32] loss=2.5338
+Epoch [3/100] batch [30/32] loss=2.1331
+Epoch [3/100] target_val ACC=0.1667 P=0.1802 R=0.1289 F1=0.1324 VIS_ACC=0.1333 IR_ACC=0.2000
+Epoch [4/100] batch [10/32] loss=2.3675
+Epoch [4/100] batch [20/32] loss=2.6599
+Epoch [4/100] batch [30/32] loss=2.4747
+Epoch [4/100] target_val ACC=0.1500 P=0.1802 R=0.1241 F1=0.1204 VIS_ACC=0.1333 IR_ACC=0.1833
+Epoch [5/100] batch [10/32] loss=2.4363
+Epoch [5/100] batch [20/32] loss=2.1604
+Epoch [5/100] batch [30/32] loss=2.4579
+Epoch [5/100] target_val ACC=0.1667 P=0.1882 R=0.1354 F1=0.1357 VIS_ACC=0.1333 IR_ACC=0.2083
+Epoch [6/100] batch [10/32] loss=2.4049
+Epoch [6/100] batch [20/32] loss=2.2160
+Epoch [6/100] batch [30/32] loss=2.4622
+Epoch [6/100] target_val ACC=0.2000 P=0.1696 R=0.1492 F1=0.1368 VIS_ACC=0.1333 IR_ACC=0.2167
+Epoch [7/100] batch [10/32] loss=2.2451
+Epoch [7/100] batch [20/32] loss=2.1336
+Epoch [7/100] batch [30/32] loss=2.6331
+Epoch [7/100] target_val ACC=0.1833 P=0.1889 R=0.1450 F1=0.1397 VIS_ACC=0.1333 IR_ACC=0.2250
+Epoch [8/100] batch [10/32] loss=2.4526
+Epoch [8/100] batch [20/32] loss=2.3830
+Epoch [8/100] batch [30/32] loss=2.3046
+Epoch [8/100] target_val ACC=0.2167 P=0.2027 R=0.1499 F1=0.1398 VIS_ACC=0.1333 IR_ACC=0.2667
+Epoch [9/100] batch [10/32] loss=2.4022
+Epoch [9/100] batch [20/32] loss=2.1819
+Epoch [9/100] batch [30/32] loss=2.1982
+Epoch [9/100] target_val ACC=0.2083 P=0.1854 R=0.1499 F1=0.1444 VIS_ACC=0.1333 IR_ACC=0.2500
+Epoch [10/100] batch [10/32] loss=2.3352
+Epoch [10/100] batch [20/32] loss=2.5477
+Epoch [10/100] batch [30/32] loss=2.3663
+Epoch [10/100] target_val ACC=0.0917 P=0.2080 R=0.0912 F1=0.0720 VIS_ACC=0.1333 IR_ACC=0.0750
+Epoch [11/100] batch [10/32] loss=2.3709
+Epoch [11/100] batch [20/32] loss=2.2800
+Epoch [11/100] batch [30/32] loss=2.1973
+Epoch [11/100] target_val ACC=0.2500 P=0.2366 R=0.1842 F1=0.1811 VIS_ACC=0.1417 IR_ACC=0.2833
+Epoch [12/100] batch [10/32] loss=2.3591
+Epoch [12/100] batch [20/32] loss=2.1888
+Epoch [12/100] batch [30/32] loss=2.3949
+Epoch [12/100] target_val ACC=0.2667 P=0.2296 R=0.2022 F1=0.1929 VIS_ACC=0.1500 IR_ACC=0.2333
+Epoch [13/100] batch [10/32] loss=2.0473
+Epoch [13/100] batch [20/32] loss=2.0551
+Epoch [13/100] batch [30/32] loss=2.2859
+Epoch [13/100] target_val ACC=0.3333 P=0.2610 R=0.2486 F1=0.2315 VIS_ACC=0.1833 IR_ACC=0.2917
+Epoch [14/100] batch [10/32] loss=2.5154
+Epoch [14/100] batch [20/32] loss=2.3481
+Epoch [14/100] batch [30/32] loss=2.0881
+Epoch [14/100] target_val ACC=0.2417 P=0.2814 R=0.2241 F1=0.1984 VIS_ACC=0.2417 IR_ACC=0.1917
+Epoch [15/100] batch [10/32] loss=2.5166
+Epoch [15/100] batch [20/32] loss=2.6667
+Epoch [15/100] batch [30/32] loss=2.2039
+Epoch [15/100] target_val ACC=0.3833 P=0.3325 R=0.2340 F1=0.2404 VIS_ACC=0.3917 IR_ACC=0.2333
+Epoch [16/100] batch [10/32] loss=2.1662
+Epoch [16/100] batch [20/32] loss=2.5235
+Epoch [16/100] batch [30/32] loss=2.4793
+Epoch [16/100] target_val ACC=0.3583 P=0.2974 R=0.2375 F1=0.2378 VIS_ACC=0.4167 IR_ACC=0.2167
+Epoch [17/100] batch [10/32] loss=1.8307
+Epoch [17/100] batch [20/32] loss=2.1140
+Epoch [17/100] batch [30/32] loss=2.0585
+Epoch [17/100] target_val ACC=0.4167 P=0.4926 R=0.2832 F1=0.3079 VIS_ACC=0.4833 IR_ACC=0.2917
+Epoch [18/100] batch [10/32] loss=2.0377
+Epoch [18/100] batch [20/32] loss=2.0419
+Epoch [18/100] batch [30/32] loss=1.9365
+Epoch [18/100] target_val ACC=0.4417 P=0.3994 R=0.2739 F1=0.2755 VIS_ACC=0.5000 IR_ACC=0.2750
+Epoch [19/100] batch [10/32] loss=2.4297
+Epoch [19/100] batch [20/32] loss=2.2617
+Epoch [19/100] batch [30/32] loss=2.1226
+Epoch [19/100] target_val ACC=0.3333 P=0.2536 R=0.2777 F1=0.2319 VIS_ACC=0.5167 IR_ACC=0.2250
+Epoch [20/100] batch [10/32] loss=1.9882
+Epoch [20/100] batch [20/32] loss=2.1508
+Epoch [20/100] batch [30/32] loss=2.0417
+Epoch [20/100] target_val ACC=0.4917 P=0.3957 R=0.3358 F1=0.3027 VIS_ACC=0.5083 IR_ACC=0.3250
+Epoch [21/100] batch [10/32] loss=1.8136
+Epoch [21/100] batch [20/32] loss=2.1377
+Epoch [21/100] batch [30/32] loss=1.6783
+Epoch [21/100] target_val ACC=0.3250 P=0.2910 R=0.2185 F1=0.2062 VIS_ACC=0.5167 IR_ACC=0.2250
+Epoch [22/100] batch [10/32] loss=1.9826
+Epoch [22/100] batch [20/32] loss=1.8555
+Epoch [22/100] batch [30/32] loss=1.9102
+Epoch [22/100] target_val ACC=0.3750 P=0.3955 R=0.2460 F1=0.2341 VIS_ACC=0.5333 IR_ACC=0.2333
+Epoch [23/100] batch [10/32] loss=2.6793
+Epoch [23/100] batch [20/32] loss=2.3669
+Epoch [23/100] batch [30/32] loss=2.0855
+Epoch [23/100] target_val ACC=0.3750 P=0.3308 R=0.3511 F1=0.3212 VIS_ACC=0.5417 IR_ACC=0.0917
+Epoch [24/100] batch [10/32] loss=2.0509
+Epoch [24/100] batch [20/32] loss=1.9955
+Epoch [24/100] batch [30/32] loss=2.0693
+Epoch [24/100] target_val ACC=0.4750 P=0.3780 R=0.3474 F1=0.3002 VIS_ACC=0.5917 IR_ACC=0.2750
+Epoch [25/100] batch [10/32] loss=1.9738
+Epoch [25/100] batch [20/32] loss=2.1271
+Epoch [25/100] batch [30/32] loss=1.7760
+Epoch [25/100] target_val ACC=0.5333 P=0.3500 R=0.3998 F1=0.3605 VIS_ACC=0.6333 IR_ACC=0.2917
+Epoch [26/100] batch [10/32] loss=2.3178
+Epoch [26/100] batch [20/32] loss=2.0153
+Epoch [26/100] batch [30/32] loss=1.6928
+Epoch [26/100] target_val ACC=0.4750 P=0.2920 R=0.3529 F1=0.3063 VIS_ACC=0.6500 IR_ACC=0.2667
+Epoch [27/100] batch [10/32] loss=1.9912
+Epoch [27/100] batch [20/32] loss=1.7902
+Epoch [27/100] batch [30/32] loss=2.0960
+Epoch [27/100] target_val ACC=0.5583 P=0.3186 R=0.4000 F1=0.3495 VIS_ACC=0.6583 IR_ACC=0.2667
+Epoch [28/100] batch [10/32] loss=1.8579
+Epoch [28/100] batch [20/32] loss=1.7919
+Epoch [28/100] batch [30/32] loss=1.9692
+Epoch [28/100] target_val ACC=0.4333 P=0.3668 R=0.2834 F1=0.2565 VIS_ACC=0.6583 IR_ACC=0.2500
+Epoch [29/100] batch [10/32] loss=1.6132
+Epoch [29/100] batch [20/32] loss=1.9290
+Epoch [29/100] batch [30/32] loss=1.6382
+Epoch [29/100] target_val ACC=0.5333 P=0.5123 R=0.4080 F1=0.3893 VIS_ACC=0.6583 IR_ACC=0.3000
+Epoch [30/100] batch [10/32] loss=2.2883
+Epoch [30/100] batch [20/32] loss=2.3072
+Epoch [30/100] batch [30/32] loss=1.8955
+Epoch [30/100] target_val ACC=0.2750 P=0.3039 R=0.2574 F1=0.2272 VIS_ACC=0.6833 IR_ACC=0.0833
+Epoch [31/100] batch [10/32] loss=1.6485
+Epoch [31/100] batch [20/32] loss=1.9774
+Epoch [31/100] batch [30/32] loss=1.9634
+Epoch [31/100] target_val ACC=0.6167 P=0.6548 R=0.5074 F1=0.5011 VIS_ACC=0.7000 IR_ACC=0.3583
+Epoch [32/100] batch [10/32] loss=1.8824
+Epoch [32/100] batch [20/32] loss=2.0513
+Epoch [32/100] batch [30/32] loss=1.6444
+Epoch [32/100] target_val ACC=0.5417 P=0.5662 R=0.4183 F1=0.4140 VIS_ACC=0.7000 IR_ACC=0.2833
+Epoch [33/100] batch [10/32] loss=1.6735
+Epoch [33/100] batch [20/32] loss=1.8999
+Epoch [33/100] batch [30/32] loss=2.2600
+Epoch [33/100] target_val ACC=0.3750 P=0.2856 R=0.2612 F1=0.2353 VIS_ACC=0.6917 IR_ACC=0.3000
+Epoch [34/100] batch [10/32] loss=1.7809
+Epoch [34/100] batch [20/32] loss=1.5886
+Epoch [34/100] batch [30/32] loss=2.0201
+Epoch [34/100] target_val ACC=0.6250 P=0.5780 R=0.4678 F1=0.4440 VIS_ACC=0.7167 IR_ACC=0.3083
+Epoch [35/100] batch [10/32] loss=2.0171
+Epoch [35/100] batch [20/32] loss=1.6403
+Epoch [35/100] batch [30/32] loss=1.7906
+Epoch [35/100] target_val ACC=0.6083 P=0.6258 R=0.5685 F1=0.5299 VIS_ACC=0.7333 IR_ACC=0.2750
+Epoch [36/100] batch [10/32] loss=1.8465
+Epoch [36/100] batch [20/32] loss=1.8279
+Epoch [36/100] batch [30/32] loss=1.7810
+Epoch [36/100] target_val ACC=0.5750 P=0.7093 R=0.4821 F1=0.4909 VIS_ACC=0.7583 IR_ACC=0.3083
+Epoch [37/100] batch [10/32] loss=2.0874
+Epoch [37/100] batch [20/32] loss=1.6344
+Epoch [37/100] batch [30/32] loss=1.6786
+Epoch [37/100] target_val ACC=0.6667 P=0.6900 R=0.6148 F1=0.5931 VIS_ACC=0.7833 IR_ACC=0.2833
+Epoch [38/100] batch [10/32] loss=1.5381
+Epoch [38/100] batch [20/32] loss=1.6471
+Epoch [38/100] batch [30/32] loss=1.4140
+Epoch [38/100] target_val ACC=0.6583 P=0.7025 R=0.5927 F1=0.5532 VIS_ACC=0.7667 IR_ACC=0.3000
+Epoch [39/100] batch [10/32] loss=1.3680
+Epoch [39/100] batch [20/32] loss=1.4657
+Epoch [39/100] batch [30/32] loss=1.3399
+Epoch [39/100] target_val ACC=0.6917 P=0.6733 R=0.6043 F1=0.5722 VIS_ACC=0.7833 IR_ACC=0.3083
+Epoch [40/100] batch [10/32] loss=1.5519
+Epoch [40/100] batch [20/32] loss=1.8761
+Epoch [40/100] batch [30/32] loss=1.3553
+Epoch [40/100] target_val ACC=0.6583 P=0.7014 R=0.6177 F1=0.5943 VIS_ACC=0.7917 IR_ACC=0.3000
+Epoch [41/100] batch [10/32] loss=1.6199
+Epoch [41/100] batch [20/32] loss=1.3990
+Epoch [41/100] batch [30/32] loss=1.2950
+Epoch [41/100] target_val ACC=0.5667 P=0.4726 R=0.5232 F1=0.4705 VIS_ACC=0.7917 IR_ACC=0.1417
+Epoch [42/100] batch [10/32] loss=1.4805
+Epoch [42/100] batch [20/32] loss=1.4593
+Epoch [42/100] batch [30/32] loss=1.4548
+Epoch [42/100] target_val ACC=0.6583 P=0.5761 R=0.5761 F1=0.5136 VIS_ACC=0.8000 IR_ACC=0.2250
+Epoch [43/100] batch [10/32] loss=1.4919
+Epoch [43/100] batch [20/32] loss=1.4981
+Epoch [43/100] batch [30/32] loss=1.4244
+Epoch [43/100] target_val ACC=0.6917 P=0.7362 R=0.6341 F1=0.6097 VIS_ACC=0.8083 IR_ACC=0.2583
+Epoch [44/100] batch [10/32] loss=1.3079
+Epoch [44/100] batch [20/32] loss=1.3867
+Epoch [44/100] batch [30/32] loss=1.5497
+Epoch [44/100] target_val ACC=0.7583 P=0.8145 R=0.7553 F1=0.7440 VIS_ACC=0.8167 IR_ACC=0.3167
+Epoch [45/100] batch [10/32] loss=1.1591
+Epoch [45/100] batch [20/32] loss=1.4598
+Epoch [45/100] batch [30/32] loss=1.6024
+Epoch [45/100] target_val ACC=0.8000 P=0.8483 R=0.8032 F1=0.7954 VIS_ACC=0.8500 IR_ACC=0.3417
+Epoch [46/100] batch [10/32] loss=1.4508
+Epoch [46/100] batch [20/32] loss=1.3240
+Epoch [46/100] batch [30/32] loss=1.2070
+Epoch [46/100] target_val ACC=0.7667 P=0.8805 R=0.7691 F1=0.7717 VIS_ACC=0.8833 IR_ACC=0.3167
+Epoch [47/100] batch [10/32] loss=1.1889
+Epoch [47/100] batch [20/32] loss=1.3270
+Epoch [47/100] batch [30/32] loss=1.1794
+Epoch [47/100] target_val ACC=0.8167 P=0.8339 R=0.8188 F1=0.8028 VIS_ACC=0.9083 IR_ACC=0.3250
+Epoch [48/100] batch [10/32] loss=1.1896
+Epoch [48/100] batch [20/32] loss=0.9731
+Epoch [48/100] batch [30/32] loss=1.3135
+Epoch [48/100] target_val ACC=0.8083 P=0.8399 R=0.8086 F1=0.7982 VIS_ACC=0.9083 IR_ACC=0.2417
+Epoch [49/100] batch [10/32] loss=1.3130
+Epoch [49/100] batch [20/32] loss=1.1232
+Epoch [49/100] batch [30/32] loss=1.1993
+Epoch [49/100] target_val ACC=0.8000 P=0.7640 R=0.7677 F1=0.7338 VIS_ACC=0.9083 IR_ACC=0.3000
+Epoch [50/100] batch [10/32] loss=1.3216
+Epoch [50/100] batch [20/32] loss=1.1166
+Epoch [50/100] batch [30/32] loss=1.5344
+Epoch [50/100] target_val ACC=0.8417 P=0.9090 R=0.8404 F1=0.8515 VIS_ACC=0.9083 IR_ACC=0.3417
+Epoch [51/100] batch [10/32] loss=1.1279
+Epoch [51/100] batch [20/32] loss=1.1274
+Epoch [51/100] batch [30/32] loss=1.1532
+Epoch [51/100] target_val ACC=0.8167 P=0.9131 R=0.8278 F1=0.8268 VIS_ACC=0.9083 IR_ACC=0.3417
+Epoch [52/100] batch [10/32] loss=1.0658
+Epoch [52/100] batch [20/32] loss=1.1162
+Epoch [52/100] batch [30/32] loss=1.1940
+Epoch [52/100] target_val ACC=0.8667 P=0.8442 R=0.8556 F1=0.8333 VIS_ACC=0.9167 IR_ACC=0.2417
+Epoch [53/100] batch [10/32] loss=1.1856
+Epoch [53/100] batch [20/32] loss=1.2462
+Epoch [53/100] batch [30/32] loss=1.0554
+Epoch [53/100] target_val ACC=0.8583 P=0.8528 R=0.8449 F1=0.8347 VIS_ACC=0.9083 IR_ACC=0.3667
+Epoch [54/100] batch [10/32] loss=1.2354
+Epoch [54/100] batch [20/32] loss=1.0955
+Epoch [54/100] batch [30/32] loss=1.2665
+Epoch [54/100] target_val ACC=0.8500 P=0.8762 R=0.8536 F1=0.8471 VIS_ACC=0.9083 IR_ACC=0.3333
+Epoch [55/100] batch [10/32] loss=1.2150
+Epoch [55/100] batch [20/32] loss=0.9366
+Epoch [55/100] batch [30/32] loss=1.2047
+Epoch [55/100] target_val ACC=0.8750 P=0.9286 R=0.8675 F1=0.8790 VIS_ACC=0.9083 IR_ACC=0.2583
+Epoch [56/100] batch [10/32] loss=1.0849
+Epoch [56/100] batch [20/32] loss=1.0919
+Epoch [56/100] batch [30/32] loss=0.9563
+Epoch [56/100] target_val ACC=0.8917 P=0.8800 R=0.8862 F1=0.8743 VIS_ACC=0.9083 IR_ACC=0.4833
+Epoch [57/100] batch [10/32] loss=1.1280
+Epoch [57/100] batch [20/32] loss=1.1036
+Epoch [57/100] batch [30/32] loss=0.9020
+Epoch [57/100] target_val ACC=0.8833 P=0.8789 R=0.8795 F1=0.8675 VIS_ACC=0.9167 IR_ACC=0.2833
+Epoch [58/100] batch [10/32] loss=1.0880
+Epoch [58/100] batch [20/32] loss=1.1983
+Epoch [58/100] batch [30/32] loss=0.7610
+Epoch [58/100] target_val ACC=0.9000 P=0.8884 R=0.8838 F1=0.8800 VIS_ACC=0.9250 IR_ACC=0.3167
+Epoch [59/100] batch [10/32] loss=0.9616
+Epoch [59/100] batch [20/32] loss=1.0081
+Epoch [59/100] batch [30/32] loss=1.2042
+Epoch [59/100] target_val ACC=0.8667 P=0.9036 R=0.8621 F1=0.8665 VIS_ACC=0.9333 IR_ACC=0.3333
+Epoch [60/100] batch [10/32] loss=0.7873
+Epoch [60/100] batch [20/32] loss=0.9566
+Epoch [60/100] batch [30/32] loss=0.9096
+Epoch [60/100] target_val ACC=0.8917 P=0.8599 R=0.8737 F1=0.8605 VIS_ACC=0.9333 IR_ACC=0.4000
+Epoch [61/100] batch [10/32] loss=0.8080
+Epoch [61/100] batch [20/32] loss=1.1383
+Epoch [61/100] batch [30/32] loss=0.7799
+Epoch [61/100] target_val ACC=0.9500 P=0.9360 R=0.9366 F1=0.9358 VIS_ACC=0.9417 IR_ACC=0.3167
+Epoch [62/100] batch [10/32] loss=0.9706
+Epoch [62/100] batch [20/32] loss=0.9107
+Epoch [62/100] batch [30/32] loss=0.8638
+Epoch [62/100] target_val ACC=0.9333 P=0.9274 R=0.9257 F1=0.9252 VIS_ACC=0.9583 IR_ACC=0.4167
+Epoch [63/100] batch [10/32] loss=1.0029
+Epoch [63/100] batch [20/32] loss=0.9789
+Epoch [63/100] batch [30/32] loss=0.8335
+Epoch [63/100] target_val ACC=0.8917 P=0.8014 R=0.8275 F1=0.8070 VIS_ACC=0.9583 IR_ACC=0.4000
+Epoch [64/100] batch [10/32] loss=0.7706
+Epoch [64/100] batch [20/32] loss=0.9406
+Epoch [64/100] batch [30/32] loss=0.8912
+Epoch [64/100] target_val ACC=0.9500 P=0.9442 R=0.9562 F1=0.9486 VIS_ACC=0.9583 IR_ACC=0.3083
+Epoch [65/100] batch [10/32] loss=0.8043
+Epoch [65/100] batch [20/32] loss=0.8396
+Epoch [65/100] batch [30/32] loss=0.8389
+Epoch [65/100] target_val ACC=0.9583 P=0.9666 R=0.9682 F1=0.9669 VIS_ACC=0.9750 IR_ACC=0.4167
+Epoch [66/100] batch [10/32] loss=0.7180
+Epoch [66/100] batch [20/32] loss=0.8003
+Epoch [66/100] batch [30/32] loss=1.0523
+Epoch [66/100] target_val ACC=0.8500 P=0.7857 R=0.7694 F1=0.7529 VIS_ACC=0.9750 IR_ACC=0.2500
+Epoch [67/100] batch [10/32] loss=0.7489
+Epoch [67/100] batch [20/32] loss=0.6156
+Epoch [67/100] batch [30/32] loss=0.7510
+Epoch [67/100] target_val ACC=0.9083 P=0.9335 R=0.8632 F1=0.8574 VIS_ACC=0.9750 IR_ACC=0.3083
+Epoch [68/100] batch [10/32] loss=0.6877
+Epoch [68/100] batch [20/32] loss=0.7272
+Epoch [68/100] batch [30/32] loss=0.6731
+Epoch [68/100] target_val ACC=0.9667 P=0.9764 R=0.9730 F1=0.9744 VIS_ACC=0.9750 IR_ACC=0.3583
+Epoch [69/100] batch [10/32] loss=0.8133
+Epoch [69/100] batch [20/32] loss=0.7323
+Epoch [69/100] batch [30/32] loss=0.7645
+Epoch [69/100] target_val ACC=0.9833 P=0.9808 R=0.9904 F1=0.9846 VIS_ACC=0.9833 IR_ACC=0.3000
+Epoch [70/100] batch [10/32] loss=0.7916
+Epoch [70/100] batch [20/32] loss=0.8608
+Epoch [70/100] batch [30/32] loss=0.7610
+Epoch [70/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4167
+Epoch [71/100] batch [10/32] loss=0.8915
+Epoch [71/100] batch [20/32] loss=0.8632
+Epoch [71/100] batch [30/32] loss=0.6864
+Epoch [71/100] target_val ACC=0.9833 P=0.9808 R=0.9904 F1=0.9846 VIS_ACC=0.9833 IR_ACC=0.4583
+Epoch [72/100] batch [10/32] loss=1.0420
+Epoch [72/100] batch [20/32] loss=0.6674
+Epoch [72/100] batch [30/32] loss=0.8311
+Epoch [72/100] target_val ACC=0.9833 P=0.9808 R=0.9904 F1=0.9846 VIS_ACC=0.9833 IR_ACC=0.4000
+Epoch [73/100] batch [10/32] loss=0.8665
+Epoch [73/100] batch [20/32] loss=0.6961
+Epoch [73/100] batch [30/32] loss=0.9189
+Epoch [73/100] target_val ACC=0.9750 P=0.9762 R=0.9790 F1=0.9772 VIS_ACC=0.9833 IR_ACC=0.4083
+Epoch [74/100] batch [10/32] loss=0.6980
+Epoch [74/100] batch [20/32] loss=0.5959
+Epoch [74/100] batch [30/32] loss=0.7095
+Epoch [74/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.3667
+Epoch [75/100] batch [10/32] loss=0.6723
+Epoch [75/100] batch [20/32] loss=0.6638
+Epoch [75/100] batch [30/32] loss=0.8512
+Epoch [75/100] target_val ACC=0.9750 P=0.9762 R=0.9790 F1=0.9772 VIS_ACC=0.9833 IR_ACC=0.4833
+Epoch [76/100] batch [10/32] loss=0.7761
+Epoch [76/100] batch [20/32] loss=0.7291
+Epoch [76/100] batch [30/32] loss=0.7060
+Epoch [76/100] target_val ACC=0.9833 P=0.9808 R=0.9904 F1=0.9846 VIS_ACC=0.9833 IR_ACC=0.4000
+Epoch [77/100] batch [10/32] loss=0.6927
+Epoch [77/100] batch [20/32] loss=0.6826
+Epoch [77/100] batch [30/32] loss=0.8613
+Epoch [77/100] target_val ACC=0.9833 P=0.9808 R=0.9904 F1=0.9846 VIS_ACC=0.9833 IR_ACC=0.3917
+Epoch [78/100] batch [10/32] loss=0.8515
+Epoch [78/100] batch [20/32] loss=0.6535
+Epoch [78/100] batch [30/32] loss=0.6985
+Epoch [78/100] target_val ACC=0.9833 P=0.9808 R=0.9904 F1=0.9846 VIS_ACC=0.9833 IR_ACC=0.3583
+Epoch [79/100] batch [10/32] loss=0.8244
+Epoch [79/100] batch [20/32] loss=0.8802
+Epoch [79/100] batch [30/32] loss=0.6767
+Epoch [79/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4167
+Epoch [80/100] batch [10/32] loss=0.6322
+Epoch [80/100] batch [20/32] loss=0.7170
+Epoch [80/100] batch [30/32] loss=0.8320
+Epoch [80/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4167
+Epoch [81/100] batch [10/32] loss=0.7257
+Epoch [81/100] batch [20/32] loss=0.6682
+Epoch [81/100] batch [30/32] loss=0.7266
+Epoch [81/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.3917
+Epoch [82/100] batch [10/32] loss=0.7437
+Epoch [82/100] batch [20/32] loss=0.6241
+Epoch [82/100] batch [30/32] loss=0.7456
+Epoch [82/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.3667
+Epoch [83/100] batch [10/32] loss=0.6807
+Epoch [83/100] batch [20/32] loss=0.6956
+Epoch [83/100] batch [30/32] loss=0.7232
+Epoch [83/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.5083
+Epoch [84/100] batch [10/32] loss=0.7922
+Epoch [84/100] batch [20/32] loss=0.6420
+Epoch [84/100] batch [30/32] loss=0.6043
+Epoch [84/100] target_val ACC=0.9917 P=0.9896 R=0.9952 F1=0.9921 VIS_ACC=0.9833 IR_ACC=0.4833
+Epoch [85/100] batch [10/32] loss=0.8667
+Epoch [85/100] batch [20/32] loss=0.6400
+Epoch [85/100] batch [30/32] loss=0.8152
+Epoch [85/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.5167
+Epoch [86/100] batch [10/32] loss=0.5934
+Epoch [86/100] batch [20/32] loss=0.6535
+Epoch [86/100] batch [30/32] loss=0.7650
+Epoch [86/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4667
+Epoch [87/100] batch [10/32] loss=0.6474
+Epoch [87/100] batch [20/32] loss=0.7780
+Epoch [87/100] batch [30/32] loss=0.7142
+Epoch [87/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4667
+Epoch [88/100] batch [10/32] loss=0.5333
+Epoch [88/100] batch [20/32] loss=0.6236
+Epoch [88/100] batch [30/32] loss=0.7486
+Epoch [88/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.5083
+Epoch [89/100] batch [10/32] loss=0.5418
+Epoch [89/100] batch [20/32] loss=0.6816
+Epoch [89/100] batch [30/32] loss=1.0216
+Epoch [89/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.3750
+Epoch [90/100] batch [10/32] loss=0.6688
+Epoch [90/100] batch [20/32] loss=0.5528
+Epoch [90/100] batch [30/32] loss=0.5529
+Epoch [90/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4917
+Epoch [91/100] batch [10/32] loss=0.6690
+Epoch [91/100] batch [20/32] loss=0.7482
+Epoch [91/100] batch [30/32] loss=0.6362
+Epoch [91/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.5000
+Epoch [92/100] batch [10/32] loss=0.7913
+Epoch [92/100] batch [20/32] loss=0.8348
+Epoch [92/100] batch [30/32] loss=0.7851
+Epoch [92/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.4500
+Epoch [93/100] batch [10/32] loss=0.6955
+Epoch [93/100] batch [20/32] loss=0.5684
+Epoch [93/100] batch [30/32] loss=0.6350
+Epoch [93/100] target_val ACC=1.0000 P=1.0000 R=1.0000 F1=1.0000 VIS_ACC=0.9833 IR_ACC=0.4750
+Epoch [94/100] batch [10/32] loss=0.6354
+Epoch [94/100] batch [20/32] loss=0.5493
+Epoch [94/100] batch [30/32] loss=0.6550
+Epoch [94/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.4167
+Epoch [95/100] batch [10/32] loss=0.6013
+Epoch [95/100] batch [20/32] loss=0.7211
+Epoch [95/100] batch [30/32] loss=0.6008
+Epoch [95/100] target_val ACC=0.9833 P=0.9857 R=0.9838 F1=0.9847 VIS_ACC=0.9833 IR_ACC=0.5167
+Epoch [96/100] batch [10/32] loss=0.6018
+Epoch [96/100] batch [20/32] loss=0.5307
+Epoch [96/100] batch [30/32] loss=0.8280
+Epoch [96/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.4167
+Epoch [97/100] batch [10/32] loss=0.5716
+Epoch [97/100] batch [20/32] loss=0.7471
+Epoch [97/100] batch [30/32] loss=0.6819
+Epoch [97/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.4500
+Epoch [98/100] batch [10/32] loss=0.6419
+Epoch [98/100] batch [20/32] loss=0.5853
+Epoch [98/100] batch [30/32] loss=0.5990
+Epoch [98/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.4750
+Epoch [99/100] batch [10/32] loss=0.7249
+Epoch [99/100] batch [20/32] loss=0.6867
+Epoch [99/100] batch [30/32] loss=0.6095
+Epoch [99/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.4500
+Epoch [100/100] batch [10/32] loss=0.7746
+Epoch [100/100] batch [20/32] loss=0.5778
+Epoch [100/100] batch [30/32] loss=0.5161
+Epoch [100/100] target_val ACC=0.9917 P=0.9970 R=0.9886 F1=0.9925 VIS_ACC=0.9833 IR_ACC=0.4417
+FINAL_BEST target=dark seed=46 epoch=93 ACC=1.000000 Precision_macro=1.000000 Recall_macro=1.000000 F1_macro=1.000000
+Metrics: /home/lixiang/lx/JMDA_Com/runs/tir_weather/tir_weather_formal_20261109_221150_288188/artifacts/tir_weather_dark_seed46_metrics.csv; /home/lixiang/lx/JMDA_Com/runs/tir_weather/tir_weather_formal_20261109_221150_288188/artifacts/tir_weather_dark_seed46_metrics.json
+Training diagnostics: /home/lixiang/lx/JMDA_Com/runs/tir_weather/tir_weather_formal_20261109_221150_288188/artifacts/tir_weather_dark_seed46_train_history.csv; /home/lixiang/lx/JMDA_Com/runs/tir_weather/tir_weather_formal_20261109_221150_288188/artifacts/tir_weather_dark_seed46_train_history.json
+No model/checkpoint file was retained.

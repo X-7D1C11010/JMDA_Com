@@ -1,0 +1,73 @@
+[GPU-WAIT] cdan_backlight: require free >= 18000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-09T23:24:52+08:00 cdan_backlight: GPU 0: free=24042 MiB, util=65%; GPU 1: free=30994 MiB, util=1%
+[GPU-WAIT] 2026-11-09T23:25:22+08:00 cdan_backlight: GPU 0: free=24042 MiB, util=55%; GPU 1: free=30994 MiB, util=0%
+[GPU-WAIT] 2026-11-09T23:25:52+08:00 cdan_backlight: GPU 0: free=24042 MiB, util=94%; GPU 1: free=30994 MiB, util=15%
+[GPU-WAIT] 2026-11-09T23:26:22+08:00 cdan_backlight: GPU 0: free=24042 MiB, util=95%; GPU 1: free=30994 MiB, util=0%
+[GPU-WAIT] 2026-11-09T23:26:52+08:00 cdan_backlight: GPU 0: free=31211 MiB, util=0%; GPU 1: free=30994 MiB, util=0%
+[GPU-SELECT] cdan_backlight: physical GPU 1; free=30994 MiB, util=3%; launching: /home/lixiang/envs/lx_pytorch/bin/python -B -u /home/lixiang/lx/JMDA_Com/prepared_lists/uda_compare_20261109_210422_157832/historical_code/20261109_210422_157845_tuned/cdan/CDAN/train_cdan.py --target backlight --seed 42 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/uda_compare_20261109_210422_157832 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261109_210422_157845 --multimodal --enhanced-augmentation --no-save-model --eval-num-workers 0 --prefetch-factor 4 --pin-memory --persistent-workers --num-workers 2 --backbone ResNet50 --batch-size 16 --method CDAN+E --num-iterations 1400 --test-interval 100 --lr 0.0005 --head-lr-mult 3 --ad-lr-mult 10 --trade-off 1 --coeff-max-iter 10000 --coeff-alpha 10
+Deterministic kernels: True
+Controlled random seed: 42
+Device: cuda, Method: CDAN+E
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515 images
+Target train: 113 images
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 2, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, 10-crop workers/view=0
+/home/lixiang/envs/lx_pytorch/lib/python3.11/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/lixiang/envs/lx_pytorch/lib/python3.11/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet50_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet50_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+CDAN-MM backbone: dual ResNet50 VIS+IR branches
+Random projection (--random): False; ad_net input dim=2304
+CDAN optimizer group lr_mult: [1, 3.0, 1, 3.0, 3.0, 3.0, 10.0]
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/CDAN-MM/bfb443f86d34
+  iter [100/1400] loss_cls=0.4434 loss_transfer=0.6830 trade_off=1.000 coeff=0.0495 lr=4.66e-04
+iter [100/1400] target val accuracy (10-crop): 0.5000
+Val Precision (Macro): 0.5309 | Val Recall (Macro): 0.5417 | Val F1 (Macro): 0.4760 | Val class coverage: 9/9 | Val samples: 36
+  iter [200/1400] loss_cls=0.1066 loss_transfer=0.5218 trade_off=1.000 coeff=0.0992 lr=4.36e-04
+iter [200/1400] target val accuracy (10-crop): 0.5278
+Val Precision (Macro): 0.5754 | Val Recall (Macro): 0.5509 | Val F1 (Macro): 0.5164 | Val class coverage: 9/9 | Val samples: 36
+  iter [300/1400] loss_cls=0.1378 loss_transfer=0.3966 trade_off=1.000 coeff=0.1484 lr=4.11e-04
+iter [300/1400] target val accuracy (10-crop): 0.5556
+Val Precision (Macro): 0.5741 | Val Recall (Macro): 0.5972 | Val F1 (Macro): 0.5607 | Val class coverage: 9/9 | Val samples: 36
+  iter [400/1400] loss_cls=0.0291 loss_transfer=0.3770 trade_off=1.000 coeff=0.1969 lr=3.89e-04
+iter [400/1400] target val accuracy (10-crop): 0.5833
+Val Precision (Macro): 0.5877 | Val Recall (Macro): 0.6250 | Val F1 (Macro): 0.5817 | Val class coverage: 9/9 | Val samples: 36
+  iter [500/1400] loss_cls=0.0157 loss_transfer=0.3493 trade_off=1.000 coeff=0.2444 lr=3.69e-04
+iter [500/1400] target val accuracy (10-crop): 0.5833
+Val Precision (Macro): 0.6124 | Val Recall (Macro): 0.5880 | Val F1 (Macro): 0.5681 | Val class coverage: 9/9 | Val samples: 36
+  iter [600/1400] loss_cls=0.0011 loss_transfer=0.3813 trade_off=1.000 coeff=0.2909 lr=3.52e-04
+iter [600/1400] target val accuracy (10-crop): 0.5833
+Val Precision (Macro): 0.6237 | Val Recall (Macro): 0.5880 | Val F1 (Macro): 0.5747 | Val class coverage: 9/9 | Val samples: 36
+  iter [700/1400] loss_cls=0.0124 loss_transfer=0.4140 trade_off=1.000 coeff=0.3359 lr=3.36e-04
+iter [700/1400] target val accuracy (10-crop): 0.6667
+Val Precision (Macro): 0.6563 | Val Recall (Macro): 0.6898 | Val F1 (Macro): 0.6543 | Val class coverage: 9/9 | Val samples: 36
+  iter [800/1400] loss_cls=0.0137 loss_transfer=0.4872 trade_off=1.000 coeff=0.3795 lr=3.22e-04
+iter [800/1400] target val accuracy (10-crop): 0.6667
+Val Precision (Macro): 0.6316 | Val Recall (Macro): 0.6898 | Val F1 (Macro): 0.6414 | Val class coverage: 9/9 | Val samples: 36
+  iter [900/1400] loss_cls=0.0031 loss_transfer=0.5629 trade_off=1.000 coeff=0.4215 lr=3.09e-04
+iter [900/1400] target val accuracy (10-crop): 0.6667
+Val Precision (Macro): 0.6316 | Val Recall (Macro): 0.6898 | Val F1 (Macro): 0.6414 | Val class coverage: 9/9 | Val samples: 36
+  iter [1000/1400] loss_cls=0.0297 loss_transfer=0.5347 trade_off=1.000 coeff=0.4617 lr=2.97e-04
+iter [1000/1400] target val accuracy (10-crop): 0.6389
+Val Precision (Macro): 0.6352 | Val Recall (Macro): 0.6620 | Val F1 (Macro): 0.6287 | Val class coverage: 9/9 | Val samples: 36
+  iter [1100/1400] loss_cls=0.0294 loss_transfer=0.6428 trade_off=1.000 coeff=0.5001 lr=2.87e-04
+iter [1100/1400] target val accuracy (10-crop): 0.6667
+Val Precision (Macro): 0.6352 | Val Recall (Macro): 0.6898 | Val F1 (Macro): 0.6446 | Val class coverage: 9/9 | Val samples: 36
+  iter [1200/1400] loss_cls=0.0012 loss_transfer=0.5469 trade_off=1.000 coeff=0.5367 lr=2.77e-04
+iter [1200/1400] target val accuracy (10-crop): 0.5833
+Val Precision (Macro): 0.6446 | Val Recall (Macro): 0.6065 | Val F1 (Macro): 0.6061 | Val class coverage: 9/9 | Val samples: 36
+  iter [1300/1400] loss_cls=0.0048 loss_transfer=0.6918 trade_off=1.000 coeff=0.5713 lr=2.68e-04
+iter [1300/1400] target val accuracy (10-crop): 0.5833
+Val Precision (Macro): 0.6446 | Val Recall (Macro): 0.6065 | Val F1 (Macro): 0.6061 | Val class coverage: 9/9 | Val samples: 36
+  iter [1400/1400] loss_cls=0.0033 loss_transfer=0.6517 trade_off=1.000 coeff=0.6041 lr=2.59e-04
+iter [1400/1400] target val accuracy (10-crop): 0.5833
+Val Precision (Macro): 0.6204 | Val Recall (Macro): 0.6065 | Val F1 (Macro): 0.5935 | Val class coverage: 9/9 | Val samples: 36
+Best target val accuracy (backlight, selected): 0.6667 at iteration 700
+Selected target val metrics:
+Val Precision (Macro): 0.6563 | Val Recall (Macro): 0.6898 | Val F1 (Macro): 0.6543 | Val class coverage: 9/9 | Val samples: 36
+Last-iteration target val accuracy (backlight): 0.5833
+Final target val accuracy (backlight, selected iteration 700): 0.6667
+{"timestamp": "2026-11-10T00:01:30", "suite_id": "uda_compare_20261109_210422_157832_tuned", "run_tag": "cdan_backlight", "method": "cdan", "protocol": "UDA", "target": "backlight", "seed": 42, "epochs": 0, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "best_target_val_ACC_within_budget", "status": "success", "exit_code": 0, "duration_seconds": 2198.0, "final_acc": 0.6667, "best_acc": 0.6667, "final_acc_std": null, "precision_macro": 0.6563, "precision_macro_std": null, "recall_macro": 0.6898, "recall_macro_std": null, "f1_macro": 0.6543, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 14, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/cdan_backlight_20261109_210422_157845_tuned.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda", "error_type": null, "error_summary": null}
