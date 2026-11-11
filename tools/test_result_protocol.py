@@ -59,6 +59,19 @@ class ResultProtocolTests(unittest.TestCase):
         self.assertEqual(metrics['num_iterations'], 2)
         self.assertEqual(metrics['seed_values'], '42 43')
 
+    def test_calibrated_metrics_preserve_the_paired_raw_result(self):
+        metrics = parse_metrics(
+            'Best target val accuracy (backlight, selected): 0.8056 at epoch 8\n'
+            'Final target val accuracy (backlight, selected epoch 8): 0.8056\n'
+            'UDA_COMPLEXITY: {"prediction_protocol": "target_train_BN_calibrated", '
+            '"raw_best_acc": 0.75, "raw_best_position": 6, '
+            '"bn_fit_partition": "target_train", "bn_fit_pairs": 113}\n'
+        )
+        self.assertEqual(metrics['final_acc'], 0.8056)
+        self.assertEqual(metrics['raw_best_acc'], 0.75)
+        self.assertEqual(metrics['bn_fit_pairs'], 113)
+        self.assertEqual(metrics['prediction_protocol'], 'target_train_BN_calibrated')
+
     def test_class_names_reject_placeholders(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'classes.txt'

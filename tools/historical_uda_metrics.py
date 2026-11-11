@@ -59,6 +59,19 @@ def report_coral_gradients(step, head, classification_loss, weighted_coral_loss)
           f"CE={cls_norm:.6g} weighted_CORAL={coral_norm:.6g} ratio={ratio:.6g}")
 
 
+def report_mcc_gradients(epoch, head, classification_loss, weighted_transfer_loss):
+    parameters = tuple(parameter for parameter in head.parameters() if parameter.requires_grad)
+    cls = torch.autograd.grad(classification_loss, parameters, retain_graph=True)
+    transfer = torch.autograd.grad(weighted_transfer_loss, parameters, retain_graph=True)
+    cls_flat = torch.cat([gradient.flatten() for gradient in cls])
+    transfer_flat = torch.cat([gradient.flatten() for gradient in transfer])
+    cls_norm, transfer_norm = float(cls_flat.norm()), float(transfer_flat.norm())
+    cosine = float(torch.nn.functional.cosine_similarity(cls_flat, transfer_flat, dim=0))
+    print(f"MCC head gradient at epoch {epoch}: "
+          f"CE={cls_norm:.6g} weighted_MCC={transfer_norm:.6g} "
+          f"ratio={transfer_norm / max(cls_norm, 1e-12):.6g} cosine={cosine:.6g}")
+
+
 def forward_flops(model, inputs, forward_fn):
     """Count multiply-add FLOPs for Conv2d and Linear modules actually executed."""
     macs = 0
@@ -92,6 +105,7 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
             self.device = f"cuda:{torch.cuda.current_device()}"
         self.pretraining_metrics = {}
         self.inference_metrics = {}
+        self.calibration_metrics = {}
 
     def epoch_end(self, epoch=None):
         device = torch.device(self.device)
@@ -101,6 +115,9 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
 
     def record_pretraining(self, metrics):
         self.pretraining_metrics = metrics
+
+    def record_calibration(self, metrics):
+        self.calibration_metrics = metrics
 
     def benchmark(self, model, forward_fn, *, method, training_module=None,
                   training_unit_updates=None):
@@ -151,6 +168,7 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
             **(extra_metrics or {}),
             **self.inference_metrics,
             **pretrain,
+            **self.calibration_metrics,
             "train_epoch_mean_s": round(sum(self._epoch_times) / self.epoch_count, 4),
             "train_epoch_std_s": round(pstdev(self._epoch_times), 4),
             "total_train_time_s": round(
@@ -161,6 +179,9 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
                 peak_reserved, pretrain.get("ir_pretrain_peak_reserved_gb", 0.0)), 4) if cuda else None,
             "training_time_scope": "training windows plus IR pretraining, excluding validation and GPU queue",
             "timed_training_units": self.epoch_count,
+            "total_training_and_calibration_time_s": round(
+                self._total_train_time + pretrain.get("ir_pretrain_time_s", 0.0) +
+                self.calibration_metrics.get("bn_calibration_total_s", 0.0), 4),
         }
         result = super().finalize(metrics)
         print("UDA_COMPLEXITY: " + json.dumps(result))

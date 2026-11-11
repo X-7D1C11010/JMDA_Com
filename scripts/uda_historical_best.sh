@@ -32,8 +32,8 @@ historical_method_enabled() {
   local variant="$1" method="$2"
   uda_method_enabled "$method" || return 1
   case "$variant:$method" in
-    dann_capped:dann|dann_ir_pretrain:dann|coral_lr5:deepcoral|sampling:deepcoral|cdan_source_only:cdan|cdan_grl_cap:cdan|mdd_ramp8:mdd|mdd_ramp4:mdd|mcc_source_only:mcc|mcc_joint_zero:mcc|ir_pretrain:dann|ir_pretrain:mdd|ir_pretrain:mcc) return 0 ;;
-    dann_capped:*|dann_ir_pretrain:*|coral_lr5:*|sampling:*|cdan_source_only:*|cdan_grl_cap:*|mdd_ramp8:*|mdd_ramp4:*|mcc_source_only:*|mcc_joint_zero:*|ir_pretrain:*) return 1 ;;
+    dann_capped:dann|dann_ir_pretrain:dann|coral_lr5:deepcoral|sampling:deepcoral|cdan_source_only:cdan|cdan_grl_cap:cdan|mdd_ramp8:mdd|mdd_ramp4:mdd|mcc_source_only:mcc|mcc_joint_zero:mcc|mcc_stronger:mcc|mcc_stronger_bn:mcc|ir_pretrain:dann|ir_pretrain:mdd|ir_pretrain:mcc) return 0 ;;
+    dann_capped:*|dann_ir_pretrain:*|coral_lr5:*|sampling:*|cdan_source_only:*|cdan_grl_cap:*|mdd_ramp8:*|mdd_ramp4:*|mcc_source_only:*|mcc_joint_zero:*|mcc_stronger:*|mcc_stronger_bn:*|ir_pretrain:*) return 1 ;;
   esac
   return 0
 }
@@ -88,6 +88,8 @@ run_historical_uda_target() {
   fi
   case "$variant" in
     coral_lr5|sampling) coral_head_mult=5 ;;
+    bn_probe) coral_head_mult=5; mdd_weight=0.30; mdd_ramp=8 ;;
+    mcc_stronger|mcc_stronger_bn) mcc_weight=0.20 ;;
     cdan_source_only) cdan_weight=0 ;;
     mdd_ramp8) mdd_weight=0.30; mdd_ramp=8 ;;
     mdd_ramp4) mdd_weight=0.30; mdd_ramp=4 ;;
@@ -155,7 +157,8 @@ run_historical_uda_suite() {
     compare) phases=(historical_best mcc_source_only tuned) ;;
     diagnose) phases=(coral_lr5 sampling historical_best cdan_source_only cdan_grl_cap
                       mcc_source_only mcc_joint_zero dann_capped dann_ir_pretrain mdd_ramp8 mdd_ramp4) ;;
-    historical_best|tuned|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
+    focused) phases=(bn_probe mcc_stronger_bn) ;;
+    historical_best|tuned|bn_probe|mcc_stronger|mcc_stronger_bn|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
     *) echo "Unknown historical UDA variant: $requested" >&2; return 1 ;;
   esac
   for phase in "${phases[@]}"; do

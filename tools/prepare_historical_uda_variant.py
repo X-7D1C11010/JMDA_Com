@@ -98,6 +98,48 @@ def add_dann_modality_diagnostics(source):
     )
 
 
+def target_bn_probe(source, method):
+    source = import_extension(source, "TargetBNProbe, center_view_transform")
+    model = "classifier" if method in {"mdd", "mcc"} else "model"
+    forward = {
+        "dann": "classify_dann",
+        "deepcoral": "lambda m, x: m.predict_components(x)['fused']",
+        "cdan": "lambda m, x: m(x)[1]",
+        "mdd": "lambda m, x: m.head(m.bottleneck(m.backbone(x)))",
+        "mcc": "lambda m, x: m(x)",
+    }[method]
+    transform = "center_view_transform(train_tf)" if method == "cdan" else "val_tf"
+    batch_size = "args.target_batch_size" if method == "deepcoral" else "args.batch_size"
+    anchor = "        print(f'Efficiency logging -> {eff.run_dir}')\n"
+    source = replace_once(
+        source, anchor, anchor +
+        f"    bn_probe = TargetBNProbe({model}, tgt_ds, {transform},\n"
+        f"                             {forward}, device, {batch_size})\n"
+        "    print('Prediction protocol: target_train BN calibration; paired raw evaluation is logged')\n",
+    )
+    if method == "cdan":
+        start = source.index("            val_metrics = evaluate_10crop(model, tgt_val_list")
+        end = source.index("            acc = val_metrics['accuracy']", start)
+        anchor = source[start:end]
+        call = anchor.strip().split(" = ", 1)[1]
+        position = "iter_num + 1"
+    else:
+        indent = "        " if method in {"mdd", "mcc"} else "            "
+        call = ("validate(tgt_val_loader, classifier, num_classes)" if method in {"mdd", "mcc"}
+                else "evaluate(model, tgt_val_loader, device, num_classes)")
+        anchor = indent + "val_metrics = " + call + "\n"
+        position = "epoch" if method in {"mdd", "mcc"} else "epoch + 1"
+    indent = anchor[:len(anchor) - len(anchor.lstrip())]
+    source = replace_once(
+        source, anchor, anchor + indent + "val_metrics = bn_probe.evaluate(\n"
+        + indent + f"    val_metrics, lambda: {call}, {position})\n",
+    )
+    return replace_once(
+        source, "        eff.finalize(",
+        "        eff.record_calibration(bn_probe.summary())\n        eff.finalize(",
+    )
+
+
 def instrument_run(source, method, variant):
     symbols = "classification_metrics, report_validation"
     if method == "dann":
@@ -106,6 +148,8 @@ def instrument_run(source, method, variant):
         symbols += ", report_coral_gradients"
     elif method == "cdan" and variant != "cdan_source_only":
         symbols += ", target_prediction_stats"
+    if method == "mcc" and variant in {"bn_probe", "mcc_stronger", "mcc_stronger_bn"}:
+        symbols += ", report_mcc_gradients"
     if variant in {"ir_pretrain", "dann_ir_pretrain"}:
         symbols += ", start_stage_timer, finish_stage_timer"
     source = replace_once(
@@ -161,14 +205,27 @@ def instrument_run(source, method, variant):
     }
     anchor = "        eff.finalize("
     source = replace_once(source, anchor, f"        eff.benchmark({forward_calls[method]})\n" + anchor)
-    if method == "dann" and variant in {"dann_capped", "dann_ir_pretrain"}:
+    if method == "dann" and variant in {"dann_capped", "dann_ir_pretrain", "bn_probe"}:
         source = add_dann_modality_diagnostics(source)
-    if method == "deepcoral" and variant in {"coral_lr5", "sampling"}:
+    if method == "deepcoral" and variant in {"coral_lr5", "sampling", "bn_probe"}:
         anchor = "            loss.backward()"
         source = replace_once(
             source, anchor,
             "            if i + 1 == batches_this_epoch:\n"
             "                report_coral_gradients(global_step + 1, model.fc, loss_cls, _lambda * loss_coral)\n"
+            + anchor,
+        )
+    if method == "mdd":
+        source = replace_once(
+            source, "        if (i + 1) % args.print_freq == 0:",
+            "        if (i + 1) % args.print_freq == 0 or i + 1 == args.iters_per_epoch:",
+        )
+    if method == "mcc" and variant in {"bn_probe", "mcc_stronger", "mcc_stronger_bn"}:
+        anchor = "        loss.backward()"
+        source = replace_once(
+            source, anchor,
+            "        if transfer_weight > 0 and i + 1 == args.iters_per_epoch:\n"
+            "            report_mcc_gradients(epoch, classifier.head, cls_loss, transfer_weight * transfer_loss)\n"
             + anchor,
         )
     return source
@@ -311,6 +368,7 @@ def main():
         "historical_best", "tuned", "dann_capped", "dann_ir_pretrain", "coral_lr5",
         "sampling", "cdan_source_only", "cdan_grl_cap", "mdd_ramp8", "mdd_ramp4",
         "mcc_source_only", "mcc_joint_zero", "augmentation", "ir_pretrain", "ema_teacher",
+        "bn_probe", "mcc_stronger", "mcc_stronger_bn",
     ))
     args = parser.parse_args()
     trainer = args.trainer
@@ -318,7 +376,7 @@ def main():
     source = trainer.read_text(encoding="utf-8")
     multimodal_path = tools_dir / "uda_multimodal.py"
     updates = {}
-    if args.variant in {"tuned", "dann_capped", "dann_ir_pretrain"} and args.method == "dann":
+    if args.variant in {"tuned", "dann_capped", "dann_ir_pretrain", "bn_probe"} and args.method == "dann":
         source = cap_dann_grl(source)
         if args.variant == "dann_ir_pretrain":
             source = infrared_pretraining(source, args.method)
@@ -341,12 +399,15 @@ def main():
     elif args.variant == "ema_teacher":
         source = ema_consistency(source, args.method)
 
+    if args.variant in {"bn_probe", "mcc_stronger_bn"}:
+        source = target_bn_probe(source, args.method)
     source = instrument_run(source, args.method, args.variant)
     updates[trainer] = source
     for path, text in updates.items():
         compile(text, str(path), "exec")
     shared_files = ["historical_uda_metrics.py", "efficiency_common.py"]
-    if args.variant in {"sampling", "augmentation", "ir_pretrain", "dann_ir_pretrain", "ema_teacher"}:
+    if args.variant in {"sampling", "augmentation", "ir_pretrain", "dann_ir_pretrain",
+                        "ema_teacher", "bn_probe", "mcc_stronger_bn"}:
         shared_files.append("historical_uda_extensions.py")
     for filename in shared_files:
         copyfile(Path(__file__).with_name(filename), tools_dir / filename)
