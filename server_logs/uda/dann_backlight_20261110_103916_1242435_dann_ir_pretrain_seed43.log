@@ -1,0 +1,331 @@
+[GPU-WAIT] dann_backlight: require free >= 16000 MiB, util <= 10% for 3 checks; candidates=['0', '1']
+[GPU-WAIT] 2026-11-10T23:35:34+08:00 dann_backlight: GPU 0: free=22772 MiB, util=0%; GPU 1: free=31344 MiB, util=2%
+[GPU-WAIT] 2026-11-10T23:36:04+08:00 dann_backlight: GPU 0: free=22772 MiB, util=0%; GPU 1: free=32094 MiB, util=4%
+[GPU-SELECT] dann_backlight: physical GPU 0; free=22772 MiB, util=0%; launching: /home/lixiang/envs/lx_pytorch/bin/python -B -u /home/lixiang/lx/JMDA_Com/prepared_lists/uda_diagnose_20261110_103916_1242404/historical_code/20261110_103916_1242435_dann_ir_pretrain/dann/DANN/train_dann.py --target backlight --seed 43 --data-dir /home/lixiang/lx/JMDA_Com/prepared_lists/uda_diagnose_20261110_103916_1242404 --efficiency_output_dir /home/lixiang/lx/JMDA_Com/efficiency_results/uda/uda_diagnose_20261110_103916_1242404_dann_ir_pretrain/backlight --save-dir /home/lixiang/lx/JMDA_Com/checkpoints/uda/20261110_103916_1242435 --multimodal --enhanced-augmentation --no-save-model --eval-num-workers 0 --prefetch-factor 4 --pin-memory --persistent-workers --num-workers 8 --backbone jmda --batch-size 16 --epochs 36 --lr 0.0003 --domain-loss-weight 0.35 --grl-max-iterations 5000 --lr-scheduler constant --min-lr-ratio 0.1 --target-eval-interval 1
+Deterministic kernels: True
+Controlled random seed: 43
+Device: cuda
+Multimodal preprocessing: JMDA paired Resize(256) + RandomCrop(224) + HFlip; validation Resize(224)
+UDA label space (target-driven): 9 classes, original ids [0, 4, 5, 6, 7, 8, 10, 12, 13], remapped to 0..8
+Source train: 515 images
+Target train: 113 images
+Target val:   36 images
+  source train: kept 515, dropped 245 (label outside target label space), dropped_unpaired 0
+Source train: exact VIS/IR pairs=515, dropped_label=245, missing_ir=0
+Target train: exact VIS/IR pairs=113, dropped_label=0, missing_ir=0
+Target val: exact VIS/IR pairs=36, dropped_label=0, missing_ir=0
+DataLoader settings: train={'num_workers': 8, 'pin_memory': True, 'prefetch_factor': 4, 'persistent_workers': True, 'timeout': 300}, eval={'num_workers': 0, 'pin_memory': True}
+JMDA VIS fine-tuning: ResNet layer2-layer4 + projection; VIS trainable=11,281,664/11,439,168; IR fully trainable
+DANN architecture: JMDA non-tensor encoder (VIS ResNet-18 + IR U-Net, 512+512 direct concatenation)
+IR pretrain: source_train only, epochs=10, AdamW lr=0.0002
+IR pretrain [1/10] source_n=515 CE=1.3239
+IR pretrain [2/10] source_n=515 CE=0.8588
+IR pretrain [3/10] source_n=515 CE=0.7958
+IR pretrain [4/10] source_n=515 CE=0.6301
+IR pretrain [5/10] source_n=515 CE=0.6367
+IR pretrain [6/10] source_n=515 CE=0.5259
+IR pretrain [7/10] source_n=515 CE=0.4626
+IR pretrain [8/10] source_n=515 CE=0.5069
+IR pretrain [9/10] source_n=515 CE=0.3970
+IR pretrain [10/10] source_n=515 CE=0.4773
+IR pretrain seconds=24.7
+Efficiency logging -> /home/lixiang/lx/JMDA_Com/efficiency_results/uda/uda_diagnose_20261110_103916_1242404_dann_ir_pretrain/backlight/DANN-MM/82cf60b12d0e
+DANN optimizer-update budget: 1188 (36 epochs)
+DANN domain sampling: JMDA strict-UDA larger-domain epoch; 33 full paired batches/epoch
+DANN GRL ramp length: 5000 updates
+DANN LR schedule: constant; min ratio=0.1
+  Epoch [1/36] batch [10/33] update [10/1188] loss_cls=1.5063 loss_domain=1.2964 domain_weight=0.350 alpha=0.0090 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [1/36] batch [20/33] update [20/1188] loss_cls=0.7044 loss_domain=1.3143 domain_weight=0.350 alpha=0.0190 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [1/36] batch [30/33] update [30/1188] loss_cls=0.6660 loss_domain=1.1570 domain_weight=0.350 alpha=0.0290 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [1/36] batch [33/33] update [33/1188] loss_cls=0.3524 loss_domain=1.0710 domain_weight=0.350 alpha=0.0320 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [1/36] train summary: avg_cls=1.1248 avg_domain=1.2510 source_acc=0.6837 domain_acc=0.6411 grad_VIS=1.9899e+00 grad_IR=2.7239e+00 grad_heads=3.8472e+00 alpha=0.0320
+Epoch [1/36] update [33/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.4841 | Val Recall (Macro): 0.4630 | Val F1 (Macro): 0.4286 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.8333, 0.25, 1.0, 0.0, 0.0, 1.0, 0.3333, 0.75, 0.0], "confusion_matrix_rows_truth": [[5, 0, 0, 0, 0, 1, 0, 0, 0], [1, 1, 0, 0, 0, 2, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [6, 0, 0, 0, 2, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 5, 0, 0, 0], [0, 1, 0, 0, 0, 1, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0, 3, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0]], "vis_zeroed_acc": 0.4166666666666667, "ir_zeroed_acc": 0.16666666666666666}
+  Epoch [2/36] batch [10/33] update [43/1188] loss_cls=0.2471 loss_domain=0.8354 domain_weight=0.350 alpha=0.0420 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [2/36] batch [20/33] update [53/1188] loss_cls=0.2902 loss_domain=0.7823 domain_weight=0.350 alpha=0.0520 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [2/36] batch [30/33] update [63/1188] loss_cls=0.7476 loss_domain=1.1969 domain_weight=0.350 alpha=0.0619 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [2/36] batch [33/33] update [66/1188] loss_cls=0.2171 loss_domain=0.8267 domain_weight=0.350 alpha=0.0649 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [2/36] train summary: avg_cls=0.4739 avg_domain=1.0056 source_acc=0.8636 domain_acc=0.7869 grad_VIS=1.9166e+00 grad_IR=4.5546e+00 grad_heads=3.8690e+00 alpha=0.0649
+Epoch [2/36] update [66/1188] target val accuracy (diagnostic): 0.4444
+Val Precision (Macro): 0.4691 | Val Recall (Macro): 0.4306 | Val F1 (Macro): 0.4196 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.3333, 0.0, 0.5, 0.875, 0.0, 0.0, 0.6667, 0.5, 1.0], "confusion_matrix_rows_truth": [[2, 0, 0, 3, 0, 0, 1, 0, 0], [1, 0, 0, 3, 0, 0, 0, 0, 0], [0, 0, 2, 1, 1, 0, 0, 0, 0], [0, 0, 0, 7, 1, 0, 0, 0, 0], [0, 0, 0, 1, 0, 0, 0, 0, 0], [3, 0, 0, 1, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 2, 0, 0, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.4444444444444444, "ir_zeroed_acc": 0.19444444444444445}
+  Epoch [3/36] batch [10/33] update [76/1188] loss_cls=0.3540 loss_domain=0.7476 domain_weight=0.350 alpha=0.0749 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [3/36] batch [20/33] update [86/1188] loss_cls=0.0765 loss_domain=0.7735 domain_weight=0.350 alpha=0.0848 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [3/36] batch [30/33] update [96/1188] loss_cls=0.1933 loss_domain=1.0007 domain_weight=0.350 alpha=0.0947 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [3/36] batch [33/33] update [99/1188] loss_cls=0.2738 loss_domain=0.6255 domain_weight=0.350 alpha=0.0977 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [3/36] train summary: avg_cls=0.2233 avg_domain=0.8320 source_acc=0.9413 domain_acc=0.8258 grad_VIS=1.7105e+00 grad_IR=2.3833e+00 grad_heads=2.8948e+00 alpha=0.0977
+Epoch [3/36] update [99/1188] target val accuracy (diagnostic): 0.4167
+Val Precision (Macro): 0.4865 | Val Recall (Macro): 0.5370 | Val F1 (Macro): 0.4360 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [1.0, 0.25, 0.75, 0.0, 1.0, 0.0, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[6, 0, 0, 0, 0, 0, 0, 0, 0], [2, 1, 0, 0, 0, 0, 0, 1, 0], [0, 0, 3, 0, 1, 0, 0, 0, 0], [5, 0, 0, 0, 3, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 1, 1, 1, 0], [0, 0, 0, 0, 0, 1, 1, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.2777777777777778, "ir_zeroed_acc": 0.16666666666666666}
+  Epoch [4/36] batch [10/33] update [109/1188] loss_cls=0.0415 loss_domain=0.5532 domain_weight=0.350 alpha=0.1076 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [4/36] batch [20/33] update [119/1188] loss_cls=0.0523 loss_domain=0.7221 domain_weight=0.350 alpha=0.1175 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [4/36] batch [30/33] update [129/1188] loss_cls=0.2765 loss_domain=0.5260 domain_weight=0.350 alpha=0.1273 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [4/36] batch [33/33] update [132/1188] loss_cls=0.0922 loss_domain=0.6089 domain_weight=0.350 alpha=0.1303 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [4/36] train summary: avg_cls=0.1207 avg_domain=0.6511 source_acc=0.9716 domain_acc=0.8807 grad_VIS=1.5642e+00 grad_IR=1.6568e+00 grad_heads=2.4873e+00 alpha=0.1303
+Epoch [4/36] update [132/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.4852 | Val Recall (Macro): 0.6019 | Val F1 (Macro): 0.4996 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.8333, 0.75, 0.75, 0.0, 1.0, 0.0, 0.3333, 0.75, 1.0], "confusion_matrix_rows_truth": [[5, 1, 0, 0, 0, 0, 0, 0, 0], [1, 3, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 0, 1, 0, 0, 0, 0], [5, 0, 0, 0, 3, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 1, 3, 0], [0, 0, 0, 1, 0, 1, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0, 3, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.3333333333333333, "ir_zeroed_acc": 0.2777777777777778}
+  Epoch [5/36] batch [10/33] update [142/1188] loss_cls=0.0222 loss_domain=0.4284 domain_weight=0.350 alpha=0.1401 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [5/36] batch [20/33] update [152/1188] loss_cls=0.2227 loss_domain=0.7595 domain_weight=0.350 alpha=0.1499 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [5/36] batch [30/33] update [162/1188] loss_cls=0.1628 loss_domain=0.4955 domain_weight=0.350 alpha=0.1596 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [5/36] batch [33/33] update [165/1188] loss_cls=0.0470 loss_domain=0.3564 domain_weight=0.350 alpha=0.1625 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [5/36] train summary: avg_cls=0.1090 avg_domain=0.5468 source_acc=0.9735 domain_acc=0.8968 grad_VIS=1.7408e+00 grad_IR=1.3228e+00 grad_heads=2.4119e+00 alpha=0.1625
+Epoch [5/36] update [165/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.5938 | Val Recall (Macro): 0.6019 | Val F1 (Macro): 0.5137 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.8333, 0.25, 1.0, 0.0, 1.0, 0.0, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[5, 0, 0, 1, 0, 0, 0, 0, 0], [3, 1, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [5, 0, 0, 0, 3, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 2, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.3611111111111111, "ir_zeroed_acc": 0.25}
+  Epoch [6/36] batch [10/33] update [175/1188] loss_cls=0.0517 loss_domain=0.6529 domain_weight=0.350 alpha=0.1723 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [6/36] batch [20/33] update [185/1188] loss_cls=0.0216 loss_domain=0.3915 domain_weight=0.350 alpha=0.1820 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [6/36] batch [30/33] update [195/1188] loss_cls=0.0261 loss_domain=0.6231 domain_weight=0.350 alpha=0.1916 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [6/36] batch [33/33] update [198/1188] loss_cls=0.0550 loss_domain=0.9727 domain_weight=0.350 alpha=0.1945 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [6/36] train summary: avg_cls=0.0663 avg_domain=0.5689 source_acc=0.9867 domain_acc=0.8741 grad_VIS=1.4826e+00 grad_IR=9.8108e-01 grad_heads=2.2560e+00 alpha=0.1945
+Epoch [6/36] update [198/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.6644 | Val Recall (Macro): 0.5685 | Val F1 (Macro): 0.5294 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.8333, 0.25, 0.75, 0.25, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[5, 0, 0, 1, 0, 0, 0, 0, 0], [3, 1, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 0, 1, 0, 0, 0, 0], [4, 0, 0, 2, 2, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [3, 0, 0, 0, 0, 1, 1, 0, 0], [1, 0, 0, 0, 0, 1, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.4722222222222222, "ir_zeroed_acc": 0.2222222222222222}
+  Epoch [7/36] batch [10/33] update [208/1188] loss_cls=0.0120 loss_domain=0.4283 domain_weight=0.350 alpha=0.2041 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [7/36] batch [20/33] update [218/1188] loss_cls=0.0613 loss_domain=0.9396 domain_weight=0.350 alpha=0.2137 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [7/36] batch [30/33] update [228/1188] loss_cls=0.0474 loss_domain=0.6680 domain_weight=0.350 alpha=0.2232 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [7/36] batch [33/33] update [231/1188] loss_cls=0.0075 loss_domain=0.6061 domain_weight=0.350 alpha=0.2260 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [7/36] train summary: avg_cls=0.0461 avg_domain=0.6894 source_acc=0.9905 domain_acc=0.8466 grad_VIS=1.4438e+00 grad_IR=1.0947e+00 grad_heads=2.4516e+00 alpha=0.2260
+Epoch [7/36] update [231/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.5093 | Val Recall (Macro): 0.6241 | Val F1 (Macro): 0.5341 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 0.75, 1.0, 0.0, 1.0, 0.2, 0.6667, 0.5, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 0, 0, 0, 2, 0, 0], [0, 3, 0, 0, 0, 0, 0, 1, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [6, 0, 0, 0, 2, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.2222222222222222, "ir_zeroed_acc": 0.4166666666666667}
+  Epoch [8/36] batch [10/33] update [241/1188] loss_cls=0.0600 loss_domain=1.0906 domain_weight=0.350 alpha=0.2355 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [8/36] batch [20/33] update [251/1188] loss_cls=0.0489 loss_domain=0.9176 domain_weight=0.350 alpha=0.2449 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [8/36] batch [30/33] update [261/1188] loss_cls=0.0221 loss_domain=0.5805 domain_weight=0.350 alpha=0.2543 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [8/36] batch [33/33] update [264/1188] loss_cls=0.0204 loss_domain=0.9678 domain_weight=0.350 alpha=0.2571 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [8/36] train summary: avg_cls=0.0461 avg_domain=0.7961 source_acc=0.9886 domain_acc=0.8220 grad_VIS=1.6943e+00 grad_IR=8.0929e-01 grad_heads=2.4598e+00 alpha=0.2571
+Epoch [8/36] update [264/1188] target val accuracy (diagnostic): 0.4444
+Val Precision (Macro): 0.5556 | Val Recall (Macro): 0.5685 | Val F1 (Macro): 0.4961 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.8333, 0.25, 1.0, 0.0, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[5, 0, 0, 1, 0, 0, 0, 0, 0], [2, 1, 1, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [6, 0, 0, 0, 2, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [2, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.3888888888888889, "ir_zeroed_acc": 0.3888888888888889}
+  Epoch [9/36] batch [10/33] update [274/1188] loss_cls=0.2062 loss_domain=1.0017 domain_weight=0.350 alpha=0.2664 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [9/36] batch [20/33] update [284/1188] loss_cls=0.0101 loss_domain=0.8571 domain_weight=0.350 alpha=0.2757 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [9/36] batch [30/33] update [294/1188] loss_cls=0.0058 loss_domain=1.2605 domain_weight=0.350 alpha=0.2849 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [9/36] batch [33/33] update [297/1188] loss_cls=0.0601 loss_domain=0.7235 domain_weight=0.350 alpha=0.2876 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [9/36] train summary: avg_cls=0.0348 avg_domain=0.9729 source_acc=0.9924 domain_acc=0.7879 grad_VIS=1.4224e+00 grad_IR=7.0836e-01 grad_heads=2.6093e+00 alpha=0.2876
+Epoch [9/36] update [297/1188] target val accuracy (diagnostic): 0.4167
+Val Precision (Macro): 0.5040 | Val Recall (Macro): 0.4667 | Val F1 (Macro): 0.4660 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 0.5, 1.0, 0.0, 0.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 1, 0, 1, 0, 0, 0, 0, 0], [1, 2, 0, 0, 1, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [6, 0, 0, 0, 2, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 1, 0, 1, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.25, "ir_zeroed_acc": 0.3611111111111111}
+  Epoch [10/36] batch [10/33] update [307/1188] loss_cls=0.0043 loss_domain=0.7783 domain_weight=0.350 alpha=0.2968 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [10/36] batch [20/33] update [317/1188] loss_cls=0.0365 loss_domain=1.1970 domain_weight=0.350 alpha=0.3059 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [10/36] batch [30/33] update [327/1188] loss_cls=0.0295 loss_domain=1.0356 domain_weight=0.350 alpha=0.3149 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [10/36] batch [33/33] update [330/1188] loss_cls=0.0330 loss_domain=1.1382 domain_weight=0.350 alpha=0.3176 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [10/36] train summary: avg_cls=0.0335 avg_domain=1.0724 source_acc=0.9924 domain_acc=0.7282 grad_VIS=1.6749e+00 grad_IR=9.1829e-01 grad_heads=2.8394e+00 alpha=0.3176
+Epoch [10/36] update [330/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.6528 | Val Recall (Macro): 0.5648 | Val F1 (Macro): 0.5555 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [1.0, 0.25, 0.75, 0.25, 1.0, 0.0, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[6, 0, 0, 0, 0, 0, 0, 0, 0], [2, 1, 0, 0, 0, 0, 0, 1, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [6, 0, 0, 2, 0, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0, 2, 1, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.2777777777777778, "ir_zeroed_acc": 0.3888888888888889}
+  Epoch [11/36] batch [10/33] update [340/1188] loss_cls=0.0785 loss_domain=0.8987 domain_weight=0.350 alpha=0.3266 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [11/36] batch [20/33] update [350/1188] loss_cls=0.0257 loss_domain=1.5081 domain_weight=0.350 alpha=0.3355 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [11/36] batch [30/33] update [360/1188] loss_cls=0.0764 loss_domain=1.5997 domain_weight=0.350 alpha=0.3443 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [11/36] batch [33/33] update [363/1188] loss_cls=0.0025 loss_domain=1.0286 domain_weight=0.350 alpha=0.3470 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [11/36] train summary: avg_cls=0.0256 avg_domain=1.2053 source_acc=0.9924 domain_acc=0.7131 grad_VIS=1.5630e+00 grad_IR=7.4545e-01 grad_heads=3.0718e+00 alpha=0.3470
+Epoch [11/36] update [363/1188] target val accuracy (diagnostic): 0.3889
+Val Precision (Macro): 0.4974 | Val Recall (Macro): 0.5370 | Val F1 (Macro): 0.4873 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 0.75, 0.75, 0.0, 1.0, 0.0, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[3, 0, 0, 2, 0, 0, 1, 0, 0], [0, 3, 0, 0, 0, 0, 0, 1, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [6, 0, 0, 0, 2, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 5, 0, 0], [0, 0, 0, 1, 0, 1, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.25, "ir_zeroed_acc": 0.2777777777777778}
+  Epoch [12/36] batch [10/33] update [373/1188] loss_cls=0.0038 loss_domain=0.6929 domain_weight=0.350 alpha=0.3557 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [12/36] batch [20/33] update [383/1188] loss_cls=0.0283 loss_domain=1.4095 domain_weight=0.350 alpha=0.3644 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [12/36] batch [30/33] update [393/1188] loss_cls=0.0198 loss_domain=1.6720 domain_weight=0.350 alpha=0.3731 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [12/36] batch [33/33] update [396/1188] loss_cls=0.0073 loss_domain=1.2255 domain_weight=0.350 alpha=0.3757 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [12/36] train summary: avg_cls=0.0368 avg_domain=1.3018 source_acc=0.9905 domain_acc=0.6705 grad_VIS=2.0026e+00 grad_IR=8.6388e-01 grad_heads=2.9112e+00 alpha=0.3757
+Epoch [12/36] update [396/1188] target val accuracy (diagnostic): 0.4167
+Val Precision (Macro): 0.5429 | Val Recall (Macro): 0.5648 | Val F1 (Macro): 0.4778 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 0.25, 1.0, 0.0, 1.0, 0.0, 0.6667, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [1, 1, 0, 0, 1, 1, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [5, 0, 0, 0, 3, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 5, 0, 0], [0, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.3333333333333333, "ir_zeroed_acc": 0.2777777777777778}
+  Epoch [13/36] batch [10/33] update [406/1188] loss_cls=0.0034 loss_domain=1.5504 domain_weight=0.350 alpha=0.3842 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [13/36] batch [20/33] update [416/1188] loss_cls=0.0017 loss_domain=1.4559 domain_weight=0.350 alpha=0.3927 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [13/36] batch [30/33] update [426/1188] loss_cls=0.0492 loss_domain=1.1713 domain_weight=0.350 alpha=0.4011 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [13/36] batch [33/33] update [429/1188] loss_cls=0.0066 loss_domain=1.2263 domain_weight=0.350 alpha=0.4036 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [13/36] train summary: avg_cls=0.0207 avg_domain=1.3192 source_acc=0.9981 domain_acc=0.6316 grad_VIS=1.5472e+00 grad_IR=5.8732e-01 grad_heads=2.8119e+00 alpha=0.4036
+Epoch [13/36] update [429/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.5026 | Val Recall (Macro): 0.6204 | Val F1 (Macro): 0.4991 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 0.75, 0.0, 1.0, 0.0, 0.6667, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 5, 0, 0], [0, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 0, 0, 1, 0, 2, 1], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.16666666666666666, "ir_zeroed_acc": 0.3055555555555556}
+  Epoch [14/36] batch [10/33] update [439/1188] loss_cls=0.0022 loss_domain=1.1231 domain_weight=0.350 alpha=0.4120 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [14/36] batch [20/33] update [449/1188] loss_cls=0.0047 loss_domain=1.2778 domain_weight=0.350 alpha=0.4203 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [14/36] batch [30/33] update [459/1188] loss_cls=0.0008 loss_domain=1.3860 domain_weight=0.350 alpha=0.4285 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [14/36] batch [33/33] update [462/1188] loss_cls=0.0266 loss_domain=1.3859 domain_weight=0.350 alpha=0.4309 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [14/36] train summary: avg_cls=0.0331 avg_domain=1.3649 source_acc=0.9886 domain_acc=0.6203 grad_VIS=1.9860e+00 grad_IR=5.4130e-01 grad_heads=2.9649e+00 alpha=0.4309
+Epoch [14/36] update [462/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.5190 | Val Recall (Macro): 0.6204 | Val F1 (Macro): 0.5252 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 0.75, 0.75, 0.0, 1.0, 0.0, 0.6667, 0.75, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 3, 0, 0, 0, 0, 0, 1, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 4, 1, 0], [0, 0, 0, 0, 0, 1, 2, 0, 0], [0, 0, 0, 0, 0, 1, 0, 3, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.2222222222222222, "ir_zeroed_acc": 0.4166666666666667}
+  Epoch [15/36] batch [10/33] update [472/1188] loss_cls=0.0068 loss_domain=1.2051 domain_weight=0.350 alpha=0.4390 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [15/36] batch [20/33] update [482/1188] loss_cls=0.0035 loss_domain=1.5749 domain_weight=0.350 alpha=0.4470 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [15/36] batch [30/33] update [492/1188] loss_cls=0.0016 loss_domain=1.7311 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [15/36] batch [33/33] update [495/1188] loss_cls=0.0769 loss_domain=1.4749 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [15/36] train summary: avg_cls=0.0145 avg_domain=1.4648 source_acc=0.9981 domain_acc=0.5824 grad_VIS=1.2977e+00 grad_IR=4.4246e-01 grad_heads=2.8333e+00 alpha=0.4500
+Epoch [15/36] update [495/1188] target val accuracy (diagnostic): 0.5000
+Val Precision (Macro): 0.5593 | Val Recall (Macro): 0.6426 | Val F1 (Macro): 0.5532 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 0.75, 0.0, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 1, 0, 0, 0, 1, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.25, "ir_zeroed_acc": 0.5277777777777778}
+  Epoch [16/36] batch [10/33] update [505/1188] loss_cls=0.0112 loss_domain=1.5740 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [16/36] batch [20/33] update [515/1188] loss_cls=0.0052 loss_domain=1.5681 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [16/36] batch [30/33] update [525/1188] loss_cls=0.0254 loss_domain=1.6806 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [16/36] batch [33/33] update [528/1188] loss_cls=0.0160 loss_domain=1.7943 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [16/36] train summary: avg_cls=0.0150 avg_domain=1.4450 source_acc=0.9981 domain_acc=0.5701 grad_VIS=1.2167e+00 grad_IR=5.2370e-01 grad_heads=2.7365e+00 alpha=0.4500
+Epoch [16/36] update [528/1188] target val accuracy (diagnostic): 0.5000
+Val Precision (Macro): 0.5222 | Val Recall (Macro): 0.6426 | Val F1 (Macro): 0.5344 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 0.75, 0.0, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[3, 0, 0, 2, 0, 0, 0, 0, 1], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.25, "ir_zeroed_acc": 0.5}
+  Epoch [17/36] batch [10/33] update [538/1188] loss_cls=0.0106 loss_domain=1.2104 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [17/36] batch [20/33] update [548/1188] loss_cls=0.2370 loss_domain=1.3896 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [17/36] batch [30/33] update [558/1188] loss_cls=0.0057 loss_domain=1.1814 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [17/36] batch [33/33] update [561/1188] loss_cls=0.0220 loss_domain=0.9419 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [17/36] train summary: avg_cls=0.0364 avg_domain=1.3841 source_acc=0.9924 domain_acc=0.6184 grad_VIS=1.9856e+00 grad_IR=7.5241e-01 grad_heads=2.9834e+00 alpha=0.4500
+Epoch [17/36] update [561/1188] target val accuracy (diagnostic): 0.5000
+Val Precision (Macro): 0.5556 | Val Recall (Macro): 0.6426 | Val F1 (Macro): 0.5718 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 0.75, 0.0, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [6, 0, 0, 0, 2, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.19444444444444445, "ir_zeroed_acc": 0.5}
+  Epoch [18/36] batch [10/33] update [571/1188] loss_cls=0.0207 loss_domain=1.7736 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [18/36] batch [20/33] update [581/1188] loss_cls=0.1260 loss_domain=1.8020 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [18/36] batch [30/33] update [591/1188] loss_cls=0.1285 loss_domain=1.4311 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [18/36] batch [33/33] update [594/1188] loss_cls=0.0372 loss_domain=1.2355 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [18/36] train summary: avg_cls=0.0875 avg_domain=1.6607 source_acc=0.9716 domain_acc=0.5312 grad_VIS=4.1166e+00 grad_IR=1.1237e+00 grad_heads=3.6135e+00 alpha=0.4500
+Epoch [18/36] update [594/1188] target val accuracy (diagnostic): 0.5000
+Val Precision (Macro): 0.5315 | Val Recall (Macro): 0.6333 | Val F1 (Macro): 0.5340 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 0.75, 0.75, 0.0, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 3, 0, 0, 0, 1, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [2, 0, 0, 0, 5, 0, 0, 0, 1], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.16666666666666666, "ir_zeroed_acc": 0.5}
+  Epoch [19/36] batch [10/33] update [604/1188] loss_cls=0.0034 loss_domain=1.4229 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [19/36] batch [20/33] update [614/1188] loss_cls=0.0091 loss_domain=1.2677 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [19/36] batch [30/33] update [624/1188] loss_cls=0.0036 loss_domain=1.4660 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [19/36] batch [33/33] update [627/1188] loss_cls=0.0016 loss_domain=1.7206 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [19/36] train summary: avg_cls=0.0260 avg_domain=1.3447 source_acc=0.9905 domain_acc=0.6354 grad_VIS=1.9598e+00 grad_IR=5.3403e-01 grad_heads=3.0217e+00 alpha=0.4500
+Epoch [19/36] update [627/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.5944 | Val Recall (Macro): 0.6565 | Val F1 (Macro): 0.5827 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 0.75, 0.125, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1388888888888889, "ir_zeroed_acc": 0.5277777777777778}
+  Epoch [20/36] batch [10/33] update [637/1188] loss_cls=0.0944 loss_domain=1.3257 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [20/36] batch [20/33] update [647/1188] loss_cls=0.0146 loss_domain=1.6302 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [20/36] batch [30/33] update [657/1188] loss_cls=0.1214 loss_domain=1.5932 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [20/36] batch [33/33] update [660/1188] loss_cls=0.0010 loss_domain=1.7307 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [20/36] train summary: avg_cls=0.0283 avg_domain=1.6245 source_acc=0.9943 domain_acc=0.5691 grad_VIS=1.8491e+00 grad_IR=7.8748e-01 grad_heads=4.2454e+00 alpha=0.4500
+Epoch [20/36] update [660/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.5815 | Val Recall (Macro): 0.6565 | Val F1 (Macro): 0.5720 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 1.0, 0.125, 1.0, 0.2, 0.3333, 0.75, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 1, 0, 0, 0, 0, 3, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1111111111111111, "ir_zeroed_acc": 0.4722222222222222}
+  Epoch [21/36] batch [10/33] update [670/1188] loss_cls=0.0677 loss_domain=1.4249 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [21/36] batch [20/33] update [680/1188] loss_cls=0.0047 loss_domain=1.4606 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [21/36] batch [30/33] update [690/1188] loss_cls=0.0080 loss_domain=1.9545 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [21/36] batch [33/33] update [693/1188] loss_cls=0.0066 loss_domain=1.6924 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [21/36] train summary: avg_cls=0.0247 avg_domain=1.6248 source_acc=0.9962 domain_acc=0.5833 grad_VIS=1.7973e+00 grad_IR=6.0346e-01 grad_heads=5.1828e+00 alpha=0.4500
+Epoch [21/36] update [693/1188] target val accuracy (diagnostic): 0.5556
+Val Precision (Macro): 0.5648 | Val Recall (Macro): 0.6889 | Val F1 (Macro): 0.5956 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.0, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [4, 1, 0, 0, 3, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.2222222222222222, "ir_zeroed_acc": 0.5}
+  Epoch [22/36] batch [10/33] update [703/1188] loss_cls=0.0182 loss_domain=2.7923 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [22/36] batch [20/33] update [713/1188] loss_cls=0.0204 loss_domain=2.0193 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [22/36] batch [30/33] update [723/1188] loss_cls=0.0057 loss_domain=1.7686 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [22/36] batch [33/33] update [726/1188] loss_cls=0.0025 loss_domain=1.9787 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [22/36] train summary: avg_cls=0.0277 avg_domain=1.9287 source_acc=0.9981 domain_acc=0.5379 grad_VIS=1.8663e+00 grad_IR=8.3781e-01 grad_heads=6.8750e+00 alpha=0.4500
+Epoch [22/36] update [726/1188] target val accuracy (diagnostic): 0.5556
+Val Precision (Macro): 0.6457 | Val Recall (Macro): 0.6611 | Val F1 (Macro): 0.6333 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 0.75, 0.25, 1.0, 0.2, 0.3333, 0.75, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [5, 0, 0, 2, 1, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 1, 0, 0, 0, 3, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.3333333333333333, "ir_zeroed_acc": 0.5555555555555556}
+  Epoch [23/36] batch [10/33] update [736/1188] loss_cls=0.0179 loss_domain=1.7704 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [23/36] batch [20/33] update [746/1188] loss_cls=0.0307 loss_domain=1.0866 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [23/36] batch [30/33] update [756/1188] loss_cls=0.0554 loss_domain=2.4002 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [23/36] batch [33/33] update [759/1188] loss_cls=0.0062 loss_domain=1.6282 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [23/36] train summary: avg_cls=0.0235 avg_domain=1.8372 source_acc=0.9943 domain_acc=0.5578 grad_VIS=1.6570e+00 grad_IR=5.7150e-01 grad_heads=8.3830e+00 alpha=0.4500
+Epoch [23/36] update [759/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.5222 | Val Recall (Macro): 0.6704 | Val F1 (Macro): 0.5503 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 1.0, 0.0, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[3, 0, 0, 2, 0, 0, 0, 0, 1], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.16666666666666666, "ir_zeroed_acc": 0.5277777777777778}
+  Epoch [24/36] batch [10/33] update [769/1188] loss_cls=0.0013 loss_domain=1.9625 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [24/36] batch [20/33] update [779/1188] loss_cls=0.0043 loss_domain=1.8083 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [24/36] batch [30/33] update [789/1188] loss_cls=0.0021 loss_domain=2.2847 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [24/36] batch [33/33] update [792/1188] loss_cls=0.0010 loss_domain=2.0600 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [24/36] train summary: avg_cls=0.0374 avg_domain=1.7813 source_acc=0.9905 domain_acc=0.5616 grad_VIS=1.9661e+00 grad_IR=7.6894e-01 grad_heads=9.0466e+00 alpha=0.4500
+Epoch [24/36] update [792/1188] target val accuracy (diagnostic): 0.5833
+Val Precision (Macro): 0.6640 | Val Recall (Macro): 0.6889 | Val F1 (Macro): 0.6297 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 0.75, 0.25, 1.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 0, 1, 0, 0, 0, 0], [1, 0, 0, 2, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1388888888888889, "ir_zeroed_acc": 0.5555555555555556}
+  Epoch [25/36] batch [10/33] update [802/1188] loss_cls=0.0004 loss_domain=1.7788 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [25/36] batch [20/33] update [812/1188] loss_cls=0.2955 loss_domain=1.7944 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [25/36] batch [30/33] update [822/1188] loss_cls=0.0881 loss_domain=1.5122 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [25/36] batch [33/33] update [825/1188] loss_cls=0.1175 loss_domain=2.0728 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [25/36] train summary: avg_cls=0.0488 avg_domain=1.9393 source_acc=0.9905 domain_acc=0.5341 grad_VIS=2.6736e+00 grad_IR=6.7803e-01 grad_heads=9.5160e+00 alpha=0.4500
+Epoch [25/36] update [825/1188] target val accuracy (diagnostic): 0.4722
+Val Precision (Macro): 0.5116 | Val Recall (Macro): 0.6056 | Val F1 (Macro): 0.4917 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 0.75, 0.0, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 2, 2], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.16666666666666666, "ir_zeroed_acc": 0.4722222222222222}
+  Epoch [26/36] batch [10/33] update [835/1188] loss_cls=0.0003 loss_domain=1.9692 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [26/36] batch [20/33] update [845/1188] loss_cls=0.0110 loss_domain=1.4597 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [26/36] batch [30/33] update [855/1188] loss_cls=0.0362 loss_domain=1.8875 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [26/36] batch [33/33] update [858/1188] loss_cls=0.3195 loss_domain=1.9907 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [26/36] train summary: avg_cls=0.0422 avg_domain=1.7874 source_acc=0.9867 domain_acc=0.5568 grad_VIS=3.5735e+00 grad_IR=7.3658e-01 grad_heads=8.0361e+00 alpha=0.4500
+Epoch [26/36] update [858/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.5815 | Val Recall (Macro): 0.5593 | Val F1 (Macro): 0.5615 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 0.75, 0.25, 0.0, 0.2, 0.3333, 1.0, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [2, 0, 0, 2, 4, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 4, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1111111111111111, "ir_zeroed_acc": 0.5277777777777778}
+  Epoch [27/36] batch [10/33] update [868/1188] loss_cls=0.0012 loss_domain=1.5207 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [27/36] batch [20/33] update [878/1188] loss_cls=0.0267 loss_domain=1.8211 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [27/36] batch [30/33] update [888/1188] loss_cls=0.0007 loss_domain=1.2745 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [27/36] batch [33/33] update [891/1188] loss_cls=0.0001 loss_domain=1.6014 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [27/36] train summary: avg_cls=0.0328 avg_domain=1.5588 source_acc=0.9943 domain_acc=0.5805 grad_VIS=1.4559e+00 grad_IR=6.1278e-01 grad_heads=7.3477e+00 alpha=0.4500
+Epoch [27/36] update [891/1188] target val accuracy (diagnostic): 0.4444
+Val Precision (Macro): 0.4759 | Val Recall (Macro): 0.5870 | Val F1 (Macro): 0.4607 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 0.75, 0.0, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [3, 0, 0, 0, 3, 0, 0, 0, 2], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 0, 2, 2], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.16666666666666666, "ir_zeroed_acc": 0.4722222222222222}
+  Epoch [28/36] batch [10/33] update [901/1188] loss_cls=0.0031 loss_domain=1.5055 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [28/36] batch [20/33] update [911/1188] loss_cls=0.0413 loss_domain=1.4997 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [28/36] batch [30/33] update [921/1188] loss_cls=0.0011 loss_domain=1.5282 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [28/36] batch [33/33] update [924/1188] loss_cls=0.0023 loss_domain=1.3933 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [28/36] train summary: avg_cls=0.0217 avg_domain=1.4916 source_acc=0.9962 domain_acc=0.5814 grad_VIS=1.8967e+00 grad_IR=2.9728e-01 grad_heads=6.5120e+00 alpha=0.4500
+Epoch [28/36] update [924/1188] target val accuracy (diagnostic): 0.5556
+Val Precision (Macro): 0.6333 | Val Recall (Macro): 0.6694 | Val F1 (Macro): 0.6056 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.125, 1.0, 0.4, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [3, 0, 0, 1, 4, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [1, 0, 0, 0, 0, 2, 2, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.2222222222222222, "ir_zeroed_acc": 0.4722222222222222}
+  Epoch [29/36] batch [10/33] update [934/1188] loss_cls=0.0002 loss_domain=1.4383 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [29/36] batch [20/33] update [944/1188] loss_cls=0.0001 loss_domain=1.4552 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [29/36] batch [30/33] update [954/1188] loss_cls=0.0165 loss_domain=1.8231 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [29/36] batch [33/33] update [957/1188] loss_cls=0.0007 loss_domain=1.2155 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [29/36] train summary: avg_cls=0.0105 avg_domain=1.4908 source_acc=0.9962 domain_acc=0.5947 grad_VIS=1.4865e+00 grad_IR=4.0869e-01 grad_heads=6.7321e+00 alpha=0.4500
+Epoch [29/36] update [957/1188] target val accuracy (diagnostic): 0.5833
+Val Precision (Macro): 0.6519 | Val Recall (Macro): 0.6972 | Val F1 (Macro): 0.6318 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.125, 1.0, 0.4, 0.3333, 0.75, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 2, 3, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 0, 1, 3, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.19444444444444445, "ir_zeroed_acc": 0.5277777777777778}
+  Epoch [30/36] batch [10/33] update [967/1188] loss_cls=0.0028 loss_domain=1.3333 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [30/36] batch [20/33] update [977/1188] loss_cls=0.0166 loss_domain=1.3272 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [30/36] batch [30/33] update [987/1188] loss_cls=0.0576 loss_domain=1.5994 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [30/36] batch [33/33] update [990/1188] loss_cls=0.0003 loss_domain=1.4565 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [30/36] train summary: avg_cls=0.0206 avg_domain=1.4819 source_acc=0.9905 domain_acc=0.5805 grad_VIS=1.7034e+00 grad_IR=3.8807e-01 grad_heads=6.5021e+00 alpha=0.4500
+Epoch [30/36] update [990/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.5685 | Val Recall (Macro): 0.6472 | Val F1 (Macro): 0.5263 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.125, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 1, 1, 0, 1], [0, 0, 0, 0, 0, 0, 0, 2, 2], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1388888888888889, "ir_zeroed_acc": 0.4444444444444444}
+  Epoch [31/36] batch [10/33] update [1000/1188] loss_cls=0.0087 loss_domain=1.4780 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [31/36] batch [20/33] update [1010/1188] loss_cls=0.0000 loss_domain=1.4837 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [31/36] batch [30/33] update [1020/1188] loss_cls=0.0004 loss_domain=1.7109 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [31/36] batch [33/33] update [1023/1188] loss_cls=0.0001 loss_domain=1.2656 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [31/36] train summary: avg_cls=0.0162 avg_domain=1.4681 source_acc=0.9943 domain_acc=0.5672 grad_VIS=1.5117e+00 grad_IR=5.3304e-01 grad_heads=6.4703e+00 alpha=0.4500
+Epoch [31/36] update [1023/1188] target val accuracy (diagnostic): 0.5000
+Val Precision (Macro): 0.5728 | Val Recall (Macro): 0.6333 | Val F1 (Macro): 0.5569 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.0, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [3, 0, 0, 0, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 1, 1, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1111111111111111, "ir_zeroed_acc": 0.5}
+  Epoch [32/36] batch [10/33] update [1033/1188] loss_cls=0.0005 loss_domain=1.7510 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [32/36] batch [20/33] update [1043/1188] loss_cls=0.0001 loss_domain=1.5066 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [32/36] batch [30/33] update [1053/1188] loss_cls=0.0001 loss_domain=1.3031 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [32/36] batch [33/33] update [1056/1188] loss_cls=0.0005 loss_domain=1.2445 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [32/36] train summary: avg_cls=0.0121 avg_domain=1.4962 source_acc=0.9981 domain_acc=0.5521 grad_VIS=1.2987e+00 grad_IR=1.6399e-01 grad_heads=6.0402e+00 alpha=0.4500
+Epoch [32/36] update [1056/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.6185 | Val Recall (Macro): 0.6472 | Val F1 (Macro): 0.5834 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.125, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1111111111111111, "ir_zeroed_acc": 0.5277777777777778}
+  Epoch [33/36] batch [10/33] update [1066/1188] loss_cls=0.0035 loss_domain=1.7347 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [33/36] batch [20/33] update [1076/1188] loss_cls=0.0041 loss_domain=1.3734 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [33/36] batch [30/33] update [1086/1188] loss_cls=0.0008 loss_domain=1.2947 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [33/36] batch [33/33] update [1089/1188] loss_cls=0.0001 loss_domain=1.3963 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [33/36] train summary: avg_cls=0.0023 avg_domain=1.4156 source_acc=1.0000 domain_acc=0.6004 grad_VIS=6.4505e-01 grad_IR=1.5242e-01 grad_heads=6.0457e+00 alpha=0.4500
+Epoch [33/36] update [1089/1188] target val accuracy (diagnostic): 0.4444
+Val Precision (Macro): 0.5537 | Val Recall (Macro): 0.5824 | Val F1 (Macro): 0.5140 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.3333, 1.0, 0.75, 0.125, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[2, 2, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 3, 1, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1111111111111111, "ir_zeroed_acc": 0.4444444444444444}
+  Epoch [34/36] batch [10/33] update [1099/1188] loss_cls=0.2863 loss_domain=1.4912 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [34/36] batch [20/33] update [1109/1188] loss_cls=0.0045 loss_domain=1.2326 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [34/36] batch [30/33] update [1119/1188] loss_cls=0.0002 loss_domain=1.6113 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [34/36] batch [33/33] update [1122/1188] loss_cls=0.0011 loss_domain=1.4377 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [34/36] train summary: avg_cls=0.0221 avg_domain=1.4772 source_acc=0.9924 domain_acc=0.5786 grad_VIS=1.9186e+00 grad_IR=1.8417e-01 grad_heads=6.9966e+00 alpha=0.4500
+Epoch [34/36] update [1122/1188] target val accuracy (diagnostic): 0.4444
+Val Precision (Macro): 0.6016 | Val Recall (Macro): 0.5639 | Val F1 (Macro): 0.5051 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 0.25, 1.0, 0.125, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [1, 1, 0, 0, 1, 1, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1111111111111111, "ir_zeroed_acc": 0.4444444444444444}
+  Epoch [35/36] batch [10/33] update [1132/1188] loss_cls=0.1210 loss_domain=1.5465 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [35/36] batch [20/33] update [1142/1188] loss_cls=0.0041 loss_domain=1.8113 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [35/36] batch [30/33] update [1152/1188] loss_cls=0.1259 loss_domain=1.3050 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [35/36] batch [33/33] update [1155/1188] loss_cls=0.0004 loss_domain=1.9930 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [35/36] train summary: avg_cls=0.0275 avg_domain=1.5788 source_acc=0.9924 domain_acc=0.5710 grad_VIS=2.1148e+00 grad_IR=3.2466e-01 grad_heads=8.3407e+00 alpha=0.4500
+Epoch [35/36] update [1155/1188] target val accuracy (diagnostic): 0.5000
+Val Precision (Macro): 0.5889 | Val Recall (Macro): 0.6287 | Val F1 (Macro): 0.5576 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.5, 1.0, 1.0, 0.125, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[3, 1, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.1388888888888889, "ir_zeroed_acc": 0.5}
+  Epoch [36/36] batch [10/33] update [1165/1188] loss_cls=0.0003 loss_domain=1.6052 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [36/36] batch [20/33] update [1175/1188] loss_cls=0.0002 loss_domain=1.6018 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [36/36] batch [30/33] update [1185/1188] loss_cls=0.0037 loss_domain=1.3685 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+  Epoch [36/36] batch [33/33] update [1188/1188] loss_cls=0.0004 loss_domain=1.4422 domain_weight=0.350 alpha=0.4500 lr=[3e-05, 0.0003, 0.0003, 0.0003]
+Epoch [36/36] train summary: avg_cls=0.0130 avg_domain=1.5964 source_acc=0.9962 domain_acc=0.5455 grad_VIS=1.2750e+00 grad_IR=2.6392e-01 grad_heads=8.9334e+00 alpha=0.4500
+Epoch [36/36] update [1188/1188] target val accuracy (diagnostic): 0.5278
+Val Precision (Macro): 0.6204 | Val Recall (Macro): 0.6472 | Val F1 (Macro): 0.5828 | Val class coverage: 9/9 | Val samples: 36
+UDA_VALIDATION_DIAGNOSTICS: {"original_class_ids": [0, 4, 5, 6, 7, 8, 10, 12, 13], "support": [6, 4, 4, 8, 1, 5, 3, 4, 1], "recall": [0.6667, 1.0, 1.0, 0.125, 1.0, 0.2, 0.3333, 0.5, 1.0], "confusion_matrix_rows_truth": [[4, 0, 0, 2, 0, 0, 0, 0, 0], [0, 4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 4, 0, 0, 0, 0, 0, 0], [2, 0, 0, 1, 5, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 4, 0, 0], [0, 0, 0, 0, 0, 2, 1, 0, 0], [0, 0, 0, 0, 0, 1, 1, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 1]], "vis_zeroed_acc": 0.16666666666666666, "ir_zeroed_acc": 0.5277777777777778}
+UDA_COMPLEXITY: {"run_id": "82cf60b12d0e", "method": "DANN-MM", "protocol": "UDA", "seed": 43, "device": "cuda:0", "modalities": "VIS+IR", "target_label_count": "", "target_labels_per_class": "", "backbone": "", "pretraining": "", "train_epoch_mean_s": 2.6119, "train_epoch_std_s": 0.1176, "total_train_time_s": 118.7574, "peak_train_allocated_gb": 4.0977, "peak_train_reserved_gb": 4.2676, "final_acc": 0.5833333333333334, "best_acc": 0.5833333333333334, "selected_epoch": 29, "last_epoch_acc": 0.5277777777777778, "target": "backlight", "total_params": 17707403, "trainable_params": 17549899, "buffer_mb": 0.0515, "gpu_name": "NVIDIA GeForce RTX 5090", "pytorch": "2.11.0+cu128", "cuda": "12.8", "precision": "float32", "batch_size": 1, "inference_input_shape": [1, 6, 224, 224], "vis_shape": "3x224x224", "ir_shape": "3x224x224", "inference_flops_scope": "executed Conv2d and Linear; 1 MAC = 2 FLOPs", "validation_views": 1, "training_time_unit": "epoch", "MACs": 12074338560, "inference_GFLOPs": 24.148677, "latency_mean_ms": 1.2777, "latency_std_ms": 0.0051, "latency_p50_ms": 1.2775, "latency_p95_ms": 1.286, "throughput_samples_s": 782.65, "complexity_status": "complete", "ir_pretrain_peak_allocated_gb": 2.0212368965148926, "ir_pretrain_peak_reserved_gb": 3.337890625, "ir_pretrain_time_s": 24.727829674025998, "training_time_scope": "training windows plus IR pretraining, excluding validation and GPU queue", "timed_training_units": 36}
+Best target val accuracy (backlight, selected): 0.5833 at epoch 29
+Selected target val metrics:
+Val Precision (Macro): 0.6519 | Val Recall (Macro): 0.6972 | Val F1 (Macro): 0.6318 | Val class coverage: 9/9 | Val samples: 36
+Last-epoch target val accuracy (backlight): 0.5278
+Final target val accuracy (backlight, selected epoch 29): 0.5833
+{"timestamp": "2026-11-10T23:44:23", "suite_id": "uda_diagnose_20261110_103916_1242404_dann_ir_pretrain", "run_tag": "dann_backlight", "method": "dann", "protocol": "UDA", "target": "backlight", "seed": 43, "epochs": 36, "input_modalities": "VIS+IR", "label_space_relation": "partial-set", "model_selection": "best_target_val_ACC_within_budget", "status": "success", "exit_code": 0, "duration_seconds": 529.0, "final_acc": 0.5833, "best_acc": 0.5833, "final_acc_std": null, "precision_macro": 0.6519, "precision_macro_std": null, "recall_macro": 0.6972, "recall_macro_std": null, "f1_macro": 0.6318, "f1_macro_std": null, "num_iterations": 1, "seed_values": "", "accuracy_values_count": 0, "log_path": "/home/lixiang/lx/JMDA_Com/server_logs/uda/dann_backlight_20261110_103916_1242435_dann_ir_pretrain_seed43.log", "efficiency_dir": "/home/lixiang/lx/JMDA_Com/efficiency_results/uda/uda_diagnose_20261110_103916_1242404_dann_ir_pretrain/backlight", "error_type": null, "error_summary": null}
