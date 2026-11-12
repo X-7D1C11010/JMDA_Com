@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Separate from the existing MCFT/TIR launcher; all five methods use SDA here.
+# Separate from MCFT/TIR; all five methods use label-free target training.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-formal}"
@@ -41,10 +41,10 @@ if [ ! -f "$WEIGHTS" ]; then
   "$PYTHON_BIN" -B -u "$HERE/tools/download_official_uda_weights.py" --only resnet18
 fi
 if [ ! -f "$WEIGHTS" ]; then echo "Missing weights: $WEIGHTS" >&2; exit 1; fi
-RUN_DIR="$OUTPUT_ROOT/vds2raw_sda_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
+RUN_DIR="$OUTPUT_ROOT/vds2raw_uda_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
 mkdir -p "$RUN_DIR/logs"
 echo "Run directory: $RUN_DIR"
-echo "Protocol: labelled source_train + target_train; target_val selection; target_test ONCE after selection"
+echo "Protocol: labelled source_train + UNLABELLED target_train; target_val selection; target_test ONCE after selection"
 echo "Inputs: RGB + NIR + full 13 AIS features + 13 validity values; native 96x96"
 echo "Methods: ${METHODS[*]}; seeds: ${SEEDS[*]}; epochs=$EPOCHS; batch/domain=$BATCH"
 "$PYTHON_BIN" -B -u "$HERE/vds2raw/train_adaptation.py" --audit-only \

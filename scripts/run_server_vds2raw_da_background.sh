@@ -6,8 +6,8 @@ case "$MODE" in formal|smoke) ;; *) echo "usage: $0 {formal|smoke}" >&2; exit 1 
 LOG_DIR="$HERE/server_logs/vds2raw_da_launcher"
 mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y%m%d_%H%M%S)_$$"
-LOG="$LOG_DIR/${MODE}_${STAMP}.log"
-PID_FILE="$LOG_DIR/${MODE}_${STAMP}.pid"
+LOG="$LOG_DIR/uda_${MODE}_${STAMP}.log"
+PID_FILE="$LOG_DIR/uda_${MODE}_${STAMP}.pid"
 nohup bash "$HERE/scripts/run_vds2raw_da_methods.sh" "$MODE" > "$LOG" 2>&1 < /dev/null &
 PID=$!
 printf '%s\n' "$PID" > "$PID_FILE"

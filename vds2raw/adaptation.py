@@ -1,8 +1,4 @@
-"""Three-modal adapters and DA objectives for the explicitly supervised VDS split.
-
-The image/AIS interface is shared between methods. These are SDA extensions of
-the named objectives, not claims to reproduce their original UDA benchmarks.
-"""
+"""Three-modal VDS adapters with source-only supervised UDA objectives."""
 
 from copy import deepcopy
 import hashlib
@@ -89,7 +85,9 @@ class AdaptationDataset(Dataset):
         self.nir_mean = torch.tensor(images.nir_mean).view(1, 1, 1)
         self.nir_std = torch.tensor(images.nir_std).view(1, 1, 1)
         self.ais_mean, self.ais_std = torch.tensor(ais["mean"]), torch.tensor(ais["std"])
-        self.samples = [(str(p), CLASS_TO_ID[p.parent.name]) for p in self.paths]
+        self.labelled = partition != "target_train"
+        self.samples = [(str(p), CLASS_TO_ID[p.parent.name] if self.labelled else -1)
+                        for p in self.paths]
 
     def __len__(self):
         return len(self.paths)
@@ -101,8 +99,9 @@ class AdaptationDataset(Dataset):
             nir = torch.from_numpy(item["nir"].astype(np.float32))
             ais = torch.from_numpy(item["ais"].astype(np.float32))
             mask = torch.from_numpy(item["ais_mask"].astype(np.float32))
-            label = int(item["label"])
-        if label != CLASS_TO_ID[path.parent.name] or ais.shape != (13,):
+            # Do not even access the target-training NPZ label field.
+            label = int(item["label"]) if self.labelled else None
+        if (self.labelled and label != CLASS_TO_ID[path.parent.name]) or ais.shape != (13,):
             raise ValueError(f"Label/feature schema mismatch: {path}")
         if self.augment:
             # Preserve spatial registration and AIS/image heading consistency.
@@ -114,12 +113,15 @@ class AdaptationDataset(Dataset):
             rgb = F.pad(rgb, (4, 4, 4, 4), mode="reflect")[:, top:top+96, left:left+96]
             nir = F.pad(nir, (4, 4, 4, 4), mode="reflect")[:, top:top+96, left:left+96]
             rgb = rgb * (0.95 + 0.10 * torch.rand(()))
-        return {
+        result = {
             "rgb": (rgb-self.rgb_mean)/self.rgb_std,
             "nir": (nir-self.nir_mean)/self.nir_std,
             "ais": ((ais-self.ais_mean)/self.ais_std)*mask,
-            "ais_mask": mask, "label": label, "path": str(path),
+            "ais_mask": mask, "path": str(path),
         }
+        if self.labelled:
+            result["label"] = label
+        return result
 
 
 class PairedEpochSampler(Sampler):
@@ -147,7 +149,7 @@ def reverse(value, coefficient):
     return GradientReverseFunction.apply(value, float(coefficient))
 
 
-def cdan_entropy_loss(features, logits, discriminator, source_count, coefficient):
+def cdan_entropy_loss(features, logits, discriminator, source_count, coefficient, feature_coefficient=None):
     """Device-independent CDAN+E formula from CDAN/pytorch/loss.py.
 
     The feature-probability outer product detaches probabilities. Entropy uses
@@ -156,7 +158,7 @@ def cdan_entropy_loss(features, logits, discriminator, source_count, coefficient
     """
     probabilities = logits.softmax(1)
     joint = torch.bmm(probabilities.detach().unsqueeze(2), features.unsqueeze(1)).flatten(1)
-    domain_logits = discriminator(reverse(joint, coefficient)).flatten()
+    domain_logits = discriminator(reverse(joint, coefficient if feature_coefficient is None else feature_coefficient)).flatten()
     truth = torch.cat((torch.ones(source_count, device=features.device),
                        torch.zeros(len(features)-source_count, device=features.device)))
     entropy = -(probabilities * (probabilities+1e-5).log()).sum(1)
@@ -196,20 +198,42 @@ class AdaptationModel(nn.Module):
         if method == "deepcoral":
             self.bottleneck = nn.Identity()
             dimension = 1152
+        elif method == "cdan":
+            # Released ResNetFc uses a linear bottleneck, without BN/ReLU.
+            self.bottleneck = nn.Linear(1152, 256)
+            nn.init.normal_(self.bottleneck.weight, 0, 0.005)
+            nn.init.constant_(self.bottleneck.bias, 0.1)
+            dimension = 256
         else:
             self.bottleneck = nn.Sequential(nn.Linear(1152, 256), nn.BatchNorm1d(256), nn.ReLU())
+            if method == "mdd":
+                self.bottleneck.append(nn.Dropout(0.5))
+                nn.init.normal_(self.bottleneck[0].weight, 0, 0.005)
+                nn.init.constant_(self.bottleneck[0].bias, 0.1)
             dimension = 256
         self.head = nn.Linear(dimension, 3)
         nn.init.normal_(self.head.weight, 0, 0.005)
         if method in {"dann", "cdan"}:
+            hidden = 1024 if method == "cdan" else 512
             self.discriminator = nn.Sequential(
-                nn.Linear(dimension*(3 if method == "cdan" else 1), 512),
-                nn.ReLU(), nn.Dropout(0.5), nn.Linear(512, 512), nn.ReLU(),
-                nn.Dropout(0.5), nn.Linear(512, 1),
+                nn.Linear(dimension*(3 if method == "cdan" else 1), hidden),
+                nn.ReLU(), nn.Dropout(0.5), nn.Linear(hidden, hidden), nn.ReLU(),
+                nn.Dropout(0.5), nn.Linear(hidden, 1),
             )
+            if method == "cdan":
+                for layer in (self.bottleneck, self.head, *self.discriminator):
+                    if isinstance(layer, nn.Linear):
+                        nn.init.xavier_normal_(layer.weight)
+                        nn.init.zeros_(layer.bias)
         if method == "mdd":
+            self.head = nn.Sequential(nn.Linear(dimension, 256), nn.ReLU(),
+                                     nn.Dropout(0.5), nn.Linear(256, 3))
             self.adv_head = nn.Sequential(nn.Linear(dimension, 256), nn.ReLU(),
                                            nn.Dropout(0.5), nn.Linear(256, 3))
+            for head in (self.head, self.adv_head):
+                for layer in (head[0], head[3]):
+                    nn.init.normal_(layer.weight, 0, 0.01)
+                    nn.init.zeros_(layer.bias)
         self.mdd = ClassificationMarginDisparityDiscrepancy(margin=4)
         self.mcc = MinimumClassConfusionLoss(temperature=2.5)
         self.last_features = None
@@ -230,29 +254,43 @@ class AdaptationModel(nn.Module):
 
     def objective(self, source, target, update, planned_updates, args):
         source_count = len(source["label"])
-        inputs = {key: torch.cat((source[key], target[key]), 0)
-                  for key in ("rgb", "nir", "ais", "ais_mask")}
-        features = self.encode(inputs)
-        logits = self.head(features)
+        if self.method in {"dann", "deepcoral", "cdan"}:
+            # Preserve the separate domain forwards in these released loops.
+            fs = self.encode(source)
+            source_branches = self.last_features
+            ys = self.head(fs)
+            ft = self.encode(target)
+            target_branches = self.last_features
+            yt = self.head(ft)
+            self.last_features = tuple(torch.cat((s, t)) for s, t in zip(source_branches, target_branches))
+            features, logits = torch.cat((fs, ft)), torch.cat((ys, yt))
+        else:
+            # MDD/MCC released examples concatenate the domains before BN.
+            inputs = {key: torch.cat((source[key], target[key]), 0)
+                      for key in ("rgb", "nir", "ais", "ais_mask")}
+            features = self.encode(inputs)
+            logits = self.head(features)
         ys, yt = logits[:source_count], logits[source_count:]
         ce_source = F.cross_entropy(ys, source["label"], label_smoothing=args.label_smoothing)
-        ce_target = F.cross_entropy(yt, target["label"], label_smoothing=args.label_smoothing)
-        classification = (args.source_weight*ce_source + args.target_weight*ce_target)/(args.source_weight+args.target_weight)
+        classification = ce_source
         progress = update/max(planned_updates, 1)
         coefficient = 2/(1+math.exp(-10*progress))-1
         domain_accuracy = None
         if self.method == "dann":
-            coefficient = min(coefficient, 0.45)
             predictions = self.discriminator(reverse(features, coefficient)).flatten()
             domains = torch.cat((torch.ones(source_count, device=logits.device),
                                  torch.zeros(len(yt), device=logits.device)))
-            transfer = F.binary_cross_entropy_with_logits(predictions, domains)
+            transfer = (F.binary_cross_entropy_with_logits(predictions[:source_count], domains[:source_count])
+                        + F.binary_cross_entropy_with_logits(predictions[source_count:], domains[source_count:]))
             domain_accuracy = float(((predictions >= 0) == domains.bool()).float().mean().detach())
         elif self.method == "deepcoral":
             coefficient = 0.0
             transfer = CORAL(ys, yt)
         elif self.method == "cdan":
-            transfer, domain_accuracy = cdan_entropy_loss(features, logits, self.discriminator, source_count, coefficient)
+            entropy_coefficient = 2/(1+math.exp(-10*update/10000))-1
+            coefficient = 2/(1+math.exp(-10*(update+1)/10000))-1
+            transfer, domain_accuracy = cdan_entropy_loss(features, logits, self.discriminator,
+                                                          source_count, entropy_coefficient, coefficient)
         elif self.method == "mdd":
             # Preserve the official MDD GRL schedule and negative discrepancy.
             coefficient = 0.2/(1+math.exp(-update/1000))-0.1
@@ -265,8 +303,25 @@ class AdaptationModel(nn.Module):
         ramp = max(args.adaptation_ramp_epochs*args.steps_per_epoch, 1)
         weight = args.trade_off*min(max((update+1-warmup)/ramp, 0), 1)
         return classification+weight*transfer, {
-            "classification": classification, "source_ce": ce_source, "target_ce": ce_target,
+            "classification": classification, "source_ce": ce_source,
             "transfer": transfer, "weighted_transfer": weight*transfer,
             "transfer_weight": weight, "grl_coefficient": coefficient,
+            "entropy_grl_coefficient": entropy_coefficient if self.method == "cdan" else None,
             "domain_accuracy": domain_accuracy, "source_logits": ys, "target_logits": yt,
         }
+
+
+def optimizer_groups(model, base_lr):
+    """Preserve the reference method's relative learning rates.
+
+    Deep CORAL: backbone 1x / FC 10x. CDAN: backbone 1x / new layers and
+    discriminator 10x. MDD/MCC: pretrained backbone .1x / new layers 1x.
+    AIS and modality gates are new layers; none are hidden in pretrained groups.
+    """
+    pretrained = list(model.rgb_encoder.parameters())+list(model.nir_encoder.parameters())
+    pretrained_ids = {id(p) for p in pretrained}
+    new = [p for p in model.parameters() if id(p) not in pretrained_ids]
+    backbone_multiplier = 1.0 if model.method in {"deepcoral", "cdan"} else 0.1
+    head_multiplier = 10.0 if model.method in {"deepcoral", "cdan"} else 1.0
+    return [{"params": pretrained, "lr": base_lr*backbone_multiplier, "role": "pretrained_RGB_NIR"},
+            {"params": new, "lr": base_lr*head_multiplier, "role": "new_layers_AIS_gate"}]

@@ -15,9 +15,12 @@ def summarize(root):
         if (result["selection_partition"] != "target_val" or result["test_selection_bias"]
                 or result["test_evaluations"] != 1 or result["test_evaluations_for_selection"] != 0):
             raise ValueError(f"Invalid held-out protocol: {path}")
+        protocol = result["protocol"]
+        if protocol == "UDA" and result.get("target_training_labels_used") is not False:
+            raise ValueError(f"UDA result lacks its label-free training contract: {path}")
         row = {"method": result["method"], "seed": result["seed"],
                "selected_epoch": result["selected_epoch"], "completed_epochs": result["completed_epochs"],
-               "selection_partition": "target_val", "protocol": "SDA", "smoke": result["smoke"],
+               "selection_partition": "target_val", "protocol": protocol, "smoke": result["smoke"],
                "val_ACC": result["target_val"]["accuracy"],
                **{key: result["target_test"][metric] for key, metric in (
                    ("ACC", "accuracy"), ("Precision_macro", "precision_macro"),
@@ -31,6 +34,8 @@ def summarize(root):
         rows.append(row)
     if not rows:
         raise ValueError(f"No results found in {root}")
+    if len({row["protocol"] for row in rows}) != 1:
+        raise ValueError("Do not merge historical SDA and new UDA results into one summary")
     output = root/"summary"
     output.mkdir(exist_ok=True)
     with (output/"runs.csv").open("w", encoding="utf-8-sig", newline="") as stream:
@@ -40,7 +45,8 @@ def summarize(root):
     summary = []
     for method in dict.fromkeys(row["method"] for row in rows):
         selected = [row for row in rows if row["method"] == method]
-        row = {"method": method, "seeds": " ".join(str(x["seed"]) for x in selected), "num_seeds": len(selected)}
+        row = {"method": method, "protocol": selected[0]["protocol"],
+               "seeds": " ".join(str(x["seed"]) for x in selected), "num_seeds": len(selected)}
         for key in ("ACC", "Precision_macro", "Recall_macro", "F1_macro"):
             values = [x[key] for x in selected]
             row[key+"_mean"], row[key+"_std"] = statistics.mean(values), statistics.pstdev(values)
