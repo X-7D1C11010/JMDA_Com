@@ -140,6 +140,171 @@ def target_bn_probe(source, method):
     )
 
 
+def weather_diagnostics(source, method, learn):
+    source = replace_once(
+        source, "from uda_multimodal import ",
+        "from weather_uda_diagnostics import (\n"
+        "    RunDiagnostics, install_weather_weights, limited_evaluation_threads,\n"
+        ")\nfrom uda_multimodal import ",
+    )
+    function = ("evaluate_10crop" if method == "cdan" else
+                "validate" if method in {"mdd", "mcc"} else "evaluate")
+    source = replace_once(source, f"def {function}(",
+                          f"@limited_evaluation_threads\ndef {function}(")
+    model = "classifier" if method in {"mdd", "mcc"} else "model"
+    install = (f"    install_weather_weights({model}, '{method}', args.target, "
+               f"learn={learn})\n")
+    if method in {"mdd", "mcc"}:
+        anchor = "    optimizer = SGD(classifier.get_parameters(), args.lr,"
+        source = replace_once(
+            source, anchor, install +
+            "    optimizer = SGD(classifier.get_parameters() + [\n"
+            "        {'params': classifier.weather_fusion.parameters(), 'lr': 1.0, 'weight_decay': 0.0}\n"
+            "    ], args.lr,",
+        )
+        source = replace_once(
+            source, "epoch, args, eff=None):", "epoch, args, eff=None, audit=None):",
+        )
+        source = replace_once(
+            source, "epoch, args, eff=eff)", "epoch, args, eff=eff, audit=audit)",
+        )
+    else:
+        criterion = ("torch.nn.NLLLoss()" if method == "dann" else
+                     "nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)" if method == "deepcoral"
+                     else "nn.CrossEntropyLoss()")
+        group = ("{'params': model.weather_fusion.parameters(), 'lr': args.lr, "
+                 "'lr_mult': args.head_lr_mult, 'decay_mult': 0, 'weight_decay': 0.0}"
+                 if method == "cdan" else
+                 "{'params': model.weather_fusion.parameters(), "
+                 "'lr': args.lr * args.head_lr_mult, 'weight_decay': 0.0}"
+                 if method == "deepcoral" else
+                 "{'params': model.weather_fusion.parameters(), 'lr': args.lr, 'weight_decay': 0.0}")
+        anchor = f"    criterion = {criterion}"
+        source = replace_once(
+            source, anchor, install + f"    optimizer.add_param_group({group})\n" + anchor,
+        )
+    forward = {
+        "dann": "classify_dann",
+        "deepcoral": "lambda m, x: m.predict_components(x)['fused']",
+        "cdan": "lambda m, x: m(x)[1]",
+        "mdd": "lambda m, x: m.head(m.bottleneck(m.backbone(x)))",
+        "mcc": "lambda m, x: m(x)",
+    }[method]
+    transform = "val_tf"
+    if method == "cdan":
+        source = import_extension(source, "center_view_transform")
+        transform = "center_view_transform(train_tf)"
+    validation_dataset = ("paired_dataset(tgt_val_list, " + transform + ", label_map)"
+                          if method == "cdan" else "tgt_val_ds")
+    anchor = "        print(f'Efficiency logging -> {eff.run_dir}')\n"
+    source = replace_once(
+        source, anchor, anchor +
+        f"    audit = RunDiagnostics({model}, '{method}', args, src_ds, {validation_dataset},\n"
+        f"                           {transform}, {forward},\n"
+        "                           eff.run_dir if eff else args.save_dir,\n"
+        "                           target_dataset=tgt_ds, optimizer=optimizer)\n"
+        f"    print('Weather feature weighting: learnable={learn}, VIS/IR initial=0.5/0.5, bounds=0.05..0.95')\n",
+    )
+    if method == "deepcoral":
+        source = replace_once(
+            source, "        return self.predict_components(source), self.predict_components(target)",
+            "        self._uda_diagnostics.set_domain('source')\n"
+            "        source_outputs = self.predict_components(source)\n"
+            "        self._uda_diagnostics.set_domain('target')\n"
+            "        return source_outputs, self.predict_components(target)",
+        )
+    elif method == "dann":
+        source = replace_once(
+            source, "            src_class_out, src_domain_out = model(src_imgs, alpha)",
+            "            audit.set_domain('source')\n"
+            "            src_class_out, src_domain_out = model(src_imgs, alpha)",
+        )
+        source = replace_once(
+            source, "            _, tgt_domain_out = model(tgt_imgs, alpha)",
+            "            audit.set_domain('target')\n            _, tgt_domain_out = model(tgt_imgs, alpha)",
+        )
+    elif method == "cdan":
+        for domain in ("source", "target"):
+            anchor = f"        features_{domain}, outputs_{domain} = model("
+            source = replace_once(source, anchor, f"        audit.set_domain('{domain}')\n" + anchor)
+    else:
+        anchor = "        x = torch.cat((x_s, x_t), dim=0)"
+        indent = "            " if method == "mcc" else "        "
+        if method == "mcc":
+            anchor = indent + "x = torch.cat((x_s, x_t), dim=0)"
+            source = replace_once(
+                source, "            y_s, _ = classifier(x_s)",
+                "            audit.set_domain('source')\n            y_s, _ = classifier(x_s)",
+            )
+        source = replace_once(
+            source, anchor, indent + "audit.set_domain('mixed', len(labels_s))\n" + anchor,
+        )
+    cls, transfer, weighted = {
+        "dann": ("loss_cls", "loss_domain", "args.domain_loss_weight * loss_domain"),
+        "deepcoral": ("loss_cls", "loss_coral", "_lambda * loss_coral"),
+        "cdan": ("loss_cls", "loss_transfer", "args.trade_off * loss_transfer"),
+        "mdd": ("cls_loss", "transfer_loss", "transfer_weight * transfer_loss"),
+        "mcc": ("cls_loss", "transfer_loss", "transfer_weight * transfer_loss"),
+    }[method]
+    source_count = "len(src_labels)" if method in {"dann", "deepcoral", "cdan"} else "len(labels_s)"
+    target_count = "len(tgt_imgs)" if method in {"dann", "deepcoral", "cdan"} else "len(x_t)"
+    if method == "mcc":
+        target_count = "0 if y_t is None else len(x_t)"
+    position = ("iter_num + 1" if method == "cdan" else
+                "epoch" if method in {"mdd", "mcc"} else "epoch + 1")
+    sample_gradient = (
+        "(iter_num + 1) % args.test_interval == 0 or iter_num + 1 == args.num_iterations"
+        if method == "cdan" else "i + 1 == args.iters_per_epoch"
+        if method in {"mdd", "mcc"} else "i + 1 == batches_this_epoch"
+    )
+    indent = "            " if method in {"dann", "deepcoral"} else "        "
+    anchor = indent + "loss.backward()"
+    source = replace_once(
+        source, anchor,
+        indent + f"audit.training_step({cls}, {transfer}, {weighted},\n"
+        + indent + f"                    {source_count}, {target_count}, {sample_gradient}, {position})\n"
+        + anchor,
+    )
+    if method == "deepcoral":
+        anchor = "        source_metrics = evaluate(model, src_eval_loader, device, num_classes)"
+        source = replace_once(
+            source, anchor,
+            "        audit.report_training(epoch + 1)\n"
+            "        audit.begin_evaluation('source_train', epoch + 1)\n" + anchor +
+            "\n        audit.finish_evaluation(source_metrics, src_eval_ds)",
+        )
+    elif method == "dann":
+        source = replace_once(source, "        is_final = ",
+                              "        audit.report_training(epoch + 1)\n        is_final = ")
+    if method == "cdan":
+        start = source.index("            val_metrics = evaluate_10crop(model, tgt_val_list")
+        stop = source.index("            acc = val_metrics['accuracy']", start)
+        anchor = source[start:stop]
+        prefix = ("            audit.report_training(iter_num + 1)\n"
+                  "            audit.evaluate_source(iter_num + 1)\n"
+                  "            audit.evaluate_target_train(iter_num + 1)\n"
+                  "            audit.begin_evaluation('target_val', iter_num + 1)\n")
+        suffix = "            audit.finish_evaluation(val_metrics, audit.target_val, views=10)\n"
+    else:
+        indent = "        " if method in {"mdd", "mcc"} else "            "
+        call = ("validate(tgt_val_loader, classifier, num_classes)" if method in {"mdd", "mcc"}
+                else "evaluate(model, tgt_val_loader, device, num_classes)")
+        anchor = indent + "val_metrics = " + call + "\n"
+        prefix = (indent + f"audit.evaluate_source({position})\n"
+                  if method != "deepcoral" else "")
+        if method in {"mdd", "mcc"}:
+            prefix = indent + f"audit.report_training({position})\n" + prefix
+        prefix += indent + f"audit.evaluate_target_train({position})\n"
+        prefix += indent + f"audit.begin_evaluation('target_val', {position})\n"
+        suffix = indent + "audit.finish_evaluation(val_metrics, tgt_val_ds)\n"
+    source = replace_once(source, anchor, prefix + anchor + suffix)
+    selected = "best_iteration" if method == "cdan" else "best_epoch"
+    anchor = "        eff.benchmark("
+    return replace_once(
+        source, anchor, f"        eff.record_diagnostics(audit.summary({selected}))\n" + anchor,
+    )
+
+
 def instrument_run(source, method, variant):
     symbols = "classification_metrics, report_validation"
     if method == "dann":
@@ -369,6 +534,7 @@ def main():
         "sampling", "cdan_source_only", "cdan_grl_cap", "mdd_ramp8", "mdd_ramp4",
         "mcc_source_only", "mcc_joint_zero", "augmentation", "ir_pretrain", "ema_teacher",
         "bn_probe", "mcc_stronger", "mcc_stronger_bn",
+        "weighted", "audit",
     ))
     args = parser.parse_args()
     trainer = args.trainer
@@ -376,7 +542,7 @@ def main():
     source = trainer.read_text(encoding="utf-8")
     multimodal_path = tools_dir / "uda_multimodal.py"
     updates = {}
-    if args.variant in {"tuned", "dann_capped", "dann_ir_pretrain", "bn_probe"} and args.method == "dann":
+    if args.variant in {"tuned", "dann_capped", "dann_ir_pretrain", "bn_probe", "weighted", "audit"} and args.method == "dann":
         source = cap_dann_grl(source)
         if args.variant == "dann_ir_pretrain":
             source = infrared_pretraining(source, args.method)
@@ -402,12 +568,16 @@ def main():
     if args.variant in {"bn_probe", "mcc_stronger_bn"}:
         source = target_bn_probe(source, args.method)
     source = instrument_run(source, args.method, args.variant)
+    if args.variant in {"weighted", "audit"}:
+        source = weather_diagnostics(source, args.method, learn=args.variant == "weighted")
+        copyfile(Path(__file__).with_name("weather_uda_diagnostics.py"),
+                 tools_dir / "weather_uda_diagnostics.py")
     updates[trainer] = source
     for path, text in updates.items():
         compile(text, str(path), "exec")
     shared_files = ["historical_uda_metrics.py", "efficiency_common.py"]
     if args.variant in {"sampling", "augmentation", "ir_pretrain", "dann_ir_pretrain",
-                        "ema_teacher", "bn_probe", "mcc_stronger_bn"}:
+                        "ema_teacher", "bn_probe", "mcc_stronger_bn", "weighted", "audit"}:
         shared_files.append("historical_uda_extensions.py")
     for filename in shared_files:
         copyfile(Path(__file__).with_name(filename), tools_dir / filename)

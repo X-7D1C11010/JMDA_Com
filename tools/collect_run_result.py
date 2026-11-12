@@ -21,6 +21,13 @@ CALIBRATION_FIELDS = (
     'raw_best_precision_macro', 'raw_best_recall_macro', 'raw_best_f1_macro',
     'bn_fit_partition', 'bn_fit_pairs', 'bn_calibration_total_s',
 )
+DIAGNOSTIC_FIELDS = (
+    'fusion_weight_scope', 'fusion_vis_weight', 'fusion_ir_weight',
+    'fusion_weights_learnable', 'fusion_weight_minimum', 'fusion_weather',
+    'fusion_vis_weight_last', 'source_selected_accuracy',
+    'diagnostic_source_eval_total_s', 'diagnostics_dir',
+    'diagnostic_target_eval_total_s', 'diagnostics_complete',
+)
 
 CSV_FIELDNAMES = [
     'timestamp', 'suite_id', 'run_tag', 'method', 'protocol', 'target', 'seed', 'epochs',
@@ -30,7 +37,7 @@ CSV_FIELDNAMES = [
     'recall_macro', 'recall_macro_std', 'f1_macro', 'f1_macro_std',
     'num_iterations', 'seed_values', 'accuracy_values_count', 'log_path',
     'efficiency_dir',
-] + list(CALIBRATION_FIELDS)
+] + list(CALIBRATION_FIELDS + DIAGNOSTIC_FIELDS)
 
 
 def _failure_summary(text, status, max_lines=30, max_chars=6000):
@@ -168,7 +175,7 @@ def parse_metrics(text):
     if complexity:
         try:
             report = json.loads(complexity[-1])
-            for name in CALIBRATION_FIELDS:
+            for name in CALIBRATION_FIELDS + DIAGNOSTIC_FIELDS:
                 if name in report:
                     metrics[name] = report[name]
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -286,7 +293,7 @@ def main():
         'error_type': error_type,
         'error_summary': error_summary,
     }
-    record.update({name: metrics.get(name) for name in CALIBRATION_FIELDS})
+    record.update({name: metrics.get(name) for name in CALIBRATION_FIELDS + DIAGNOSTIC_FIELDS})
 
     records = [record]
     if args.budget_results and args.status == 'success':

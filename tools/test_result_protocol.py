@@ -72,6 +72,18 @@ class ResultProtocolTests(unittest.TestCase):
         self.assertEqual(metrics['bn_fit_pairs'], 113)
         self.assertEqual(metrics['prediction_protocol'], 'target_train_BN_calibrated')
 
+    def test_selected_weather_weights_are_collected_with_accuracy(self):
+        metrics = parse_metrics(
+            'Final target val accuracy (dark, selected epoch 8): 0.75\n'
+            'UDA_COMPLEXITY: {"fusion_weather": "dark", "fusion_vis_weight": 0.35, '
+            '"fusion_ir_weight": 0.65, "fusion_weights_learnable": true, '
+            '"source_selected_accuracy": 0.95}\n'
+        )
+        self.assertEqual(metrics['final_acc'], 0.75)
+        self.assertEqual(metrics['fusion_weather'], 'dark')
+        self.assertEqual(metrics['fusion_ir_weight'], 0.65)
+        self.assertTrue(metrics['fusion_weights_learnable'])
+
     def test_class_names_reject_placeholders(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'classes.txt'

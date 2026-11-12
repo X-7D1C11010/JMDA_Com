@@ -89,6 +89,7 @@ run_historical_uda_target() {
   case "$variant" in
     coral_lr5|sampling) coral_head_mult=5 ;;
     bn_probe) coral_head_mult=5; mdd_weight=0.30; mdd_ramp=8 ;;
+    weighted|audit) coral_head_mult=5; mdd_weight=0.30; mdd_ramp=8; mcc_weight=0.20 ;;
     mcc_stronger|mcc_stronger_bn) mcc_weight=0.20 ;;
     cdan_source_only) cdan_weight=0 ;;
     mdd_ramp8) mdd_weight=0.30; mdd_ramp=8 ;;
@@ -158,7 +159,7 @@ run_historical_uda_suite() {
     diagnose) phases=(coral_lr5 sampling historical_best cdan_source_only cdan_grl_cap
                       mcc_source_only mcc_joint_zero dann_capped dann_ir_pretrain mdd_ramp8 mdd_ramp4) ;;
     focused) phases=(bn_probe mcc_stronger_bn) ;;
-    historical_best|tuned|bn_probe|mcc_stronger|mcc_stronger_bn|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
+    historical_best|tuned|weighted|audit|bn_probe|mcc_stronger|mcc_stronger_bn|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
     *) echo "Unknown historical UDA variant: $requested" >&2; return 1 ;;
   esac
   for phase in "${phases[@]}"; do

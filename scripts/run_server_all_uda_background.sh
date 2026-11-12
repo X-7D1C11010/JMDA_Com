@@ -12,7 +12,7 @@ if [[ ! "$SEEDS" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
 fi
 VARIANT="${3:-historical_best}"
 case "$VARIANT" in
-  historical_best|compare|tuned|diagnose|focused|bn_probe|mcc_stronger|mcc_stronger_bn|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
+  historical_best|compare|tuned|diagnose|focused|weighted|audit|bn_probe|mcc_stronger|mcc_stronger_bn|dann_capped|dann_ir_pretrain|coral_lr5|sampling|cdan_source_only|cdan_grl_cap|mdd_ramp8|mdd_ramp4|mcc_source_only|mcc_joint_zero|augmentation|ir_pretrain|ema_teacher) ;;
   *) echo "Unknown historical UDA variant: $VARIANT" >&2; exit 2 ;;
 esac
 

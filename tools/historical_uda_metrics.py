@@ -1,6 +1,8 @@
 """Measure the models used by the pinned VIS+IR training suite."""
 
 import json
+import math
+from pathlib import Path
 from statistics import pstdev
 import time
 
@@ -106,6 +108,7 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
         self.pretraining_metrics = {}
         self.inference_metrics = {}
         self.calibration_metrics = {}
+        self.diagnostics_metrics = {}
 
     def epoch_end(self, epoch=None):
         device = torch.device(self.device)
@@ -118,6 +121,9 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
 
     def record_calibration(self, metrics):
         self.calibration_metrics = metrics
+
+    def record_diagnostics(self, metrics):
+        self.diagnostics_metrics = metrics
 
     def benchmark(self, model, forward_fn, *, method, training_module=None,
                   training_unit_updates=None):
@@ -169,6 +175,7 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
             **self.inference_metrics,
             **pretrain,
             **self.calibration_metrics,
+            **self.diagnostics_metrics,
             "train_epoch_mean_s": round(sum(self._epoch_times) / self.epoch_count, 4),
             "train_epoch_std_s": round(pstdev(self._epoch_times), 4),
             "total_train_time_s": round(
@@ -182,7 +189,38 @@ class HistoricalEfficiencyLogger(EfficiencyLogger):
             "total_training_and_calibration_time_s": round(
                 self._total_train_time + pretrain.get("ir_pretrain_time_s", 0.0) +
                 self.calibration_metrics.get("bn_calibration_total_s", 0.0), 4),
+            "total_training_and_diagnostics_time_s": round(
+                self._total_train_time + pretrain.get("ir_pretrain_time_s", 0.0) +
+                self.calibration_metrics.get("bn_calibration_total_s", 0.0) +
+                self.diagnostics_metrics.get("diagnostic_source_eval_total_s", 0.0) +
+                self.diagnostics_metrics.get("diagnostic_target_eval_total_s", 0.0), 4),
         }
+        if self.diagnostics_metrics:
+            required = (
+                "total_params", "trainable_params", "inference_GFLOPs",
+                "total_train_time_s", "train_epoch_mean_s", "latency_mean_ms",
+                "throughput_samples_s", "peak_train_reserved_gb",
+            )
+            errors = []
+            for name in required:
+                value = metrics.get(name)
+                if name == "peak_train_reserved_gb" and not cuda:
+                    continue
+                if value is None or not math.isfinite(value) or value <= 0:
+                    errors.append(f"invalid complexity metric {name}")
+            if metrics.get("complexity_status") != "complete":
+                errors.append("inference benchmark did not complete")
+            path = Path(metrics["diagnostics_dir"]) / "completeness.json"
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["complexity_status"] = "FAIL" if errors else "PASS"
+            report["complexity_metrics"] = {name: metrics.get(name) for name in required}
+            if errors:
+                report["status"] = "FAIL"
+                report["errors"].extend(errors)
+            path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            print("UDA_DIAGNOSTIC_COMPLETENESS_FINAL: " + json.dumps(report))
+            if errors:
+                raise RuntimeError("Complexity completeness audit failed: " + "; ".join(errors))
         result = super().finalize(metrics)
         print("UDA_COMPLEXITY: " + json.dumps(result))
         return result
