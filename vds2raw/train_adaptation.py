@@ -25,7 +25,7 @@ from tools.efficiency_common import measure_inference_latency
 from tools.reproducibility import seed_everything
 from vds2raw.adaptation import (
     METHODS, DEFAULTS, AdaptationDataset, AdaptationModel, PairedEpochSampler,
-    prepare_statistics, optimizer_groups,
+    prepare_statistics, optimizer_groups, resolve_training_settings,
 )
 from vds2raw.common import better_metrics, build_run_provenance, save_prediction_artifacts
 from vds2raw.dataset import DISPLAY_CLASS_NAMES, audit_dataset
@@ -54,12 +54,12 @@ def synchronize(device):
         torch.cuda.synchronize(device)
 
 
-def feature_norms(branches, source_count):
+def feature_norms(branches, source_count, names=("RGB", "NIR", "AIS")):
     result = {}
     for domain, section in (("source", slice(None, source_count)), ("target", slice(source_count, None))):
         result[domain] = {
             name: float(values[section].norm(dim=1).mean())
-            for name, values in zip(("RGB", "NIR", "AIS"), branches)
+            for name, values in zip(names, branches)
         }
     return result
 
@@ -90,11 +90,13 @@ def gradient_diagnostics(model, classification, transfer):
     return result
 
 
-def evaluate(model, dataset, device, epoch, directory, batch_size=64):
+def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_prefix="VDS_EVALUATION"):
     """Deterministic evaluation; every sample receives a probability record."""
     model.eval()
     truth, predicted, records = [], [], []
-    feature_sums = [0.0, 0.0, 0.0]
+    num_classes = getattr(model, "num_classes", 3)
+    names = getattr(model, "feature_names", ("RGB", "NIR", "AIS"))
+    feature_sums = [0.0]*len(names)
     losses = []
     labelled = dataset.labelled
     with torch.no_grad():
@@ -120,8 +122,8 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64):
                     row.update(y_true=label, correct=label == guess)
                 event(directory, "predictions.jsonl", row)
                 records.append(row)
-    metrics = classification_metrics(truth, predicted, num_classes=3) if labelled else {"prediction_samples": len(records)}
-    matrix = [[0 for _ in range(3)] for _ in range(3)]
+    metrics = classification_metrics(truth, predicted, num_classes=num_classes) if labelled else {"prediction_samples": len(records)}
+    matrix = [[0 for _ in range(num_classes)] for _ in range(num_classes)]
     for expected, guessed in zip(truth, predicted):
         matrix[expected][guessed] += 1
     if labelled:
@@ -130,18 +132,18 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64):
                "labels_used": labelled,
                "mean_max_probability": statistics.mean(max(row["probabilities"]) for row in records),
                "mean_entropy": statistics.mean(-sum(p*math.log(max(p, 1e-12)) for p in row["probabilities"]) for row in records),
-               "predicted_class_counts": [predicted.count(i) for i in range(3)],
-               "feature_norms": dict(zip(("RGB", "NIR", "AIS"), (x/len(dataset) for x in feature_sums))),
+               "predicted_class_counts": [predicted.count(i) for i in range(num_classes)],
+               "feature_norms": dict(zip(names, (x/len(dataset) for x in feature_sums))),
                "modality_weights": model.modality_weights().detach().cpu().tolist()}
     if labelled:
         details.update(cross_entropy=statistics.mean(losses),
                        cross_entropy_by_class=[statistics.mean([loss for loss, label in zip(losses, truth) if label == c])
-                                               if c in truth else None for c in range(3)],
+                                               if c in truth else None for c in range(num_classes)],
                        mean_confidence_wrong=(statistics.mean(max(row["probabilities"]) for row in records if not row["correct"])
                                               if any(not row["correct"] for row in records) else None),
                        recall_by_class=[row[i]/max(sum(row), 1) for i, row in enumerate(matrix)])
     event(directory, "evaluation.jsonl", details)
-    print("VDS_EVALUATION: "+json.dumps(details), flush=True)
+    print(event_prefix+": "+json.dumps(details), flush=True)
     return metrics, records
 
 
@@ -171,7 +173,7 @@ def profile(model, dataset, device, train_times, peak_reserved):
                   inference_GFLOPs=2*macs/1e9, total_train_time_s=sum(train_times),
                   train_epoch_mean_s=statistics.mean(train_times),
                   peak_train_reserved_gb=peak_reserved,
-                  inference_input="RGB 3x96x96 + NIR 1x96x96 + AIS 13 + mask 13",
+                  inference_input={key: list(example[key].shape) for key in ("rgb", "nir", "ais", "ais_mask") if key in example},
                   inference_batch_size=1,
                   flops_scope="executed Conv2d/Linear only; 1 MAC=2 FLOPs",
                   training_time_scope="optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
@@ -179,7 +181,7 @@ def profile(model, dataset, device, train_times, peak_reserved):
     return result
 
 
-def validate_diagnostics(directory, datasets, epochs, selected_epoch):
+def validate_diagnostics(directory, datasets, epochs, selected_epoch, num_classes=3, modalities=("RGB", "NIR", "AIS")):
     """Fail on missing persisted diagnostics, duplicate IDs or test reuse."""
     expected_epochs = set(range(1, epochs+1))
     for filename in ("training.jsonl", "gradients.jsonl"):
@@ -187,7 +189,7 @@ def validate_diagnostics(directory, datasets, epochs, selected_epoch):
         if len(records) != epochs or {row["epoch"] for row in records} != expected_epochs:
             raise RuntimeError(f"Incomplete diagnostic windows: {filename}")
         if filename == "gradients.jsonl" and any(
-                not {"RGB", "NIR", "AIS", "head", "gate"} <= set(row["gradients"]) for row in records):
+                not (set(modalities) | {"head", "gate"}) <= set(row["gradients"]) for row in records):
             raise RuntimeError("Missing modality/head gradient diagnostics")
     groups = {}
     with (directory/"predictions.jsonl").open(encoding="utf-8") as stream:
@@ -197,7 +199,7 @@ def validate_diagnostics(directory, datasets, epochs, selected_epoch):
                     row.get("labels_used") is not False or {"y_true", "correct", "label"} & row.keys()):
                 raise RuntimeError("Target training labels leaked into diagnostics")
             probabilities = row["probabilities"]
-            if (len(probabilities) != 3 or any(not math.isfinite(v) or not 0 <= v <= 1 for v in probabilities)
+            if (len(probabilities) != num_classes or any(not math.isfinite(v) or not 0 <= v <= 1 for v in probabilities)
                     or abs(sum(probabilities)-1) > 1e-5):
                 raise RuntimeError("Invalid prediction probabilities")
             key = (row["partition"], row["epoch"])
@@ -217,6 +219,23 @@ def validate_diagnostics(directory, datasets, epochs, selected_epoch):
             raise RuntimeError(f"Incomplete prediction sample coverage: {partition}")
         checked[partition] = len(actual_ids)*len(expected)
     return checked
+
+
+def make_optimizer(model, args):
+    groups = optimizer_groups(model, args.lr, getattr(args, "ais_lr_multiplier", None) or 1.0)
+    optimizer = (torch.optim.Adam(groups, weight_decay=args.weight_decay) if args.method == "dann"
+                 else torch.optim.SGD(groups, momentum=0.9, nesterov=args.method != "deepcoral",
+                                      weight_decay=args.weight_decay*(2 if args.method == "cdan" else 1)))
+    # The released MDD example uses gamma=.0002; CDAN/MCC use .001.
+    # These clocks must not be collapsed into a single shared constant.
+    if args.lr_gamma is None:
+        args.lr_gamma = 0.0002 if args.method == "mdd" else 0.001
+    schedule_per_update = args.lr_scheduler == "reference" and args.method in {"cdan", "mdd", "mcc"}
+    scheduler = (torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lambda step: (1+args.lr_gamma*step)**(-args.lr_decay))
+        if schedule_per_update else torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
+        if args.lr_scheduler == "cosine" else None)
+    return optimizer, scheduler, schedule_per_update
 
 
 def run(args):
@@ -242,8 +261,7 @@ def run(args):
     run_dir.mkdir(exist_ok=True)
     if any(run_dir.iterdir()):
         raise FileExistsError(f"Run directory is not empty; use a new output directory: {run_dir}")
-    args.lr = DEFAULTS[args.method]["lr"] if args.lr is None else args.lr
-    args.trade_off = DEFAULTS[args.method]["trade_off"] if args.trade_off is None else args.trade_off
+    resolve_training_settings(args)
     if args.adaptation_ramp_epochs is None:
         args.adaptation_ramp_epochs = args.epochs if args.method == "deepcoral" else 0
     source = AdaptationDataset(root, "source_train", images, ais, augment=args.augment)
@@ -264,16 +282,11 @@ def run(args):
                for index, (ds, sampler) in enumerate(zip((source, target), samplers))]
     device = torch.device(args.device if args.device else "cuda" if torch.cuda.is_available() else "cpu")
     model = AdaptationModel(args.method, args.weights, not args.no_pretrained).to(device)
-    groups = optimizer_groups(model, args.lr)
-    optimizer = (torch.optim.Adam(groups, weight_decay=args.weight_decay) if args.method == "dann"
-                 else torch.optim.SGD(groups, momentum=0.9, nesterov=args.method != "deepcoral",
-                                      weight_decay=args.weight_decay*(2 if args.method == "cdan" else 1)))
-    schedule_per_update = args.lr_scheduler == "reference" and args.method in {"cdan", "mdd", "mcc"}
-    scheduler = (torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: (1+0.001*step)**(-0.75))
-                 if schedule_per_update else torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
-                 if args.lr_scheduler == "cosine" else None)
+    optimizer, scheduler, schedule_per_update = make_optimizer(model, args)
     config = {
         "method": args.method, "protocol": "UDA", "modalities": ["RGB", "NIR", "AIS"],
+        "optimization_profile": args.profile,
+        "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
         "training_partitions": ["source_train", "target_train"],
         "selection_partition": "target_val", "test_partition": "target_test",
         "target_training_labels_used": False, "test_selection_bias": False,
@@ -287,6 +300,7 @@ def run(args):
         "model": repr(model), "gradient_sampling": "last update of each epoch, CE versus weighted adaptation",
         "optimizer": type(optimizer).__name__, "lr_schedule_per_update": schedule_per_update,
         "optimizer_groups": [{"lr": group["lr"], "weight_decay": group["weight_decay"],
+                              "role": group.get("role"),
                               "parameters": sum(p.numel() for p in group["params"]),
                               "contains_modality_weights": any(p is model.modality_logits for p in group["params"])}
                              for group in optimizer.param_groups],
@@ -403,6 +417,8 @@ def run(args):
                     "partial_training_smoke": bool(args.max_train_batches)}
     write_json(run_dir/"completeness.json", completeness)
     result = {"method": args.method, "seed": args.seed, "protocol": "UDA", "target_training_labels_used": False,
+              "optimization_profile": args.profile,
+              "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
               "selected_epoch": best_epoch, "selection_partition": "target_val",
               "test_selection_bias": False, "test_evaluations_for_selection": 0,
               "test_evaluations": 1, "completed_epochs": len(history),
@@ -423,7 +439,9 @@ def parser():
     p.add_argument("--save-dir", default=str(ROOT/"runs/vds2raw_da"))
     p.add_argument("--stats-file", default="")
     p.add_argument("--weights", default=str(ROOT/"pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"))
-    p.add_argument("--epochs", type=int, default=100)
+    p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--profile", choices=("baseline", "optimized"), default="baseline")
+    p.add_argument("--ais-lr-multiplier", type=float, default=None)
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--num-workers", type=int, default=2)
     p.add_argument("--cpu-threads", type=int, default=4)
@@ -433,6 +451,9 @@ def parser():
     p.add_argument("--weight-decay", type=float, default=0.0005)
     p.add_argument("--label-smoothing", type=float, default=0.0)
     p.add_argument("--lr-scheduler", choices=("reference", "constant", "cosine"), default="reference")
+    p.add_argument("--lr-gamma", type=float, default=None,
+                   help="reference defaults: MDD .0002; CDAN/MCC .001")
+    p.add_argument("--lr-decay", type=float, default=0.75)
     p.add_argument("--adaptation-warmup-epochs", type=int, default=0)
     p.add_argument("--adaptation-ramp-epochs", type=int, default=None)
     p.add_argument("--early-stopping-patience", type=int, default=0)
@@ -447,12 +468,16 @@ def parser():
 
 if __name__ == "__main__":
     args = parser().parse_args()
-    if args.epochs < 1 or args.batch_size < 2 or args.num_workers < 0 or args.cpu_threads < 1:
+    if (args.epochs is not None and args.epochs < 1) or args.batch_size < 2 or args.num_workers < 0 or args.cpu_threads < 1:
         raise ValueError("Invalid epochs/batch/workers/CPU threads")
     if not 0 <= args.label_smoothing < 1:
         raise ValueError("Invalid label smoothing")
     if (args.lr is not None and args.lr <= 0) or (args.trade_off is not None and args.trade_off < 0):
         raise ValueError("Invalid learning rate/transfer weight")
+    if (args.lr_gamma is not None and args.lr_gamma < 0) or args.lr_decay <= 0:
+        raise ValueError("Invalid inverse learning-rate schedule")
+    if args.ais_lr_multiplier is not None and args.ais_lr_multiplier <= 0:
+        raise ValueError("AIS learning-rate multiplier must be positive")
     if min(args.adaptation_warmup_epochs, args.adaptation_ramp_epochs or 0, args.early_stopping_patience, args.max_train_batches, args.weight_decay) < 0:
         raise ValueError("Negative schedule or regularization argument")
     run(args)

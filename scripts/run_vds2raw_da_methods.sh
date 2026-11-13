@@ -8,7 +8,9 @@ PYTHON_BIN="${PYTHON:-python}"
 DATA_ROOT="${VDS2RAW_DATA_ROOT:-/home/lixiang/lx/VDS2Raw/threeclass_ready}"
 OUTPUT_ROOT="${VDS2RAW_DA_OUTPUT_ROOT:-$HERE/runs/vds2raw_da}"
 WEIGHTS="${VDS2RAW_DA_WEIGHTS:-$HERE/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth}"
-EPOCHS="${VDS2RAW_DA_EPOCHS:-100}"
+EPOCHS="${VDS2RAW_DA_EPOCHS:-}"
+PROFILE="${VDS2RAW_DA_PROFILE:-baseline}"
+case "$PROFILE" in baseline|optimized) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
 BATCH="${VDS2RAW_DA_BATCH_SIZE:-16}"
 METHODS_TEXT="${VDS2RAW_DA_METHODS:-dann deepcoral cdan mdd mcc}"
 SEEDS_TEXT="${VDS2RAW_SEEDS:-42}"
@@ -17,7 +19,9 @@ read -r -a SEEDS <<< "${SEEDS_TEXT//,/ }"
 if [ "${#METHODS[@]}" -eq 0 ] || [ "${#SEEDS[@]}" -eq 0 ]; then
   echo "Method and seed lists must not be empty." >&2; exit 1
 fi
-[[ "$EPOCHS" =~ ^[0-9]+$ ]] && [ "$EPOCHS" -ge 1 ] || { echo "Invalid epochs: $EPOCHS" >&2; exit 1; }
+if [ -n "$EPOCHS" ]; then
+  [[ "$EPOCHS" =~ ^[0-9]+$ ]] && [ "$EPOCHS" -ge 1 ] || { echo "Invalid epochs: $EPOCHS" >&2; exit 1; }
+fi
 [[ "$BATCH" =~ ^[0-9]+$ ]] && [ "$BATCH" -ge 2 ] || { echo "Invalid per-domain batch: $BATCH" >&2; exit 1; }
 declare -A METHOD_SEEN=()
 for method in "${METHODS[@]}"; do
@@ -41,12 +45,12 @@ if [ ! -f "$WEIGHTS" ]; then
   "$PYTHON_BIN" -B -u "$HERE/tools/download_official_uda_weights.py" --only resnet18
 fi
 if [ ! -f "$WEIGHTS" ]; then echo "Missing weights: $WEIGHTS" >&2; exit 1; fi
-RUN_DIR="$OUTPUT_ROOT/vds2raw_uda_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
+RUN_DIR="$OUTPUT_ROOT/vds2raw_uda_${PROFILE}_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
 mkdir -p "$RUN_DIR/logs"
 echo "Run directory: $RUN_DIR"
 echo "Protocol: labelled source_train + UNLABELLED target_train; target_val selection; target_test ONCE after selection"
 echo "Inputs: RGB + NIR + full 13 AIS features + 13 validity values; native 96x96"
-echo "Methods: ${METHODS[*]}; seeds: ${SEEDS[*]}; epochs=$EPOCHS; batch/domain=$BATCH"
+echo "Methods: ${METHODS[*]}; seeds: ${SEEDS[*]}; profile=$PROFILE; epochs=${EPOCHS:-profile defaults}; batch/domain=$BATCH"
 "$PYTHON_BIN" -B -u "$HERE/vds2raw/train_adaptation.py" --audit-only \
   --data-root "$DATA_ROOT" --save-dir "$RUN_DIR" --stats-file "$RUN_DIR/normalization_stats.json"
 GPU_ARGS=(--min-free-mib "${VDS2RAW_DA_MIN_FREE_MIB:-6144}" \
@@ -59,13 +63,15 @@ FAILED=0
 for seed in "${SEEDS[@]}"; do
   for method in "${METHODS[@]}"; do
     TAG="${method}_seed${seed}"
+    EPOCH_ARGS=()
+    if [ -n "$EPOCHS" ]; then EPOCH_ARGS=(--epochs "$EPOCHS"); fi
     LOG="$RUN_DIR/logs/$TAG.log"
     echo ">>> $TAG; GPU selection/status and live training: $LOG"
     if "$PYTHON_BIN" -B -u "$HERE/tools/run_on_available_gpu.py" "${GPU_ARGS[@]}" --tag "$TAG" -- \
         "$PYTHON_BIN" -B -u "$HERE/vds2raw/train_adaptation.py" \
         --method "$method" --data-root "$DATA_ROOT" --save-dir "$RUN_DIR" \
         --stats-file "$RUN_DIR/normalization_stats.json" --weights "$WEIGHTS" \
-        --epochs "$EPOCHS" --batch-size "$BATCH" --seed "$seed" \
+        --profile "$PROFILE" "${EPOCH_ARGS[@]}" --batch-size "$BATCH" --seed "$seed" \
         --num-workers "${VDS2RAW_NUM_WORKERS:-2}" --skip-audit "${EXTRA[@]}" > "$LOG" 2>&1; then
       echo "    completed: $TAG"
       "$PYTHON_BIN" -B "$HERE/vds2raw/summarize_adaptation.py" --results-dir "$RUN_DIR"

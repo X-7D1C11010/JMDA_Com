@@ -14,7 +14,7 @@ from torch import nn
 
 from vds2raw.adaptation import (
     METHODS, AdaptationDataset, AdaptationModel, PairedEpochSampler,
-    cdan_entropy_loss, prepare_statistics, reverse, optimizer_groups,
+    cdan_entropy_loss, prepare_statistics, reverse, optimizer_groups, resolve_training_settings,
 )
 from vds2raw.dataset import CLASS_NAMES, PARTITIONS
 from vds2raw import train_adaptation
@@ -209,6 +209,51 @@ class TinyModel(AdaptationModel):
 
 
 class TrainingProtocolTests(unittest.TestCase):
+    def test_optimized_profiles_have_explicit_budgets_and_keep_cli_overrides(self):
+        for method, epochs, trade in (("mdd", 250, .60), ("mcc", 100, .50)):
+            args = train_adaptation.parser().parse_args(["--method", method, "--profile", "optimized"])
+            resolve_training_settings(args)
+            self.assertEqual((args.epochs, args.trade_off, args.ais_lr_multiplier), (epochs, trade, 5.))
+            explicit = train_adaptation.parser().parse_args([
+                "--method", method, "--profile", "optimized", "--epochs", "3", "--trade-off", ".7",
+                "--ais-lr-multiplier", "2"])
+            resolve_training_settings(explicit)
+            self.assertEqual((explicit.epochs, explicit.trade_off, explicit.ais_lr_multiplier), (3, .7, 2.))
+        baseline = train_adaptation.parser().parse_args(["--method", "mdd"])
+        resolve_training_settings(baseline)
+        self.assertEqual((baseline.epochs, baseline.trade_off, baseline.ais_lr_multiplier), (100, .30, 1.))
+
+    def test_ais_separate_group_covers_each_parameter_once_and_preserves_other_lrs(self):
+        model = TinyModel("mdd")
+        groups = optimizer_groups(model, .0025, ais_lr_multiplier=5.)
+        self.assertEqual([g["lr"] for g in groups], [.00025, .0025, .0125])
+        ids = [id(p) for group in groups for p in group["params"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(set(ids), {id(p) for p in model.parameters()})
+        self.assertEqual({id(p) for p in groups[-1]["params"]}, {id(p) for p in model.ais_encoder.parameters()})
+        self.assertIn(id(model.modality_logits), {id(p) for p in groups[1]["params"]})
+
+    def test_mdd_and_mcc_keep_their_different_reference_lr_clocks(self):
+        for method, gamma in (("mdd", 0.0002), ("mcc", 0.001)):
+            args = train_adaptation.parser().parse_args(["--method", method, "--lr", "0.0025"])
+            model = TinyModel(method)
+            optimizer, scheduler, per_update = train_adaptation.make_optimizer(model, args)
+            self.assertTrue(per_update)
+            self.assertEqual(args.lr_gamma, gamma)
+            # Compare actual optimizer/scheduler state with the released
+            # example's relative groups and base-LR-in-LambdaLR convention.
+            params = [nn.Parameter(torch.ones(())), nn.Parameter(torch.ones(()))]
+            reference = torch.optim.SGD([{"params": [params[0]], "lr": 0.1},
+                                         {"params": [params[1]], "lr": 1.0}], lr=args.lr)
+            clock = torch.optim.lr_scheduler.LambdaLR(reference, lambda step: args.lr*(1+gamma*step)**(-0.75))
+            for _ in range(800):
+                optimizer.step()
+                scheduler.step()
+                reference.step()
+                clock.step()
+            for actual, expected in zip(optimizer.param_groups, reference.param_groups):
+                self.assertAlmostEqual(actual["lr"], expected["lr"], places=14)
+
     def test_test_is_called_once_after_val_selection_and_selected_state_restore(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

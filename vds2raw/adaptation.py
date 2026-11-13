@@ -34,6 +34,23 @@ DEFAULTS = {
 }
 
 
+def resolve_training_settings(args):
+    settings = {**DEFAULTS[args.method], "epochs": 100, "ais_lr_multiplier": 1.0}
+    if args.profile == "optimized" and args.method in {"mdd", "mcc"}:
+        settings.update(ais_lr_multiplier=5.0)
+        if args.method == "mdd":
+            # 250 x 8 complete-domain updates = 2000 on the stated VDS split.
+            # Keep the reference GRL clock; extend the actual optimization
+            # budget instead of silently changing the GRL formula.
+            settings.update(epochs=250, trade_off=0.60)
+        else:
+            settings.update(trade_off=0.50)
+    for key, value in settings.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+    return args
+
+
 def prepare_statistics(root, path):
     """Fit images and valid length/width only on the two training partitions.
 
@@ -172,11 +189,16 @@ def cdan_entropy_loss(features, logits, discriminator, source_count, coefficient
 
 
 class AdaptationModel(nn.Module):
-    def __init__(self, method, weights_path=None, pretrained=True):
+    def __init__(self, method, weights_path=None, pretrained=True, *, num_classes=3, use_ais=True, ir_channels=1):
         super().__init__()
         if method not in METHODS:
             raise ValueError(method)
         self.method = method
+        if num_classes < 2 or ir_channels not in (1, 3):
+            raise ValueError("Invalid class count or infrared channel count")
+        self.num_classes, self.use_ais = num_classes, bool(use_ais)
+        self.feature_names = ("RGB", "NIR", "AIS") if use_ais else ("VIS", "IR")
+        self.input_keys = ("rgb", "nir", "ais", "ais_mask") if use_ais else ("rgb", "nir")
         self.rgb_encoder = resnet18(weights=None)
         if pretrained:
             path = Path(weights_path)
@@ -188,35 +210,38 @@ class AdaptationModel(nn.Module):
             self.rgb_encoder.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
         self.rgb_encoder.fc = nn.Identity()
         self.nir_encoder = deepcopy(self.rgb_encoder)
-        conv = nn.Conv2d(1, 64, 7, stride=2, padding=3, bias=False)
-        with torch.no_grad():
-            conv.weight.copy_(self.rgb_encoder.conv1.weight.mean(1, keepdim=True))
-        self.nir_encoder.conv1 = conv
-        self.ais_encoder = nn.Sequential(nn.Linear(26, 128), nn.ReLU(),
-                                         nn.Dropout(0.1), nn.Linear(128, 128), nn.ReLU())
-        self.modality_logits = nn.Parameter(torch.zeros(3))
+        if ir_channels == 1:
+            conv = nn.Conv2d(1, 64, 7, stride=2, padding=3, bias=False)
+            with torch.no_grad():
+                conv.weight.copy_(self.rgb_encoder.conv1.weight.mean(1, keepdim=True))
+            self.nir_encoder.conv1 = conv
+        if use_ais:
+            self.ais_encoder = nn.Sequential(nn.Linear(26, 128), nn.ReLU(),
+                                             nn.Dropout(0.1), nn.Linear(128, 128), nn.ReLU())
+        self.modality_logits = nn.Parameter(torch.zeros(3 if use_ais else 2))
+        fused_dimension = 1152 if use_ais else 1024
         if method == "deepcoral":
             self.bottleneck = nn.Identity()
-            dimension = 1152
+            dimension = fused_dimension
         elif method == "cdan":
             # Released ResNetFc uses a linear bottleneck, without BN/ReLU.
-            self.bottleneck = nn.Linear(1152, 256)
+            self.bottleneck = nn.Linear(fused_dimension, 256)
             nn.init.normal_(self.bottleneck.weight, 0, 0.005)
             nn.init.constant_(self.bottleneck.bias, 0.1)
             dimension = 256
         else:
-            self.bottleneck = nn.Sequential(nn.Linear(1152, 256), nn.BatchNorm1d(256), nn.ReLU())
+            self.bottleneck = nn.Sequential(nn.Linear(fused_dimension, 256), nn.BatchNorm1d(256), nn.ReLU())
             if method == "mdd":
                 self.bottleneck.append(nn.Dropout(0.5))
                 nn.init.normal_(self.bottleneck[0].weight, 0, 0.005)
                 nn.init.constant_(self.bottleneck[0].bias, 0.1)
             dimension = 256
-        self.head = nn.Linear(dimension, 3)
+        self.head = nn.Linear(dimension, num_classes)
         nn.init.normal_(self.head.weight, 0, 0.005)
         if method in {"dann", "cdan"}:
             hidden = 1024 if method == "cdan" else 512
             self.discriminator = nn.Sequential(
-                nn.Linear(dimension*(3 if method == "cdan" else 1), hidden),
+                nn.Linear(dimension*(num_classes if method == "cdan" else 1), hidden),
                 nn.ReLU(), nn.Dropout(0.5), nn.Linear(hidden, hidden), nn.ReLU(),
                 nn.Dropout(0.5), nn.Linear(hidden, 1),
             )
@@ -227,9 +252,9 @@ class AdaptationModel(nn.Module):
                         nn.init.zeros_(layer.bias)
         if method == "mdd":
             self.head = nn.Sequential(nn.Linear(dimension, 256), nn.ReLU(),
-                                     nn.Dropout(0.5), nn.Linear(256, 3))
+                                     nn.Dropout(0.5), nn.Linear(256, num_classes))
             self.adv_head = nn.Sequential(nn.Linear(dimension, 256), nn.ReLU(),
-                                           nn.Dropout(0.5), nn.Linear(256, 3))
+                                           nn.Dropout(0.5), nn.Linear(256, num_classes))
             for head in (self.head, self.adv_head):
                 for layer in (head[0], head[3]):
                     nn.init.normal_(layer.weight, 0, 0.01)
@@ -239,15 +264,16 @@ class AdaptationModel(nn.Module):
         self.last_features = None
 
     def modality_weights(self):
-        return 0.05 + 0.85*self.modality_logits.softmax(0)
+        return 0.05 + (1-0.05*self.modality_logits.numel())*self.modality_logits.softmax(0)
 
     def encode(self, batch):
         # The validity mask is an explicit part of this 13-field experiment.
-        branches = (self.rgb_encoder(batch["rgb"]), self.nir_encoder(batch["nir"]),
-                    self.ais_encoder(torch.cat((batch["ais"]*batch["ais_mask"], batch["ais_mask"]), 1)))
+        branches = (self.rgb_encoder(batch["rgb"]), self.nir_encoder(batch["nir"]))
+        if getattr(self, "use_ais", True):
+            branches += (self.ais_encoder(torch.cat((batch["ais"]*batch["ais_mask"], batch["ais_mask"]), 1)),)
         self.last_features = tuple(branch.detach() for branch in branches)
         weights = self.modality_weights()
-        return self.bottleneck(torch.cat([3*weights[i]*v for i, v in enumerate(branches)], 1))
+        return self.bottleneck(torch.cat([len(branches)*weights[i]*v for i, v in enumerate(branches)], 1))
 
     def forward(self, batch):
         return self.head(self.encode(batch))
@@ -267,7 +293,7 @@ class AdaptationModel(nn.Module):
         else:
             # MDD/MCC released examples concatenate the domains before BN.
             inputs = {key: torch.cat((source[key], target[key]), 0)
-                      for key in ("rgb", "nir", "ais", "ais_mask")}
+                      for key in getattr(self, "input_keys", ("rgb", "nir", "ais", "ais_mask"))}
             features = self.encode(inputs)
             logits = self.head(features)
         ys, yt = logits[:source_count], logits[source_count:]
@@ -311,7 +337,7 @@ class AdaptationModel(nn.Module):
         }
 
 
-def optimizer_groups(model, base_lr):
+def optimizer_groups(model, base_lr, ais_lr_multiplier=1.0):
     """Preserve the reference method's relative learning rates.
 
     Deep CORAL: backbone 1x / FC 10x. CDAN: backbone 1x / new layers and
@@ -323,5 +349,14 @@ def optimizer_groups(model, base_lr):
     new = [p for p in model.parameters() if id(p) not in pretrained_ids]
     backbone_multiplier = 1.0 if model.method in {"deepcoral", "cdan"} else 0.1
     head_multiplier = 10.0 if model.method in {"deepcoral", "cdan"} else 1.0
-    return [{"params": pretrained, "lr": base_lr*backbone_multiplier, "role": "pretrained_RGB_NIR"},
-            {"params": new, "lr": base_lr*head_multiplier, "role": "new_layers_AIS_gate"}]
+    groups = [{"params": pretrained, "lr": base_lr*backbone_multiplier, "role": "pretrained_RGB_NIR"}]
+    if ais_lr_multiplier != 1.0 and hasattr(model, "ais_encoder"):
+        ais = list(model.ais_encoder.parameters())
+        ais_ids = {id(p) for p in ais}
+        groups.append({"params": [p for p in new if id(p) not in ais_ids],
+                       "lr": base_lr*head_multiplier, "role": "new_layers_gate"})
+        groups.append({"params": ais, "lr": base_lr*head_multiplier*ais_lr_multiplier, "role": "AIS"})
+    else:
+        groups.append({"params": new, "lr": base_lr*head_multiplier,
+                       "role": "new_layers_AIS_gate" if hasattr(model, "ais_encoder") else "new_layers_gate"})
+    return groups
