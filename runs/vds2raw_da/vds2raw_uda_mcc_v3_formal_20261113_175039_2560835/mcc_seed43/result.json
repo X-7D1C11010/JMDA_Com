@@ -1,0 +1,263 @@
+{
+  "method": "mcc",
+  "seed": 43,
+  "protocol": "UDA",
+  "target_training_labels_used": false,
+  "optimization_profile": "mcc_v3",
+  "planned_optimizer_updates": 800,
+  "selected_epoch": 22,
+  "selection_partition": "target_val",
+  "test_selection_bias": false,
+  "test_evaluations_for_selection": 0,
+  "test_evaluations": 1,
+  "completed_epochs": 66,
+  "stop_reason": "validation_cross_entropy_patience",
+  "stopped_early": true,
+  "validation_control": {
+    "plateau_monitor": "target_val cross entropy",
+    "plateau_patience": 12,
+    "plateau_factor": 0.5,
+    "plateau_min_scale": 0.1,
+    "control_start_epoch": 40,
+    "early_stopping_monitor": "cross_entropy",
+    "early_stopping_patience": 25,
+    "early_stopping_min_epochs": 60,
+    "best_state_selection": "target_val ACC, then macro F1",
+    "test_metrics_used_for_control": false,
+    "final_lr_scale": 0.25,
+    "best_validation_CE": 0.2626312103111559,
+    "best_validation_CE_epoch": 41
+  },
+  "feature_normalization": "l2",
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 22,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.9642857142857143,
+      "precision_macro": 0.9583333333333334,
+      "recall_macro": 0.9791666666666666,
+      "f1_macro": 0.9670250896057349,
+      "val_present_classes": 3,
+      "val_total_classes": 3,
+      "val_class_coverage": 1.0,
+      "val_samples": 28,
+      "confusion_matrix": [
+        [
+          15,
+          1,
+          0
+        ],
+        [
+          0,
+          7,
+          0
+        ],
+        [
+          0,
+          0,
+          5
+        ]
+      ]
+    },
+    "zeroed": {
+      "RGB": {
+        "metrics": {
+          "accuracy": 0.9642857142857143,
+          "precision_macro": 0.9583333333333334,
+          "recall_macro": 0.9791666666666666,
+          "f1_macro": 0.9670250896057349,
+          "val_present_classes": 3,
+          "val_total_classes": 3,
+          "val_class_coverage": 1.0,
+          "val_samples": 28,
+          "confusion_matrix": [
+            [
+              15,
+              1,
+              0
+            ],
+            [
+              0,
+              7,
+              0
+            ],
+            [
+              0,
+              0,
+              5
+            ]
+          ]
+        },
+        "ACC_drop": 0.0
+      },
+      "NIR": {
+        "metrics": {
+          "accuracy": 0.8928571428571429,
+          "precision_macro": 0.8492063492063493,
+          "recall_macro": 0.8839285714285715,
+          "f1_macro": 0.8567686793493244,
+          "val_present_classes": 3,
+          "val_total_classes": 3,
+          "val_class_coverage": 1.0,
+          "val_samples": 28,
+          "confusion_matrix": [
+            [
+              15,
+              1,
+              0
+            ],
+            [
+              0,
+              5,
+              2
+            ],
+            [
+              0,
+              0,
+              5
+            ]
+          ]
+        },
+        "ACC_drop": 0.0714285714285714
+      },
+      "AIS": {
+        "metrics": {
+          "accuracy": 0.17857142857142858,
+          "precision_macro": 0.05952380952380953,
+          "recall_macro": 0.3333333333333333,
+          "f1_macro": 0.10101010101010101,
+          "val_present_classes": 3,
+          "val_total_classes": 3,
+          "val_class_coverage": 1.0,
+          "val_samples": 28,
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              16
+            ],
+            [
+              0,
+              0,
+              7
+            ],
+            [
+              0,
+              0,
+              5
+            ]
+          ]
+        },
+        "ACC_drop": 0.7857142857142857
+      }
+    }
+  },
+  "target_val": {
+    "accuracy": 0.9642857142857143,
+    "precision_macro": 0.9583333333333334,
+    "recall_macro": 0.9791666666666666,
+    "f1_macro": 0.9670250896057349,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28,
+    "confusion_matrix": [
+      [
+        15,
+        1,
+        0
+      ],
+      [
+        0,
+        7,
+        0
+      ],
+      [
+        0,
+        0,
+        5
+      ]
+    ]
+  },
+  "target_test": {
+    "accuracy": 1.0,
+    "precision_macro": 1.0,
+    "recall_macro": 1.0,
+    "f1_macro": 1.0,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 33,
+    "confusion_matrix": [
+      [
+        17,
+        0,
+        0
+      ],
+      [
+        0,
+        11,
+        0
+      ],
+      [
+        0,
+        0,
+        5
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 1.6352,
+    "latency_std_ms": 0.0105,
+    "latency_p50_ms": 1.6329,
+    "latency_p95_ms": 1.649,
+    "throughput_samples_s": 611.53,
+    "total_params": 22663174,
+    "trainable_params": 22663174,
+    "inference_GFLOPs": 1.304141824,
+    "total_train_time_s": 8.584409437607974,
+    "train_epoch_mean_s": 0.13006680966072687,
+    "peak_train_reserved_gb": 0.865234375,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        96,
+        96
+      ],
+      "nir": [
+        1,
+        1,
+        96,
+        96
+      ],
+      "ais": [
+        1,
+        13
+      ],
+      "ais_mask": [
+        1,
+        13
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "prediction_artifacts": {
+    "predictions_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v3_formal_20261113_175039_2560835/mcc_seed43/target_test_predictions.csv",
+    "confusion_matrix_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v3_formal_20261113_175039_2560835/mcc_seed43/target_test_confusion_matrix.csv",
+    "confusion_matrix_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v3_formal_20261113_175039_2560835/mcc_seed43/target_test_confusion_matrix.json"
+  },
+  "diagnostics_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v3_formal_20261113_175039_2560835/mcc_seed43",
+  "modality_weights_at_selected_epoch": [
+    0.31775152683258057,
+    0.31699442863464355,
+    0.36525407433509827
+  ],
+  "smoke": false
+}

@@ -1,0 +1,313 @@
+{
+  "method": "deepcoral",
+  "target": "rainy",
+  "seed": 42,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "weather_profile": "baseline",
+  "domain_forward": "reference",
+  "selected_epoch": 45,
+  "completed_epochs": 100,
+  "optimizer_updates": 2600,
+  "stop_reason": "max_epochs",
+  "planned_optimizer_updates": 2600,
+  "freeze_bn_after_epochs": -1,
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 45,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.4230769230769231,
+      "precision_macro": 0.4375,
+      "recall_macro": 0.4166666666666667,
+      "f1_macro": 0.34993894993895,
+      "val_present_classes": 6,
+      "val_total_classes": 6,
+      "val_class_coverage": 1.0,
+      "val_samples": 26,
+      "confusion_matrix": [
+        [
+          2,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          2,
+          4,
+          0,
+          2,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          4,
+          0
+        ],
+        [
+          2,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0,
+          0,
+          3,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          2,
+          1,
+          2
+        ]
+      ]
+    },
+    "zeroed": {
+      "VIS": {
+        "metrics": {
+          "accuracy": 0.34615384615384615,
+          "precision_macro": 0.1111111111111111,
+          "recall_macro": 0.3125,
+          "f1_macro": 0.15367965367965367,
+          "val_present_classes": 6,
+          "val_total_classes": 6,
+          "val_class_coverage": 1.0,
+          "val_samples": 26,
+          "confusion_matrix": [
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              7,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              2,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              5,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              5,
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.07692307692307693
+      },
+      "IR": {
+        "metrics": {
+          "accuracy": 0.19230769230769232,
+          "precision_macro": 0.07905982905982906,
+          "recall_macro": 0.21666666666666667,
+          "f1_macro": 0.11574074074074074,
+          "val_present_classes": 6,
+          "val_total_classes": 6,
+          "val_class_coverage": 1.0,
+          "val_samples": 26,
+          "confusion_matrix": [
+            [
+              1,
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              3,
+              0,
+              0,
+              4,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              4,
+              0
+            ],
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              4,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1,
+              4,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.23076923076923075
+      }
+    }
+  },
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.4230769230769231,
+    "precision_macro": 0.4375,
+    "recall_macro": 0.4166666666666667,
+    "f1_macro": 0.34993894993895,
+    "val_present_classes": 6,
+    "val_total_classes": 6,
+    "val_class_coverage": 1.0,
+    "val_samples": 26,
+    "confusion_matrix": [
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        2,
+        4,
+        0,
+        2,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        4,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        3,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        2,
+        1,
+        2
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 1.3502,
+    "latency_std_ms": 0.0084,
+    "latency_p50_ms": 1.3491,
+    "latency_p95_ms": 1.3643,
+    "throughput_samples_s": 740.63,
+    "total_params": 22359176,
+    "trainable_params": 22359176,
+    "inference_GFLOPs": 7.254257664,
+    "total_train_time_s": 468.4832258822862,
+    "train_epoch_mean_s": 4.684832258822862,
+    "peak_train_reserved_gb": 2.197265625,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "modality_weights_at_selected_epoch": [
+    0.5113900303840637,
+    0.4886099398136139
+  ],
+  "smoke": false
+}
