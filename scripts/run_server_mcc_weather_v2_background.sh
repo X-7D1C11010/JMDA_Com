@@ -3,11 +3,13 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SEED="${1:-42}"
 [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $SEED" >&2; exit 1; }
-UPDATE="$HERE/experiment_updates/mcc_weather_v2_20261113"
-if [ ! -f "$UPDATE/scripts/run_pending_adaptation_v2.sh" ]; then
-  echo "Extract mcc_weather_v2_update.zip into the project root first; missing: $UPDATE" >&2
+PYTHON_BIN="${PYTHON:-python}"
+PREPARE="$HERE/tools/prepare_mcc_weather_v2_snapshot.py"
+if [ ! -f "$PREPARE" ]; then
+  echo "Git checkout is missing $PREPARE; synchronize the latest code first." >&2
   exit 1
 fi
+UPDATE="$("$PYTHON_BIN" -B "$PREPARE" --project-root "$HERE")"
 export JMDA_PROJECT_ROOT="$HERE"
 LOG_DIR="$HERE/server_logs/pending_adaptation_v2_launcher"
 mkdir -p "$LOG_DIR"
