@@ -1,0 +1,117 @@
+{
+  "method": "dann",
+  "target": "rainy",
+  "seed": 42,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "weather_profile": "timing_v2",
+  "domain_forward": "joint",
+  "selected_epoch": 8,
+  "completed_epochs": 23,
+  "optimizer_updates": 598,
+  "stop_reason": "validation_accuracy_f1_patience",
+  "planned_optimizer_updates": 1040,
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.3076923076923077,
+    "precision_macro": 0.4063492063492063,
+    "recall_macro": 0.27499999999999997,
+    "f1_macro": 0.28650793650793654,
+    "val_present_classes": 6,
+    "val_total_classes": 6,
+    "val_class_coverage": 1.0,
+    "val_samples": 26,
+    "confusion_matrix": [
+      [
+        1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        2,
+        4,
+        0,
+        2,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        1,
+        0,
+        1,
+        1
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0,
+        1,
+        2,
+        1
+      ],
+      [
+        0,
+        1,
+        0,
+        4,
+        0,
+        0
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 1.4231,
+    "latency_std_ms": 0.01,
+    "latency_p50_ms": 1.4212,
+    "latency_p95_ms": 1.4376,
+    "throughput_samples_s": 702.69,
+    "total_params": 23012233,
+    "trainable_params": 23012233,
+    "inference_GFLOPs": 7.254772736,
+    "total_train_time_s": 107.51707647461444,
+    "train_epoch_mean_s": 4.67465549889628,
+    "peak_train_reserved_gb": 2.18359375,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "modality_weights_at_selected_epoch": [
+    0.5030079483985901,
+    0.4969920217990875
+  ],
+  "smoke": false
+}

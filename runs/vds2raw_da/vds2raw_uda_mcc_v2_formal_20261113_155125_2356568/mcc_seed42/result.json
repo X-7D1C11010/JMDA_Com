@@ -1,0 +1,135 @@
+{
+  "method": "mcc",
+  "seed": 42,
+  "protocol": "UDA",
+  "target_training_labels_used": false,
+  "optimization_profile": "mcc_v2",
+  "planned_optimizer_updates": 800,
+  "selected_epoch": 60,
+  "selection_partition": "target_val",
+  "test_selection_bias": false,
+  "test_evaluations_for_selection": 0,
+  "test_evaluations": 1,
+  "completed_epochs": 100,
+  "stop_reason": "max_epochs",
+  "stopped_early": false,
+  "validation_control": {
+    "plateau_monitor": "target_val cross entropy",
+    "plateau_patience": 0,
+    "plateau_factor": 0.5,
+    "plateau_min_scale": 0.1,
+    "early_stopping_monitor": "accuracy_f1",
+    "early_stopping_patience": 0,
+    "early_stopping_min_epochs": 0,
+    "best_state_selection": "target_val ACC, then macro F1",
+    "test_metrics_used_for_control": false,
+    "final_lr_scale": 1.0,
+    "best_validation_CE": 0.44222348093119634,
+    "best_validation_CE_epoch": 50
+  },
+  "target_val": {
+    "accuracy": 0.8571428571428571,
+    "precision_macro": 0.8787878787878788,
+    "recall_macro": 0.8708333333333332,
+    "f1_macro": 0.8544061302681992,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28,
+    "confusion_matrix": [
+      [
+        13,
+        3,
+        0
+      ],
+      [
+        0,
+        7,
+        0
+      ],
+      [
+        0,
+        1,
+        4
+      ]
+    ]
+  },
+  "target_test": {
+    "accuracy": 0.7878787878787878,
+    "precision_macro": 0.7314814814814815,
+    "recall_macro": 0.7622103386809269,
+    "f1_macro": 0.7242348294979873,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 33,
+    "confusion_matrix": [
+      [
+        16,
+        1,
+        0
+      ],
+      [
+        0,
+        6,
+        5
+      ],
+      [
+        0,
+        1,
+        4
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 1.5743,
+    "latency_std_ms": 0.0088,
+    "latency_p50_ms": 1.5737,
+    "latency_p95_ms": 1.5866,
+    "throughput_samples_s": 635.2,
+    "total_params": 22663174,
+    "trainable_params": 22663174,
+    "inference_GFLOPs": 1.304141824,
+    "total_train_time_s": 12.420512632234022,
+    "train_epoch_mean_s": 0.12420512632234022,
+    "peak_train_reserved_gb": 0.865234375,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        96,
+        96
+      ],
+      "nir": [
+        1,
+        1,
+        96,
+        96
+      ],
+      "ais": [
+        1,
+        13
+      ],
+      "ais_mask": [
+        1,
+        13
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "prediction_artifacts": {
+    "predictions_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v2_formal_20261113_155125_2356568/mcc_seed42/target_test_predictions.csv",
+    "confusion_matrix_csv": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v2_formal_20261113_155125_2356568/mcc_seed42/target_test_confusion_matrix.csv",
+    "confusion_matrix_json": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v2_formal_20261113_155125_2356568/mcc_seed42/target_test_confusion_matrix.json"
+  },
+  "diagnostics_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_mcc_v2_formal_20261113_155125_2356568/mcc_seed42",
+  "modality_weights_at_selected_epoch": [
+    0.289730042219162,
+    0.26781079173088074,
+    0.44245922565460205
+  ],
+  "smoke": false
+}

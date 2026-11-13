@@ -1,0 +1,168 @@
+{
+  "method": "deepcoral",
+  "target": "foggy",
+  "seed": 42,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "weather_profile": "timing_v2",
+  "domain_forward": "joint",
+  "selected_epoch": 10,
+  "completed_epochs": 25,
+  "optimizer_updates": 825,
+  "stop_reason": "validation_accuracy_f1_patience",
+  "planned_optimizer_updates": 1320,
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.3739130434782609,
+    "precision_macro": 0.5072058453010834,
+    "recall_macro": 0.38294418382137685,
+    "f1_macro": 0.3532423041043731,
+    "val_present_classes": 9,
+    "val_total_classes": 9,
+    "val_class_coverage": 1.0,
+    "val_samples": 115,
+    "confusion_matrix": [
+      [
+        8,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        11,
+        7,
+        0,
+        1,
+        1,
+        1,
+        7,
+        0,
+        0
+      ],
+      [
+        3,
+        0,
+        3,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        5,
+        1,
+        0,
+        3,
+        0,
+        0,
+        4,
+        0,
+        0
+      ],
+      [
+        7,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        3
+      ],
+      [
+        1,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        4,
+        0,
+        0,
+        1,
+        0,
+        0,
+        13,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0,
+        2,
+        0,
+        0,
+        1,
+        1,
+        0
+      ],
+      [
+        9,
+        0,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        6
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 1.3799,
+    "latency_std_ms": 0.0111,
+    "latency_p50_ms": 1.378,
+    "latency_p95_ms": 1.3912,
+    "throughput_samples_s": 724.68,
+    "total_params": 22362251,
+    "trainable_params": 22362251,
+    "inference_GFLOPs": 7.254263808,
+    "total_train_time_s": 80.65746746934019,
+    "train_epoch_mean_s": 3.2262986987736078,
+    "peak_train_reserved_gb": 2.166015625,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "modality_weights_at_selected_epoch": [
+    0.5219887495040894,
+    0.47801128029823303
+  ],
+  "smoke": false
+}
