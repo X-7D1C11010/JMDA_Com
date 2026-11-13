@@ -3,13 +3,22 @@
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
 from tools.prepare_mcc_weather_v2_snapshot import MANIFEST, REQUIRED_FILES, prepare_snapshot
+
+
+def bash_executable():
+    for candidate in (r"D:\Git\Git\bin\bash.exe", r"C:\Program Files\Git\bin\bash.exe", shutil.which("bash")):
+        if candidate and Path(candidate).is_file():
+            return str(candidate)
+    return None
 
 
 def fixture(root):
@@ -92,6 +101,46 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(result.stdout.splitlines()), 1)
             self.assertTrue((Path(result.stdout.strip())/MANIFEST).is_file())
+
+
+@unittest.skipUnless(bash_executable(), "Bash is needed for dispatch checks")
+class PendingDispatchTests(unittest.TestCase):
+    def capture(self, scope):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            scripts = root/"runtime/scripts"
+            scripts.mkdir(parents=True)
+            weights = root/"project/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"
+            weights.parent.mkdir(parents=True)
+            weights.write_bytes(b"dispatch-only placeholder; never loaded")
+            source = Path(__file__).resolve().parents[1]/"scripts/run_pending_adaptation_v2.sh"
+            shutil.copyfile(source, scripts/source.name)
+            (scripts/"run_vds2raw_da_methods.sh").write_text(
+                '#!/usr/bin/env bash\n'
+                'printf "VDS|%s|%s|%s|%s\\n" "$VDS2RAW_DA_METHODS" "$VDS2RAW_DA_PROFILE" '
+                '"$VDS2RAW_SEEDS" "${VDS2RAW_DA_EPOCHS-unset}"\n', encoding="utf-8")
+            (scripts/"run_weather_vds_core_methods.sh").write_text(
+                '#!/usr/bin/env bash\n'
+                'printf "WEATHER|%s|%s|%s|%s\\n" "$WEATHER_VDS_PROFILE" "$WEATHER_VDS_TARGETS" '
+                '"$1" "${WEATHER_VDS_EPOCHS-unset}"\n', encoding="utf-8")
+            environment = os.environ.copy()
+            environment.update(JMDA_PROJECT_ROOT=(root/"project").as_posix(),
+                               VDS2RAW_DA_METHODS="mdd dann deepcoral", VDS2RAW_SEEDS="7",
+                               VDS2RAW_DA_EPOCHS="250", WEATHER_VDS_EPOCHS="100")
+            result = subprocess.run([bash_executable(), str(scripts/source.name), "42", scope],
+                                    env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return [row for row in result.stdout.splitlines() if row.startswith(("VDS|", "WEATHER|"))]
+
+    def test_full_queue_includes_optimized_cdan_five_seeds_and_no_completed_vds_methods(self):
+        self.assertEqual(self.capture("all"), [
+            "VDS|mcc|mcc_v2|42|unset",
+            "VDS|cdan|optimized|42 43 44 45 46|unset",
+            "WEATHER|timing_v2|backlight rainy foggy dark|42|unset",
+        ])
+
+    def test_append_mode_runs_only_cdan_without_repeating_mcc_or_weather(self):
+        self.assertEqual(self.capture("cdan-only"), ["VDS|cdan|optimized|42 43 44 45 46|unset"])
 
 
 if __name__ == "__main__":
