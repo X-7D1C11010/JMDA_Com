@@ -25,7 +25,7 @@ from tools.efficiency_common import measure_inference_latency
 from tools.reproducibility import seed_everything
 from vds2raw.adaptation import (
     METHODS, DEFAULTS, AdaptationDataset, AdaptationModel, PairedEpochSampler,
-    prepare_statistics, optimizer_groups, resolve_training_settings,
+    prepare_statistics, optimizer_groups, resolve_training_settings, source_classification_weights,
 )
 from vds2raw.common import better_metrics, build_run_provenance, save_prediction_artifacts
 from vds2raw.dataset import DISPLAY_CLASS_NAMES, audit_dataset
@@ -90,7 +90,7 @@ def gradient_diagnostics(model, classification, transfer):
     return result
 
 
-def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_prefix="VDS_EVALUATION"):
+def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_prefix="VDS_EVALUATION", return_details=False):
     """Deterministic evaluation; every sample receives a probability record."""
     model.eval()
     truth, predicted, records = [], [], []
@@ -144,7 +144,7 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
                        recall_by_class=[row[i]/max(sum(row), 1) for i, row in enumerate(matrix)])
     event(directory, "evaluation.jsonl", details)
     print(event_prefix+": "+json.dumps(details), flush=True)
-    return metrics, records
+    return (metrics, records, details) if return_details else (metrics, records)
 
 
 def profile(model, dataset, device, train_times, peak_reserved):
@@ -238,6 +238,59 @@ def make_optimizer(model, args):
     return optimizer, scheduler, schedule_per_update
 
 
+class ValidationLossControl:
+    """Validation-only LR plateau control, independent of ACC checkpoint selection."""
+
+    def __init__(self, args):
+        self.patience = args.val_plateau_patience
+        self.factor, self.min_scale = args.val_plateau_factor, args.val_plateau_min_scale
+        self.min_delta = args.validation_loss_min_delta
+        self.best_loss, self.best_loss_epoch = math.inf, 0
+        self.bad_epochs = self.plateau_bad_epochs = 0
+        self.lr_scale = 1.0
+
+    def observe(self, loss, epoch, optimizer):
+        loss = float(loss)
+        if not math.isfinite(loss):
+            raise FloatingPointError("Nonfinite target_val cross entropy")
+        improved = loss < self.best_loss-self.min_delta
+        if improved:
+            self.best_loss, self.best_loss_epoch = loss, epoch
+            self.bad_epochs = self.plateau_bad_epochs = 0
+        else:
+            self.bad_epochs += 1
+            self.plateau_bad_epochs += 1
+        reduced = False
+        if self.patience and self.plateau_bad_epochs >= self.patience:
+            old_scale = self.lr_scale
+            self.lr_scale = max(self.min_scale, old_scale*self.factor)
+            for group in optimizer.param_groups:
+                group["lr"] *= self.lr_scale/old_scale
+            reduced = self.lr_scale < old_scale
+            self.plateau_bad_epochs = 0
+        return {"validation_cross_entropy": loss, "CE_improved": improved,
+                "best_validation_CE": self.best_loss, "best_validation_CE_epoch": self.best_loss_epoch,
+                "CE_bad_epochs": self.bad_epochs, "plateau_bad_epochs": self.plateau_bad_epochs,
+                "lr_scale": self.lr_scale, "lr_reduced": reduced}
+
+
+def step_scaled_scheduler(scheduler, optimizer, scale):
+    """Compose plateau scaling with the reference schedule, including recursive schedulers.
+
+    The scheduler sees unscaled rates; its base rates and update clock stay
+    intact. Applying only a second scheduler would let LambdaLR overwrite cuts.
+    """
+    if scheduler is None:
+        return
+    if scale != 1.0:
+        for group in optimizer.param_groups:
+            group["lr"] /= scale
+    scheduler.step()
+    if scale != 1.0:
+        for group in optimizer.param_groups:
+            group["lr"] *= scale
+
+
 def run(args):
     args.seed = seed_everything(args.seed)
     torch.set_num_threads(args.cpu_threads)
@@ -282,11 +335,19 @@ def run(args):
                for index, (ds, sampler) in enumerate(zip((source, target), samplers))]
     device = torch.device(args.device if args.device else "cuda" if torch.cuda.is_available() else "cpu")
     model = AdaptationModel(args.method, args.weights, not args.no_pretrained).to(device)
+    source_counts, source_weights = source_classification_weights(source.samples, model.num_classes if hasattr(model, "num_classes") else 3)
+    if args.source_class_balance:
+        model.source_class_weights = source_weights.to(device)
     optimizer, scheduler, schedule_per_update = make_optimizer(model, args)
+    validation_control = ValidationLossControl(args)
     config = {
         "method": args.method, "protocol": "UDA", "modalities": ["RGB", "NIR", "AIS"],
         "optimization_profile": args.profile,
         "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
+        "source_classification": {"class_counts": source_counts.tolist(),
+                                  "weighted_CE": args.source_class_balance,
+                                  "weights": source_weights.tolist() if args.source_class_balance else None,
+                                  "counts_fit_partition": "source_train only"},
         "training_partitions": ["source_train", "target_train"],
         "selection_partition": "target_val", "test_partition": "target_test",
         "target_training_labels_used": False, "test_selection_bias": False,
@@ -299,6 +360,15 @@ def run(args):
         "augmentation": "paired padded crop 96, horizontal/vertical flip with AIS heading correction, RGB gain 0.95..1.05; eval deterministic",
         "model": repr(model), "gradient_sampling": "last update of each epoch, CE versus weighted adaptation",
         "optimizer": type(optimizer).__name__, "lr_schedule_per_update": schedule_per_update,
+        "validation_control": {"plateau_monitor": "target_val cross entropy",
+                               "plateau_patience": args.val_plateau_patience,
+                               "plateau_factor": args.val_plateau_factor,
+                               "plateau_min_scale": args.val_plateau_min_scale,
+                               "early_stopping_monitor": args.early_stopping_monitor,
+                               "early_stopping_patience": args.early_stopping_patience,
+                               "early_stopping_min_epochs": args.early_stopping_min_epochs,
+                               "best_state_selection": "target_val ACC, then macro F1",
+                               "test_metrics_used_for_control": False},
         "optimizer_groups": [{"lr": group["lr"], "weight_decay": group["weight_decay"],
                               "role": group.get("role"),
                               "parameters": sum(p.numel() for p in group["params"]),
@@ -312,6 +382,7 @@ def run(args):
     print("VDS_PROTOCOL: "+json.dumps({key: config[key] for key in ("protocol", "training_partitions", "selection_partition", "test_evaluation_policy", "architecture")}), flush=True)
     best_state = best_metrics = None
     best_epoch, stale, update = 0, 0, 0
+    stop_reason = "max_epochs"
     history, times, peak_reserved = [], [], None
     for epoch in range(1, args.epochs+1):
         for sampler in samplers:
@@ -353,11 +424,13 @@ def run(args):
                       "transfer_weight": details["transfer_weight"], "grl_coefficient": details["grl_coefficient"],
                       "entropy_grl_coefficient": details["entropy_grl_coefficient"],
                       "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
+                      "source_ce_unweighted": float(details["source_ce_unweighted"]),
+                      "domain_feature_moments": details["domain_feature_moments"],
                       "modality_weights": model.modality_weights().detach().cpu().tolist(),
                       "learning_rates": [g["lr"] for g in optimizer.param_groups]}
             event(run_dir, "updates.jsonl", record)
             if scheduler is not None and schedule_per_update:
-                scheduler.step()
+                step_scaled_scheduler(scheduler, optimizer, validation_control.lr_scale)
             if step == 1 or step == len(loaders[0]) or step % 5 == 0:
                 print(f"Epoch [{epoch}/{args.epochs}] batch [{step}/{len(loaders[0])}] "
                       f"source_CE={values['source_ce']:.4f} target_labels_used=False "
@@ -378,16 +451,27 @@ def run(args):
         event(run_dir, "training.jsonl", training)
         for ds in (source_eval, target_eval):
             evaluate(model, ds, device, epoch, run_dir)
-        metrics, _ = evaluate(model, validation, device, epoch, run_dir)
+        metrics, _, validation_details = evaluate(model, validation, device, epoch, run_dir, return_details=True)
         history.append({"epoch": epoch, **metrics})
         if better_metrics(metrics, best_metrics):
             best_metrics, best_epoch, stale = dict(metrics), epoch, 0
             best_state = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
         else:
             stale += 1
+        control = validation_control.observe(validation_details["cross_entropy"], epoch, optimizer)
         if scheduler is not None and not schedule_per_update:
-            scheduler.step()
-        if args.early_stopping_patience and stale >= args.early_stopping_patience:
+            step_scaled_scheduler(scheduler, optimizer, validation_control.lr_scale)
+        stopping_stale = validation_control.bad_epochs if args.early_stopping_monitor == "cross_entropy" else stale
+        should_stop = bool(args.early_stopping_patience and epoch >= args.early_stopping_min_epochs
+                           and stopping_stale >= args.early_stopping_patience)
+        control.update(epoch=epoch, selected_ACC_epoch=best_epoch, ACC_F1_bad_epochs=stale,
+                       early_stopping_monitor=args.early_stopping_monitor,
+                       early_stopping_bad_epochs=stopping_stale, early_stop=should_stop,
+                       next_learning_rates=[g["lr"] for g in optimizer.param_groups])
+        event(run_dir, "validation_control.jsonl", control)
+        print("VDS_VALIDATION_CONTROL: "+json.dumps(control), flush=True)
+        if should_stop:
+            stop_reason = "validation_"+args.early_stopping_monitor+"_patience"
             break
     # No test loader or test predictions exist in the optimization loop.
     model.load_state_dict(best_state, strict=True)
@@ -408,6 +492,9 @@ def run(args):
     if len([e for e in evaluations if e["partition"] == "target_test"]) != 1:
         raise RuntimeError("target_test must be evaluated exactly once")
     checked = validate_diagnostics(run_dir, (source_eval, target_eval, validation, test), len(history), best_epoch)
+    control_records = [json.loads(row) for row in (run_dir/"validation_control.jsonl").read_text(encoding="utf-8").splitlines()]
+    if len(control_records) != len(history) or [r["epoch"] for r in control_records] != list(range(1, len(history)+1)):
+        raise RuntimeError("Missing validation control diagnostics")
     completeness = {"status": "PASS", "epochs": len(history), "selected_epoch": best_epoch,
                     "protocol": "UDA", "target_training_labels_used": False,
                     "selection_partition": "target_val", "test_evaluations": 1,
@@ -422,6 +509,11 @@ def run(args):
               "selected_epoch": best_epoch, "selection_partition": "target_val",
               "test_selection_bias": False, "test_evaluations_for_selection": 0,
               "test_evaluations": 1, "completed_epochs": len(history),
+              "stop_reason": stop_reason, "stopped_early": len(history) < args.epochs,
+              "validation_control": {**config["validation_control"],
+                                     "final_lr_scale": validation_control.lr_scale,
+                                     "best_validation_CE": validation_control.best_loss,
+                                     "best_validation_CE_epoch": validation_control.best_loss_epoch},
               "target_val": best_metrics, "target_test": test_metrics, "complexity": complexity,
               "prediction_artifacts": artifacts, "diagnostics_dir": str(run_dir),
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
@@ -440,7 +532,10 @@ def parser():
     p.add_argument("--stats-file", default="")
     p.add_argument("--weights", default=str(ROOT/"pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"))
     p.add_argument("--epochs", type=int, default=None)
-    p.add_argument("--profile", choices=("baseline", "optimized"), default="baseline")
+    p.add_argument("--profile", choices=("baseline", "optimized", "mcc_v2"), default="baseline")
+    p.add_argument("--source-class-balance", action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--domain-forward", choices=("reference", "joint"), default=None)
+    p.add_argument("--log-feature-moments", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--ais-lr-multiplier", type=float, default=None)
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--num-workers", type=int, default=2)
@@ -454,9 +549,15 @@ def parser():
     p.add_argument("--lr-gamma", type=float, default=None,
                    help="reference defaults: MDD .0002; CDAN/MCC .001")
     p.add_argument("--lr-decay", type=float, default=0.75)
-    p.add_argument("--adaptation-warmup-epochs", type=int, default=0)
+    p.add_argument("--adaptation-warmup-epochs", type=int, default=None)
     p.add_argument("--adaptation-ramp-epochs", type=int, default=None)
-    p.add_argument("--early-stopping-patience", type=int, default=0)
+    p.add_argument("--early-stopping-patience", type=int, default=None)
+    p.add_argument("--early-stopping-monitor", choices=("accuracy_f1", "cross_entropy"), default=None)
+    p.add_argument("--early-stopping-min-epochs", type=int, default=None)
+    p.add_argument("--val-plateau-patience", type=int, default=None)
+    p.add_argument("--val-plateau-factor", type=float, default=None)
+    p.add_argument("--val-plateau-min-scale", type=float, default=None)
+    p.add_argument("--validation-loss-min-delta", type=float, default=None)
     p.add_argument("--max-train-batches", type=int, default=0)
     p.add_argument("--device", default="")
     p.add_argument("--no-augment", dest="augment", action="store_false")
@@ -478,6 +579,12 @@ if __name__ == "__main__":
         raise ValueError("Invalid inverse learning-rate schedule")
     if args.ais_lr_multiplier is not None and args.ais_lr_multiplier <= 0:
         raise ValueError("AIS learning-rate multiplier must be positive")
-    if min(args.adaptation_warmup_epochs, args.adaptation_ramp_epochs or 0, args.early_stopping_patience, args.max_train_batches, args.weight_decay) < 0:
+    if args.val_plateau_factor is not None and not 0 < args.val_plateau_factor < 1:
+        raise ValueError("Validation plateau factor must be in (0,1)")
+    if args.val_plateau_min_scale is not None and not 0 < args.val_plateau_min_scale <= 1:
+        raise ValueError("Validation plateau minimum scale must be in (0,1]")
+    if min(args.adaptation_warmup_epochs or 0, args.adaptation_ramp_epochs or 0, args.early_stopping_patience or 0,
+           args.early_stopping_min_epochs or 0, args.val_plateau_patience or 0, args.validation_loss_min_delta or 0,
+           args.max_train_batches, args.weight_decay) < 0:
         raise ValueError("Negative schedule or regularization argument")
     run(args)

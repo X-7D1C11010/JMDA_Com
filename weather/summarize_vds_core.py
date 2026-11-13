@@ -21,6 +21,9 @@ def summarize(root):
             raise ValueError(f"Incomplete run: {path}")
         metrics = result["target_val"]
         rows.append({"method": result["method"], "target": result["target"], "seed": result["seed"],
+                     "weather_profile": result.get("weather_profile", "baseline"),
+                     "domain_forward": result.get("domain_forward", "reference"),
+                     "stop_reason": result.get("stop_reason", "not_recorded"),
                      "selected_epoch": result["selected_epoch"], "completed_epochs": result["completed_epochs"],
                      "optimizer_updates": result["optimizer_updates"],
                      "ACC_percent": 100*metrics["accuracy"], "Precision_macro_percent": 100*metrics["precision_macro"],
@@ -30,6 +33,8 @@ def summarize(root):
                      "result_file": str(path.resolve())})
     if not rows:
         raise FileNotFoundError(f"No completed weather results: {root}")
+    if len({row["weather_profile"] for row in rows}) != 1:
+        raise ValueError("Do not merge baseline and timing_v2 weather profiles")
     output = root/"summary"
     output.mkdir(exist_ok=True)
     with (output/"runs.csv").open("w", encoding="utf-8-sig", newline="") as stream:

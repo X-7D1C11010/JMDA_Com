@@ -35,7 +35,18 @@ DEFAULTS = {
 
 
 def resolve_training_settings(args):
-    settings = {**DEFAULTS[args.method], "epochs": 100, "ais_lr_multiplier": 1.0}
+    settings = {**DEFAULTS[args.method], "epochs": 100, "ais_lr_multiplier": 1.0,
+                "val_plateau_patience": 0, "val_plateau_factor": 0.5, "val_plateau_min_scale": 0.1,
+                "early_stopping_patience": 0, "early_stopping_monitor": "accuracy_f1",
+                "early_stopping_min_epochs": 0, "validation_loss_min_delta": 0.0001,
+                "source_class_balance": False, "domain_forward": "reference", "log_feature_moments": False,
+                "adaptation_warmup_epochs": 0}
+    if args.profile == "mcc_v2":
+        if args.method != "mcc":
+            raise ValueError("mcc_v2 is reserved for MCC")
+        settings.update(trade_off=0.50, ais_lr_multiplier=5.0,
+                        adaptation_warmup_epochs=20, adaptation_ramp_epochs=20,
+                        source_class_balance=True, log_feature_moments=True)
     if args.profile == "optimized" and args.method in {"mdd", "mcc"}:
         settings.update(ais_lr_multiplier=5.0)
         if args.method == "mdd":
@@ -45,10 +56,30 @@ def resolve_training_settings(args):
             settings.update(epochs=250, trade_off=0.60)
         else:
             settings.update(trade_off=0.50)
+    if args.profile == "optimized" and args.method == "cdan":
+        # The observed validation CE keeps improving while ACC/F1 stalls.
+        # Control late fitting with CE without changing best-ACC selection.
+        settings.update(val_plateau_patience=12, early_stopping_patience=20,
+                        early_stopping_monitor="cross_entropy", early_stopping_min_epochs=50)
     for key, value in settings.items():
-        if getattr(args, key) is None:
+        if getattr(args, key, None) is None:
             setattr(args, key, value)
     return args
+
+
+def source_classification_weights(samples, num_classes):
+    """Inverse-frequency CE weights from source labels only; retain all samples."""
+    counts = torch.bincount(torch.tensor([int(label) for _, label in samples]), minlength=num_classes)
+    if counts.numel() != num_classes or bool((counts == 0).any()):
+        raise ValueError("Every configured class must appear in the labelled source")
+    return counts, counts.sum()/(num_classes*counts.float())
+
+
+def domain_moments(values, source_count):
+    source, target = values[:source_count].detach(), values[source_count:].detach()
+    return {"source_mean_norm": float(source.mean(0).norm()), "target_mean_norm": float(target.mean(0).norm()),
+            "mean_gap_L2": float((source.mean(0)-target.mean(0)).norm()),
+            "std_gap_L2": float((source.std(0, unbiased=False)-target.std(0, unbiased=False)).norm())}
 
 
 def prepare_statistics(root, path):
@@ -197,6 +228,7 @@ class AdaptationModel(nn.Module):
         if num_classes < 2 or ir_channels not in (1, 3):
             raise ValueError("Invalid class count or infrared channel count")
         self.num_classes, self.use_ais = num_classes, bool(use_ais)
+        self.register_buffer("source_class_weights", None)
         self.feature_names = ("RGB", "NIR", "AIS") if use_ais else ("VIS", "IR")
         self.input_keys = ("rgb", "nir", "ais", "ais_mask") if use_ais else ("rgb", "nir")
         self.rgb_encoder = resnet18(weights=None)
@@ -273,19 +305,25 @@ class AdaptationModel(nn.Module):
             branches += (self.ais_encoder(torch.cat((batch["ais"]*batch["ais_mask"], batch["ais_mask"]), 1)),)
         self.last_features = tuple(branch.detach() for branch in branches)
         weights = self.modality_weights()
-        return self.bottleneck(torch.cat([len(branches)*weights[i]*v for i, v in enumerate(branches)], 1))
+        fused = torch.cat([len(branches)*weights[i]*v for i, v in enumerate(branches)], 1)
+        self.last_fused = fused.detach()
+        return self.bottleneck(fused)
 
     def forward(self, batch):
         return self.head(self.encode(batch))
 
     def objective(self, source, target, update, planned_updates, args):
         source_count = len(source["label"])
-        if self.method in {"dann", "deepcoral", "cdan"}:
+        log_moments = getattr(args, "log_feature_moments", False)
+        if self.method in {"dann", "deepcoral", "cdan"} and getattr(args, "domain_forward", "reference") == "reference":
             # Preserve the separate domain forwards in these released loops.
             fs = self.encode(source)
+            source_fused = self.last_fused if log_moments else None
             source_branches = self.last_features
             ys = self.head(fs)
             ft = self.encode(target)
+            if log_moments:
+                fused_for_diagnostics = torch.cat((source_fused, self.last_fused))
             target_branches = self.last_features
             yt = self.head(ft)
             self.last_features = tuple(torch.cat((s, t)) for s, t in zip(source_branches, target_branches))
@@ -295,9 +333,12 @@ class AdaptationModel(nn.Module):
             inputs = {key: torch.cat((source[key], target[key]), 0)
                       for key in getattr(self, "input_keys", ("rgb", "nir", "ais", "ais_mask"))}
             features = self.encode(inputs)
+            if log_moments:
+                fused_for_diagnostics = self.last_fused
             logits = self.head(features)
         ys, yt = logits[:source_count], logits[source_count:]
-        ce_source = F.cross_entropy(ys, source["label"], label_smoothing=args.label_smoothing)
+        ce_source = F.cross_entropy(ys, source["label"], weight=getattr(self, "source_class_weights", None),
+                                   label_smoothing=args.label_smoothing)
         classification = ce_source
         progress = update/max(planned_updates, 1)
         coefficient = 2/(1+math.exp(-10*progress))-1
@@ -334,6 +375,9 @@ class AdaptationModel(nn.Module):
             "transfer_weight": weight, "grl_coefficient": coefficient,
             "entropy_grl_coefficient": entropy_coefficient if self.method == "cdan" else None,
             "domain_accuracy": domain_accuracy, "source_logits": ys, "target_logits": yt,
+            "source_ce_unweighted": F.cross_entropy(ys, source["label"], label_smoothing=args.label_smoothing).detach() if log_moments else ce_source.detach(),
+            "domain_feature_moments": {"before_bottleneck": domain_moments(fused_for_diagnostics, source_count),
+                                       "after_bottleneck": domain_moments(features, source_count)} if log_moments else None,
         }
 
 

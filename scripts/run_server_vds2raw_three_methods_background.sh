@@ -7,8 +7,8 @@ case "$MODE" in formal|smoke) ;; *) echo "usage: $0 {formal|smoke}" >&2; exit 1 
 
 export VDS2RAW_DA_METHODS="mdd dann deepcoral"
 export VDS2RAW_SEEDS="42 43 44 45 46"
-# The optimized profile changes MDD/MCC only. DANN and Deep CORAL retain
-# their validated baseline settings, including AIS LR multiplier 1.
+# For these three methods, optimized changes MDD only. DANN/Deep CORAL
+# retain their validated baseline settings, including AIS LR multiplier 1.
 export VDS2RAW_DA_PROFILE=optimized
 export VDS2RAW_DA_BATCH_SIZE=16
 export VDS2RAW_NUM_WORKERS=2

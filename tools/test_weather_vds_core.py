@@ -63,6 +63,37 @@ class WeatherTests(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(2)
 
+    def test_timing_v2_has_separate_weather_defaults_and_keeps_explicit_cli_settings(self):
+        for method, lr, trade in (("dann", .00015, .20), ("deepcoral", .0001, .10)):
+            args = weather.parser().parse_args(["--method", method, "--target", "dark", "--data-dir", ".",
+                                                "--weather-profile", "timing_v2"])
+            weather.resolve_weather_settings(args)
+            self.assertEqual((args.epochs, args.lr, args.trade_off, args.domain_forward), (40, lr, trade, "joint"))
+            self.assertEqual((args.adaptation_ramp_epochs, args.lr_scheduler), (5, "cosine"))
+            self.assertEqual((args.early_stopping_min_epochs, args.early_stopping_patience), (20, 15))
+            explicit = weather.parser().parse_args(["--method", method, "--target", "dark", "--data-dir", ".",
+                        "--weather-profile", "timing_v2", "--epochs", "2", "--lr", ".001", "--domain-forward", "reference"])
+            weather.resolve_weather_settings(explicit)
+            self.assertEqual((explicit.epochs, explicit.lr, explicit.domain_forward), (2, .001, "reference"))
+
+    def test_joint_forward_shares_bn_update_without_target_labels_and_logs_moments(self):
+        for method in ("dann", "deepcoral"):
+            args = weather.parser().parse_args(["--method", method, "--target", "backlight", "--data-dir", ".",
+                                                "--weather-profile", "timing_v2"])
+            weather.resolve_weather_settings(args)
+            args.steps_per_epoch = 2
+            model = AdaptationModel(method, pretrained=False, num_classes=4, use_ais=False, ir_channels=3)
+            source = {"rgb": torch.randn(4, 3, 64, 64), "nir": torch.randn(4, 3, 64, 64), "label": torch.arange(4)}
+            target = {"rgb": torch.randn(4, 3, 64, 64), "nir": torch.randn(4, 3, 64, 64)}
+            before = int(model.rgb_encoder.bn1.num_batches_tracked)
+            loss, details = model.objective(source, target, 3, 80, args)
+            self.assertEqual(int(model.rgb_encoder.bn1.num_batches_tracked)-before, 1)
+            self.assertEqual(details["target_logits"].shape, (4, 4))
+            self.assertEqual(set(details["domain_feature_moments"]), {"before_bottleneck", "after_bottleneck"})
+            loss.backward()
+            self.assertGreater(float(model.rgb_encoder.conv1.weight.grad.norm()), 0.)
+            self.assertGreater(float(model.nir_encoder.conv1.weight.grad.norm()), 0.)
+
     def test_same_class_map_filters_source_and_target_has_no_labels(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"JMDA_DATA_ROOT": ""}):
             lists = fixture(Path(temporary))

@@ -14,7 +14,7 @@ from torch import nn
 
 from vds2raw.adaptation import (
     METHODS, AdaptationDataset, AdaptationModel, PairedEpochSampler,
-    cdan_entropy_loss, prepare_statistics, reverse, optimizer_groups, resolve_training_settings,
+    cdan_entropy_loss, prepare_statistics, reverse, optimizer_groups, resolve_training_settings, source_classification_weights,
 )
 from vds2raw.dataset import CLASS_NAMES, PARTITIONS
 from vds2raw import train_adaptation
@@ -209,6 +209,102 @@ class TinyModel(AdaptationModel):
 
 
 class TrainingProtocolTests(unittest.TestCase):
+    def test_mcc_v2_uses_source_only_class_weights_and_delays_confusion_updates(self):
+        args = train_adaptation.parser().parse_args(["--method", "mcc", "--profile", "mcc_v2"])
+        resolve_training_settings(args)
+        self.assertEqual((args.epochs, args.lr, args.trade_off, args.ais_lr_multiplier), (100, .002, .5, 5.))
+        self.assertEqual((args.adaptation_warmup_epochs, args.adaptation_ramp_epochs), (20, 20))
+        self.assertTrue(args.source_class_balance)
+        samples = [(str(i), label) for label, count in enumerate((16, 41, 59)) for i in range(count)]
+        counts, weights = source_classification_weights(samples, 3)
+        self.assertEqual(counts.tolist(), [16, 41, 59])
+        torch.testing.assert_close(weights, torch.tensor([116/48, 116/123, 116/177]))
+        logits = torch.tensor([[0., 1., 0.], [1., 0., 0.], [1., 0., 0.]], requires_grad=True)
+        labels = torch.arange(3)
+        weighted = nn.functional.cross_entropy(logits, labels, weight=weights)
+        losses = nn.functional.cross_entropy(logits, labels, reduction="none")
+        torch.testing.assert_close(weighted, (losses*weights).sum()/weights.sum())
+        args.steps_per_epoch = 8
+        model = AdaptationModel("mcc", pretrained=False)
+        model.source_class_weights = weights
+        source = {"rgb": torch.randn(4, 3, 64, 64), "nir": torch.randn(4, 1, 64, 64),
+                  "ais": torch.randn(4, 13), "ais_mask": torch.ones(4, 13), "label": torch.tensor([0, 1, 2, 2])}
+        target = {key: torch.randn_like(value) if key != "ais_mask" else value.clone()
+                  for key, value in source.items() if key != "label"}
+        for update, expected in ((159, 0.), (160, .5/160), (319, .5)):
+            _, details = model.objective(source, target, update, 800, args)
+            self.assertAlmostEqual(details["transfer_weight"], expected)
+            torch.testing.assert_close(details["source_ce"], nn.functional.cross_entropy(details["source_logits"], source["label"], weight=weights))
+        with self.assertRaisesRegex(ValueError, "reserved for MCC"):
+            wrong = train_adaptation.parser().parse_args(["--method", "mdd", "--profile", "mcc_v2"])
+            resolve_training_settings(wrong)
+
+    def test_cdan_optimized_adds_validation_controls_without_changing_uda_loss_parameters(self):
+        args = train_adaptation.parser().parse_args(["--method", "cdan", "--profile", "optimized"])
+        resolve_training_settings(args)
+        self.assertEqual((args.lr, args.trade_off, args.epochs, args.ais_lr_multiplier), (.0005, 1., 100, 1.))
+        self.assertEqual((args.val_plateau_patience, args.val_plateau_factor, args.val_plateau_min_scale), (12, .5, .1))
+        self.assertEqual((args.early_stopping_monitor, args.early_stopping_patience, args.early_stopping_min_epochs),
+                         ("cross_entropy", 20, 50))
+        baseline = train_adaptation.parser().parse_args(["--method", "cdan"])
+        resolve_training_settings(baseline)
+        self.assertEqual((baseline.val_plateau_patience, baseline.early_stopping_patience), (0, 0))
+        for method in ("dann", "deepcoral", "mdd", "mcc"):
+            other = train_adaptation.parser().parse_args(["--method", method, "--profile", "optimized"])
+            resolve_training_settings(other)
+            self.assertEqual((other.val_plateau_patience, other.early_stopping_patience), (0, 0))
+
+    def test_plateau_cuts_survive_inverse_and_cosine_scheduler_steps_with_group_ratios_intact(self):
+        for kind in ("inverse", "cosine"):
+            args = SimpleNamespace(val_plateau_patience=2, val_plateau_factor=.5,
+                                   val_plateau_min_scale=.25, validation_loss_min_delta=0.)
+            controller = train_adaptation.ValidationLossControl(args)
+            optimizer = torch.optim.SGD([{"params": [nn.Parameter(torch.ones(()))], "lr": .1},
+                                         {"params": [nn.Parameter(torch.ones(()))], "lr": 1.}])
+            reference = torch.optim.SGD([{"params": [nn.Parameter(torch.ones(()))], "lr": .1},
+                                         {"params": [nn.Parameter(torch.ones(()))], "lr": 1.}])
+            build = (lambda opt: torch.optim.lr_scheduler.LambdaLR(opt, lambda step: (1+.001*step)**(-.75))) if kind == "inverse" else (
+                     lambda opt: torch.optim.lr_scheduler.CosineAnnealingLR(opt, 10))
+            scheduler, reference_scheduler = build(optimizer), build(reference)
+            for epoch in range(1, 9):
+                optimizer.step()
+                reference.step()
+                train_adaptation.step_scaled_scheduler(scheduler, optimizer, controller.lr_scale)
+                reference_scheduler.step()
+                record = controller.observe(1., epoch, optimizer)
+                expected_scale = 1. if epoch < 3 else .5 if epoch < 5 else .25
+                self.assertEqual(record["lr_scale"], expected_scale)
+                for actual, unscaled in zip(optimizer.param_groups, reference.param_groups):
+                    self.assertAlmostEqual(actual["lr"], unscaled["lr"]*expected_scale, places=13)
+                self.assertAlmostEqual(optimizer.param_groups[0]["lr"]/optimizer.param_groups[1]["lr"], .1)
+            # A CE improvement resets stop/plateau counters, even when ACC
+            # has not changed. Plateau LR reductions remain in force.
+            record = controller.observe(.8, 9, optimizer)
+            self.assertEqual((record["CE_bad_epochs"], record["plateau_bad_epochs"], record["lr_scale"]), (0, 0, .25))
+
+    def test_ce_early_stop_respects_minimum_epochs_and_test_still_runs_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture(root)
+            args = train_adaptation.parser().parse_args([
+                "--method", "dann", "--data-root", str(root), "--save-dir", str(root/"output"),
+                "--epochs", "8", "--batch-size", "2", "--max-train-batches", "1", "--lr", "1e-30",
+                "--num-workers", "0", "--cpu-threads", "2", "--no-pretrained", "--skip-audit", "--no-augment",
+                "--device", "cpu", "--early-stopping-monitor", "cross_entropy", "--early-stopping-patience", "2",
+                "--early-stopping-min-epochs", "4", "--val-plateau-patience", "1"])
+            with patch.object(train_adaptation, "AdaptationModel", TinyModel), \
+                 patch.object(train_adaptation, "build_run_provenance", return_value={}):
+                result = train_adaptation.run(args)
+            self.assertEqual(result["completed_epochs"], 4)
+            self.assertEqual(result["selected_epoch"], 1)
+            self.assertTrue(result["stopped_early"])
+            self.assertEqual(result["stop_reason"], "validation_cross_entropy_patience")
+            self.assertEqual(result["test_evaluations"], 1)
+            rows = [json.loads(s) for s in (root/"output/dann_seed42/validation_control.jsonl").read_text().splitlines()]
+            self.assertEqual([row["early_stop"] for row in rows], [False, False, False, True])
+            self.assertEqual(rows[-1]["CE_bad_epochs"], 3)
+            self.assertEqual(result["validation_control"]["final_lr_scale"], .125)
+
     def test_optimized_profiles_have_explicit_budgets_and_keep_cli_overrides(self):
         for method, epochs, trade in (("mdd", 250, .60), ("mcc", 100, .50)):
             args = train_adaptation.parser().parse_args(["--method", method, "--profile", "optimized"])

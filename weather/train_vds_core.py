@@ -31,9 +31,27 @@ from vds2raw.common import better_metrics, build_run_provenance
 from vds2raw.train_adaptation import (
     make_optimizer, move, synchronize, write_json,
     event, evaluate, profile, gradient_diagnostics, feature_norms, validate_diagnostics,
+    ValidationLossControl, step_scaled_scheduler,
 )
 
 TARGETS = ("backlight", "rainy", "foggy", "dark")
+
+
+def resolve_weather_settings(args):
+    defaults = {"epochs": 100, "lr_scheduler": "reference", "adaptation_warmup_epochs": 0,
+                "early_stopping_patience": 0, "early_stopping_min_epochs": 0,
+                "domain_forward": "reference", "log_feature_moments": False}
+    if args.weather_profile == "timing_v2":
+        defaults.update(epochs=40, lr_scheduler="cosine", domain_forward="joint", log_feature_moments=True,
+                        adaptation_ramp_epochs=5, early_stopping_patience=15, early_stopping_min_epochs=20)
+        defaults.update(lr=.00015, trade_off=.20) if args.method == "dann" else defaults.update(lr=.0001, trade_off=.10)
+    for key, value in defaults.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+    resolve_training_settings(args)
+    if args.adaptation_ramp_epochs is None:
+        args.adaptation_ramp_epochs = args.epochs if args.method == "deepcoral" else 0
+    return args
 
 
 class WeatherView(Dataset):
@@ -113,9 +131,7 @@ def run(args):
         raise ValueError("This weather entry supports DANN and Deep CORAL only")
     args.seed = seed_everything(args.seed)
     torch.set_num_threads(args.cpu_threads)
-    resolve_training_settings(args)
-    if args.adaptation_ramp_epochs is None:
-        args.adaptation_ramp_epochs = args.epochs if args.method == "deepcoral" else 0
+    resolve_weather_settings(args)
     datasets, audit = prepare_datasets(args.data_dir, args.target, args.augment)
     source, target, source_eval, target_eval, validation = datasets
     output = Path(args.save_dir).resolve()/f"{args.method}_{args.target}_seed{args.seed}"
@@ -137,11 +153,13 @@ def run(args):
     model = AdaptationModel(args.method, args.weights, not args.no_pretrained,
                             num_classes=classes, use_ais=False, ir_channels=3).to(device)
     optimizer, scheduler, schedule_per_update = make_optimizer(model, args)
+    validation_control = ValidationLossControl(args)
     inputs = list(Path(args.data_dir).glob("*.txt"))+list(Path(args.data_dir).glob("*.tsv"))
     if not args.no_pretrained:
         inputs.append(Path(args.weights))
     config = {"method": args.method, "protocol": "UDA", "source": "sunny", "target": args.target,
               "modalities": ["VIS", "IR"], "core": "vds2raw.adaptation.AdaptationModel",
+              "weather_profile": args.weather_profile, "domain_forward": args.domain_forward,
               "target_training_labels_used": False, "target_test_available": False,
               "selection_partition": "target_val", "evaluation_protocol": "best_target_val_within_budget",
               "architecture": "two independent ImageNet ResNet18 encoders; learned global weights; feature concatenation",
@@ -160,6 +178,7 @@ def run(args):
     print("WEATHER_PROTOCOL: "+json.dumps({**audit, "arguments": vars(args)}), flush=True)
     best_state = best_metrics = best_records = None
     best_epoch = update = stale = 0
+    stop_reason = "max_epochs"
     times, history, peak_reserved = [], [], None
     for epoch in range(1, args.epochs+1):
         for sampler in samplers:
@@ -201,10 +220,12 @@ def run(args):
             event(output, "updates.jsonl", {"epoch": epoch, "update": update, **values,
                   "transfer_weight": details["transfer_weight"], "grl_coefficient": details["grl_coefficient"],
                   "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
+                  "source_ce_unweighted": float(details["source_ce_unweighted"]),
+                  "domain_feature_moments": details["domain_feature_moments"],
                   "modality_weights": model.modality_weights().detach().cpu().tolist(),
                   "learning_rates": [g["lr"] for g in optimizer.param_groups]})
             if scheduler is not None and schedule_per_update:
-                scheduler.step()
+                step_scaled_scheduler(scheduler, optimizer, validation_control.lr_scale)
             if step == 1 or step % 5 == 0 or step == len(loaders[0]):
                 print(f"Epoch [{epoch}/{args.epochs}] batch [{step}/{len(loaders[0])}] "
                       f"source_CE={values['source_ce']:.4f} DA={values['transfer']:.4f} "
@@ -224,17 +245,26 @@ def run(args):
               "training_time_s": times[-1]})
         for ds in (source_eval, target_eval):
             evaluate(model, ds, device, epoch, output, args.eval_batch_size, event_prefix="WEATHER_EVALUATION")
-        metrics, records = evaluate(model, validation, device, epoch, output, args.eval_batch_size,
-                                    event_prefix="WEATHER_EVALUATION")
+        metrics, records, val_details = evaluate(model, validation, device, epoch, output, args.eval_batch_size,
+                                               event_prefix="WEATHER_EVALUATION", return_details=True)
         history.append({"epoch": epoch, **metrics})
         if better_metrics(metrics, best_metrics):
             best_metrics, best_records, best_epoch, stale = dict(metrics), records, epoch, 0
             best_state = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
         else:
             stale += 1
+        control = validation_control.observe(val_details["cross_entropy"], epoch, optimizer)
         if scheduler is not None and not schedule_per_update:
-            scheduler.step()
-        if args.early_stopping_patience and stale >= args.early_stopping_patience:
+            step_scaled_scheduler(scheduler, optimizer, validation_control.lr_scale)
+        stopping_stale = validation_control.bad_epochs if args.early_stopping_monitor == "cross_entropy" else stale
+        stop = bool(args.early_stopping_patience and epoch >= args.early_stopping_min_epochs
+                    and stopping_stale >= args.early_stopping_patience)
+        control.update(epoch=epoch, selected_ACC_epoch=best_epoch, ACC_F1_bad_epochs=stale,
+                       early_stop=stop, next_learning_rates=[g["lr"] for g in optimizer.param_groups])
+        event(output, "validation_control.jsonl", control)
+        print("WEATHER_VALIDATION_CONTROL: "+json.dumps(control), flush=True)
+        if stop:
+            stop_reason = "validation_"+args.early_stopping_monitor+"_patience"
             break
     model.load_state_dict(best_state, strict=True)
     write_json(output/"selected_target_val_predictions.json", best_records)
@@ -253,7 +283,9 @@ def run(args):
     write_json(output/"completeness.json", completeness)
     result = {"method": args.method, "target": args.target, "seed": args.seed, "protocol": "UDA",
               "core": "vds2raw.adaptation.AdaptationModel", "modalities": ["VIS", "IR"],
+              "weather_profile": args.weather_profile, "domain_forward": args.domain_forward,
               "selected_epoch": best_epoch, "completed_epochs": len(history), "optimizer_updates": update,
+              "stop_reason": stop_reason, "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
               "evaluation_protocol": "best_target_val_within_budget", "target_test_available": False,
               "target_training_labels_used": False, "target_val": best_metrics, "complexity": complexity,
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
@@ -268,6 +300,9 @@ def parser():
     p.add_argument("--method", choices=("dann", "deepcoral"), required=True)
     p.add_argument("--data-dir", required=True, help="prepared exact-pair lists")
     p.add_argument("--target", choices=TARGETS, required=True)
+    p.add_argument("--weather-profile", choices=("baseline", "timing_v2"), default="baseline")
+    p.add_argument("--domain-forward", choices=("reference", "joint"), default=None)
+    p.add_argument("--log-feature-moments", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--save-dir", default=str(ROOT/"runs/weather_vds_core"))
     p.add_argument("--weights", default=str(ROOT/"pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"))
     p.add_argument("--epochs", type=int, default=None)
@@ -280,12 +315,14 @@ def parser():
     p.add_argument("--trade-off", type=float)
     p.add_argument("--weight-decay", type=float, default=0.0005)
     p.add_argument("--label-smoothing", type=float, default=0.)
-    p.add_argument("--lr-scheduler", choices=("reference", "constant", "cosine"), default="reference")
+    p.add_argument("--lr-scheduler", choices=("reference", "constant", "cosine"), default=None)
     p.add_argument("--lr-gamma", type=float, default=None)
     p.add_argument("--lr-decay", type=float, default=.75)
-    p.add_argument("--adaptation-warmup-epochs", type=int, default=0)
+    p.add_argument("--adaptation-warmup-epochs", type=int, default=None)
     p.add_argument("--adaptation-ramp-epochs", type=int, default=None)
-    p.add_argument("--early-stopping-patience", type=int, default=0)
+    p.add_argument("--early-stopping-patience", type=int, default=None)
+    p.add_argument("--early-stopping-min-epochs", type=int, default=None)
+    p.add_argument("--early-stopping-monitor", choices=("accuracy_f1", "cross_entropy"), default=None)
     p.add_argument("--max-train-batches", type=int, default=0)
     p.add_argument("--device", default="")
     p.add_argument("--no-pretrained", action="store_true")
@@ -301,7 +338,7 @@ if __name__ == "__main__":
         raise ValueError("Invalid training budget or loader settings")
     if not 0 <= args.label_smoothing < 1 or (args.lr is not None and args.lr <= 0):
         raise ValueError("Invalid smoothing or learning rate")
-    if (args.trade_off is not None and args.trade_off < 0) or min(args.adaptation_warmup_epochs, args.adaptation_ramp_epochs or 0,
-            args.early_stopping_patience, args.weight_decay) < 0:
+    if (args.trade_off is not None and args.trade_off < 0) or min(args.adaptation_warmup_epochs or 0, args.adaptation_ramp_epochs or 0,
+            args.early_stopping_patience or 0, args.early_stopping_min_epochs or 0, args.weight_decay) < 0:
         raise ValueError("Negative adaptation or regularization argument")
     run(args)

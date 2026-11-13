@@ -10,7 +10,7 @@ OUTPUT_ROOT="${VDS2RAW_DA_OUTPUT_ROOT:-$HERE/runs/vds2raw_da}"
 WEIGHTS="${VDS2RAW_DA_WEIGHTS:-$HERE/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth}"
 EPOCHS="${VDS2RAW_DA_EPOCHS:-}"
 PROFILE="${VDS2RAW_DA_PROFILE:-baseline}"
-case "$PROFILE" in baseline|optimized) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
+case "$PROFILE" in baseline|optimized|mcc_v2) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
 BATCH="${VDS2RAW_DA_BATCH_SIZE:-16}"
 METHODS_TEXT="${VDS2RAW_DA_METHODS:-dann deepcoral cdan mdd mcc}"
 SEEDS_TEXT="${VDS2RAW_SEEDS:-42}"
@@ -28,6 +28,7 @@ for method in "${METHODS[@]}"; do
   case "$method" in dann|deepcoral|cdan|mdd|mcc) ;; *) echo "Unknown method: $method" >&2; exit 1 ;; esac
   if [ -n "${METHOD_SEEN[$method]:-}" ]; then echo "Duplicate method: $method" >&2; exit 1; fi
   METHOD_SEEN[$method]=1
+  if [ "$PROFILE" = mcc_v2 ] && [ "$method" != mcc ]; then echo "mcc_v2 only supports MCC" >&2; exit 1; fi
 done
 for seed in "${SEEDS[@]}"; do
   [[ "$seed" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $seed" >&2; exit 1; }

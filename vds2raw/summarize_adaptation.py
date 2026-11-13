@@ -21,6 +21,10 @@ def summarize(root):
         row = {"method": result["method"], "seed": result["seed"],
                "optimization_profile": result.get("optimization_profile", "baseline"),
                "selected_epoch": result["selected_epoch"], "completed_epochs": result["completed_epochs"],
+               "stop_reason": result.get("stop_reason", "not_recorded"),
+               "stopped_early": result.get("stopped_early"),
+               "final_lr_scale": result.get("validation_control", {}).get("final_lr_scale"),
+               "early_stopping_monitor": result.get("validation_control", {}).get("early_stopping_monitor"),
                "selection_partition": "target_val", "protocol": protocol, "smoke": result["smoke"],
                "val_ACC": result["target_val"]["accuracy"],
                **{key: result["target_test"][metric] for key, metric in (
