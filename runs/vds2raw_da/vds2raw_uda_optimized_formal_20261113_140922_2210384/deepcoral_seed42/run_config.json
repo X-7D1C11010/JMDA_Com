@@ -1,0 +1,241 @@
+{
+  "method": "deepcoral",
+  "protocol": "UDA",
+  "modalities": [
+    "RGB",
+    "NIR",
+    "AIS"
+  ],
+  "optimization_profile": "optimized",
+  "planned_optimizer_updates": 800,
+  "training_partitions": [
+    "source_train",
+    "target_train"
+  ],
+  "selection_partition": "target_val",
+  "test_partition": "target_test",
+  "target_training_labels_used": false,
+  "test_selection_bias": false,
+  "classification_supervision": "source_train only; target_train label field is never read",
+  "target_validation_labels_used_for_selection": true,
+  "test_evaluations_for_selection": 0,
+  "test_evaluation_policy": "once after restoring best target_val state",
+  "class_names": [
+    "Cargo",
+    "Fishing",
+    "Sailing & Pleasure"
+  ],
+  "statistics": {
+    "rgb_mean": [
+      104.1385773189484,
+      151.3651573867394,
+      202.25860718419312
+    ],
+    "rgb_std": [
+      23.92844861235615,
+      24.27277502045296,
+      26.47277607798259
+    ],
+    "rgb_min": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rgb_max": [
+      1094.0,
+      1062.0,
+      1057.0
+    ],
+    "nir_mean": [
+      82.76378916583995
+    ],
+    "nir_std": [
+      33.73508320680071
+    ],
+    "nir_min": [
+      0.0
+    ],
+    "nir_max": [
+      1028.0
+    ],
+    "fit_partitions": [
+      "source_train",
+      "target_train"
+    ],
+    "fit_samples": 210,
+    "rule": "statistics fitted only on: source_train + target_train",
+    "ais": {
+      "mean": [
+        0.0,
+        0.0,
+        -1.7622084009881113e-09,
+        -4.309649560965744e-09,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "std": [
+        1.0,
+        1.0,
+        0.9999999997307486,
+        1.0000000239603277,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "standardized_indices": [
+        2,
+        3
+      ],
+      "feature_names": [
+        "heading_sin",
+        "heading_cos",
+        "length_z",
+        "width_z",
+        "nav_<UNKNOWN>",
+        "nav_at anchor",
+        "nav_engaged in fishing",
+        "nav_moored",
+        "nav_reserved for future amendment [hsc]",
+        "nav_restricted maneuverability",
+        "nav_under way sailing",
+        "nav_under way using engine",
+        "nav_unknown value"
+      ],
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "fit_samples": 210,
+      "valid_counts": [
+        120,
+        120,
+        204,
+        204,
+        210,
+        210,
+        210,
+        210,
+        210,
+        210,
+        210,
+        210,
+        210
+      ],
+      "input_dimension": 13,
+      "mask_dimension": 13
+    }
+  },
+  "architecture": "RGB ResNet18 + NIR ResNet18 (mean RGB conv1 initialization) + AIS/mask MLP; weighted concatenation",
+  "adaptation_note": "source CE plus named core DA loss; multimodal feature interface; target_val selected and test held out",
+  "augmentation": "paired padded crop 96, horizontal/vertical flip with AIS heading correction, RGB gain 0.95..1.05; eval deterministic",
+  "model": "AdaptationModel(\n  (rgb_encoder): ResNet(\n    (conv1): Conv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)\n    (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (relu): ReLU(inplace=True)\n    (maxpool): MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)\n    (layer1): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (layer2): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (downsample): Sequential(\n          (0): Conv2d(64, 128, kernel_size=(1, 1), stride=(2, 2), bias=False)\n          (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        )\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (layer3): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (downsample): Sequential(\n          (0): Conv2d(128, 256, kernel_size=(1, 1), stride=(2, 2), bias=False)\n          (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        )\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (layer4): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(256, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (downsample): Sequential(\n          (0): Conv2d(256, 512, kernel_size=(1, 1), stride=(2, 2), bias=False)\n          (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        )\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (avgpool): AdaptiveAvgPool2d(output_size=(1, 1))\n    (fc): Identity()\n  )\n  (nir_encoder): ResNet(\n    (conv1): Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)\n    (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (relu): ReLU(inplace=True)\n    (maxpool): MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)\n    (layer1): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (layer2): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (downsample): Sequential(\n          (0): Conv2d(64, 128, kernel_size=(1, 1), stride=(2, 2), bias=False)\n          (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        )\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (layer3): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (downsample): Sequential(\n          (0): Conv2d(128, 256, kernel_size=(1, 1), stride=(2, 2), bias=False)\n          (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        )\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (layer4): Sequential(\n      (0): BasicBlock(\n        (conv1): Conv2d(256, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (downsample): Sequential(\n          (0): Conv2d(256, 512, kernel_size=(1, 1), stride=(2, 2), bias=False)\n          (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        )\n      )\n      (1): BasicBlock(\n        (conv1): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n        (relu): ReLU(inplace=True)\n        (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\n        (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n      )\n    )\n    (avgpool): AdaptiveAvgPool2d(output_size=(1, 1))\n    (fc): Identity()\n  )\n  (ais_encoder): Sequential(\n    (0): Linear(in_features=26, out_features=128, bias=True)\n    (1): ReLU()\n    (2): Dropout(p=0.1, inplace=False)\n    (3): Linear(in_features=128, out_features=128, bias=True)\n    (4): ReLU()\n  )\n  (bottleneck): Identity()\n  (head): Linear(in_features=1152, out_features=3, bias=True)\n  (mdd): ClassificationMarginDisparityDiscrepancy()\n  (mcc): MinimumClassConfusionLoss()\n)",
+  "gradient_sampling": "last update of each epoch, CE versus weighted adaptation",
+  "optimizer": "SGD",
+  "lr_schedule_per_update": false,
+  "optimizer_groups": [
+    {
+      "lr": 0.0005,
+      "weight_decay": 0.0005,
+      "role": "pretrained_RGB_NIR",
+      "parameters": 22346752,
+      "contains_modality_weights": false
+    },
+    {
+      "lr": 0.005,
+      "weight_decay": 0.0005,
+      "role": "new_layers_AIS_gate",
+      "parameters": 23430,
+      "contains_modality_weights": true
+    }
+  ],
+  "provenance": {
+    "argv": [
+      "/home/lixiang/lx/JMDA_Com/vds2raw/train_adaptation.py",
+      "--method",
+      "deepcoral",
+      "--data-root",
+      "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "--save-dir",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_optimized_formal_20261113_140922_2210384",
+      "--stats-file",
+      "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_optimized_formal_20261113_140922_2210384/normalization_stats.json",
+      "--weights",
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth",
+      "--profile",
+      "optimized",
+      "--batch-size",
+      "16",
+      "--seed",
+      "42",
+      "--num-workers",
+      "2",
+      "--skip-audit"
+    ],
+    "arguments": {
+      "method": "deepcoral",
+      "data_root": "/home/lixiang/lx/VDS2Raw/threeclass_ready",
+      "save_dir": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_optimized_formal_20261113_140922_2210384",
+      "stats_file": "/home/lixiang/lx/JMDA_Com/runs/vds2raw_da/vds2raw_uda_optimized_formal_20261113_140922_2210384/normalization_stats.json",
+      "weights": "/home/lixiang/lx/JMDA_Com/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth",
+      "epochs": 100,
+      "profile": "optimized",
+      "ais_lr_multiplier": 1.0,
+      "batch_size": 16,
+      "num_workers": 2,
+      "cpu_threads": 4,
+      "seed": 42,
+      "lr": 0.0005,
+      "trade_off": 0.3,
+      "weight_decay": 0.0005,
+      "label_smoothing": 0.0,
+      "lr_scheduler": "reference",
+      "lr_gamma": 0.001,
+      "lr_decay": 0.75,
+      "adaptation_warmup_epochs": 0,
+      "adaptation_ramp_epochs": 100,
+      "early_stopping_patience": 0,
+      "max_train_batches": 0,
+      "device": "",
+      "augment": true,
+      "no_pretrained": false,
+      "audit_only": false,
+      "skip_audit": true,
+      "steps_per_epoch": 8
+    },
+    "git_head": "7609c302ba63b6dfa7518a2a7a6f7014f8724a9f",
+    "git_status_short": "?? runs/vds2raw_da/vds2raw_uda_optimized_formal_20261113_140922_2210384/\n?? server_logs/vds2raw_da_launcher/uda_formal_20261113_140922_2210374.log\n?? server_logs/vds2raw_da_launcher/uda_formal_20261113_140922_2210374.pid",
+    "dataset_metadata_sha256": {
+      "dataset_manifest.csv": "27cfbd153c60f8ce1d2175f28a96eea8869cf5f2003d7b1554212731cd7bc3b2",
+      "feature_schema.json": "f92144ea2eee9dcd25fa2a07b99942fd37cd99c987ee98d7c801f45b68d175a9",
+      "build_report.json": "0e9c49c5b720176f5fc18bd65144d15aa2d5a12ffc11f708d22365ef69146933",
+      "band_order_verification.json": "0bd90b9332f4c54491da73d9475a9320bfcf9fba39b23168f40563835a7f6e61",
+      "validation_report.json": "9298b4c3669dc33b4f3bc61e37c618e2b1334d42d0ad712e57f5a6eb9a85aa04"
+    },
+    "explicit_input_sha256": {
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth": "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec",
+      "/home/lixiang/lx/JMDA_Com/pretrained_weights/manifest.json": "f12a6048be0d7c23bae2a723dc9b933ff49fc33b4e9762bc6d1b077ce57f10c5"
+    },
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8"
+  },
+  "code_sha256": {
+    "vds2raw/train_adaptation.py": "f8468e84b9d2fd16bc94ff7ac137ccc3ac69517d500a305ab0264f7f414c9f0e",
+    "vds2raw/adaptation.py": "b34f19c37390d3cc3305ee170fc5f012dc8fd9b87b61463d7bb396e51ce9148d",
+    "vds2raw/dataset.py": "6b56e28acd5f04c7fdcd24b812e8784b0858b70ff9e7dfc62a2122c58b81bcc6",
+    "vds2raw/common.py": "fe4cea621bec46ee261dbadf777d29fcd7fcb68f235254a9ea1edcafa0c52aa4"
+  }
+}
