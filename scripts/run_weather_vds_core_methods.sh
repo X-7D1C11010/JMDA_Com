@@ -9,7 +9,7 @@ DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 WEIGHTS="${WEATHER_VDS_WEIGHTS:-$HERE/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth}"
 EPOCHS="${WEATHER_VDS_EPOCHS:-}"
 PROFILE="${WEATHER_VDS_PROFILE:-baseline}"
-case "$PROFILE" in baseline|timing_v2) ;; *) echo "Unknown weather profile: $PROFILE" >&2; exit 1 ;; esac
+case "$PROFILE" in baseline|timing_v2|bn_stable) ;; *) echo "Unknown weather profile: $PROFILE" >&2; exit 1 ;; esac
 BATCH="${WEATHER_VDS_BATCH_SIZE:-16}"
 if [ -n "$EPOCHS" ]; then
   [[ "$EPOCHS" =~ ^[0-9]+$ ]] && [ "$EPOCHS" -ge 1 ] || { echo "Invalid epochs: $EPOCHS" >&2; exit 1; }
@@ -41,6 +41,8 @@ GPU_ARGS=(--gpus "${JMDA_GPU_CANDIDATES:-0,1}" --min-free-mib "${WEATHER_VDS_MIN
   --max-util-percent "${JMDA_GPU_MAX_UTIL_PERCENT:-10}" --stable-checks "${JMDA_GPU_STABLE_CHECKS:-3}" \
   --poll-seconds "${JMDA_GPU_POLL_SECONDS:-30}")
 FAILED=0
+EXTRA=()
+if [ "${ADAPTATION_MODALITY_DIAGNOSTICS:-0}" = 1 ]; then EXTRA+=(--modality-diagnostics); fi
 for target in "${TARGETS[@]}"; do
   for method in dann deepcoral; do
     TAG="${method}_${target}_seed${SEED}"
@@ -52,7 +54,7 @@ for target in "${TARGETS[@]}"; do
       "$PYTHON_BIN" -B -u "$HERE/weather/train_vds_core.py" --method "$method" --target "$target" \
       --data-dir "$LISTS" --save-dir "$RUN_DIR" --weights "$WEIGHTS" \
       --weather-profile "$PROFILE" "${EPOCH_ARGS[@]}" --batch-size "$BATCH" --seed "$SEED" \
-      --num-workers "${WEATHER_VDS_NUM_WORKERS:-2}" --eval-batch-size "${WEATHER_VDS_EVAL_BATCH_SIZE:-32}" > "$LOG" 2>&1; then
+      --num-workers "${WEATHER_VDS_NUM_WORKERS:-2}" --eval-batch-size "${WEATHER_VDS_EVAL_BATCH_SIZE:-32}" "${EXTRA[@]}" > "$LOG" 2>&1; then
       echo "    completed: $TAG"
       "$PYTHON_BIN" -B "$HERE/weather/summarize_vds_core.py" --results-dir "$RUN_DIR"
     else

@@ -1,0 +1,217 @@
+{
+  "method": "deepcoral",
+  "target": "backlight",
+  "seed": 42,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "weather_profile": "bn_stable",
+  "domain_forward": "reference",
+  "selected_epoch": 1,
+  "completed_epochs": 4,
+  "optimizer_updates": 4,
+  "stop_reason": "max_epochs",
+  "planned_optimizer_updates": 8,
+  "freeze_bn_after_epochs": 3,
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 1,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.25,
+      "precision_macro": 0.0625,
+      "recall_macro": 0.25,
+      "f1_macro": 0.1,
+      "val_present_classes": 4,
+      "val_total_classes": 4,
+      "val_class_coverage": 1.0,
+      "val_samples": 4,
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ]
+    },
+    "zeroed": {
+      "VIS": {
+        "metrics": {
+          "accuracy": 0.25,
+          "precision_macro": 0.0625,
+          "recall_macro": 0.25,
+          "f1_macro": 0.1,
+          "val_present_classes": 4,
+          "val_total_classes": 4,
+          "val_class_coverage": 1.0,
+          "val_samples": 4,
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        },
+        "ACC_drop": 0.0
+      },
+      "IR": {
+        "metrics": {
+          "accuracy": 0.25,
+          "precision_macro": 0.0625,
+          "recall_macro": 0.25,
+          "f1_macro": 0.1,
+          "val_present_classes": 4,
+          "val_total_classes": 4,
+          "val_class_coverage": 1.0,
+          "val_samples": 4,
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        },
+        "ACC_drop": 0.0
+      }
+    }
+  },
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.25,
+    "precision_macro": 0.0625,
+    "recall_macro": 0.25,
+    "f1_macro": 0.1,
+    "val_present_classes": 4,
+    "val_total_classes": 4,
+    "val_class_coverage": 1.0,
+    "val_samples": 4,
+    "confusion_matrix": [
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 9.1871,
+    "latency_std_ms": 3.4413,
+    "latency_p50_ms": 10.9823,
+    "latency_p95_ms": 12.0821,
+    "throughput_samples_s": 108.85,
+    "total_params": 22357126,
+    "trainable_params": 22357126,
+    "inference_GFLOPs": 7.254253568,
+    "total_train_time_s": 3.5309471,
+    "train_epoch_mean_s": 0.882736775,
+    "peak_train_reserved_gb": 0.810546875,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "modality_weights_at_selected_epoch": [
+    0.5001108050346375,
+    0.49988916516304016
+  ],
+  "smoke": true
+}

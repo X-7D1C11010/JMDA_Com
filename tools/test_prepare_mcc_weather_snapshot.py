@@ -105,7 +105,7 @@ class SnapshotTests(unittest.TestCase):
 
 @unittest.skipUnless(bash_executable(), "Bash is needed for dispatch checks")
 class PendingDispatchTests(unittest.TestCase):
-    def capture(self, scope):
+    def capture(self, scope=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             scripts = root/"runtime/scripts"
@@ -126,8 +126,11 @@ class PendingDispatchTests(unittest.TestCase):
             environment = os.environ.copy()
             environment.update(JMDA_PROJECT_ROOT=(root/"project").as_posix(),
                                VDS2RAW_DA_METHODS="mdd dann deepcoral", VDS2RAW_SEEDS="7",
-                               VDS2RAW_DA_EPOCHS="250", WEATHER_VDS_EPOCHS="100")
-            result = subprocess.run([bash_executable(), str(scripts/source.name), "42", scope],
+                               VDS2RAW_DA_EPOCHS="250", WEATHER_VDS_EPOCHS="100", PYTHON="true")
+            arguments = [bash_executable(), str(scripts/source.name), "42"]
+            if scope is not None:
+                arguments.append(scope)
+            result = subprocess.run(arguments,
                                     env=environment, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             return [row for row in result.stdout.splitlines() if row.startswith(("VDS|", "WEATHER|"))]
@@ -141,6 +144,28 @@ class PendingDispatchTests(unittest.TestCase):
 
     def test_append_mode_runs_only_cdan_without_repeating_mcc_or_weather(self):
         self.assertEqual(self.capture("cdan-only"), ["VDS|cdan|optimized|42 43 44 45 46|unset"])
+
+    def test_v3_keeps_cdan_and_runs_single_factor_weather_comparison(self):
+        self.assertEqual(self.capture("v3"), [
+            "VDS|mcc|mcc_v3|42 43 44 45 46|unset",
+            "VDS|cdan|optimized|42 43 44 45 46|unset",
+            "WEATHER|baseline|backlight rainy foggy dark|42|unset",
+            "WEATHER|bn_stable|backlight rainy foggy dark|42|unset",
+        ])
+
+    def test_vds_only_runs_latest_mcc_and_cdan_five_seeds_without_weather(self):
+        self.assertEqual(self.capture("vds-only"), [
+            "VDS|mcc|mcc_v3|42 43 44 45 46|unset",
+            "VDS|cdan|optimized|42 43 44 45 46|unset",
+        ])
+
+    def test_default_scope_prioritizes_vds_five_seeds_then_continues_weather(self):
+        self.assertEqual(self.capture(), [
+            "VDS|mcc|mcc_v3|42 43 44 45 46|unset",
+            "VDS|cdan|optimized|42 43 44 45 46|unset",
+            "WEATHER|baseline|backlight rainy foggy dark|42|unset",
+            "WEATHER|bn_stable|backlight rainy foggy dark|42|unset",
+        ])
 
 
 if __name__ == "__main__":

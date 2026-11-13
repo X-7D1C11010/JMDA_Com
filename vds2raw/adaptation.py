@@ -40,13 +40,19 @@ def resolve_training_settings(args):
                 "early_stopping_patience": 0, "early_stopping_monitor": "accuracy_f1",
                 "early_stopping_min_epochs": 0, "validation_loss_min_delta": 0.0001,
                 "source_class_balance": False, "domain_forward": "reference", "log_feature_moments": False,
-                "adaptation_warmup_epochs": 0}
-    if args.profile == "mcc_v2":
+                "adaptation_warmup_epochs": 0, "feature_normalization": "none",
+                "validation_control_start_epoch": 1, "modality_diagnostics": False}
+    if args.profile in {"mcc_v2", "mcc_v3"}:
         if args.method != "mcc":
-            raise ValueError("mcc_v2 is reserved for MCC")
+            raise ValueError(f"{args.profile} is reserved for MCC")
         settings.update(trade_off=0.50, ais_lr_multiplier=5.0,
                         adaptation_warmup_epochs=20, adaptation_ramp_epochs=20,
                         source_class_balance=True, log_feature_moments=True)
+        if args.profile == "mcc_v3":
+            settings.update(feature_normalization="l2", val_plateau_patience=12,
+                            early_stopping_monitor="cross_entropy", early_stopping_patience=25,
+                            early_stopping_min_epochs=60, validation_control_start_epoch=40,
+                            modality_diagnostics=True)
     if args.profile == "optimized" and args.method in {"mdd", "mcc"}:
         settings.update(ais_lr_multiplier=5.0)
         if args.method == "mdd":
@@ -220,7 +226,8 @@ def cdan_entropy_loss(features, logits, discriminator, source_count, coefficient
 
 
 class AdaptationModel(nn.Module):
-    def __init__(self, method, weights_path=None, pretrained=True, *, num_classes=3, use_ais=True, ir_channels=1):
+    def __init__(self, method, weights_path=None, pretrained=True, *, num_classes=3, use_ais=True, ir_channels=1,
+                 feature_normalization="none"):
         super().__init__()
         if method not in METHODS:
             raise ValueError(method)
@@ -228,6 +235,10 @@ class AdaptationModel(nn.Module):
         if num_classes < 2 or ir_channels not in (1, 3):
             raise ValueError("Invalid class count or infrared channel count")
         self.num_classes, self.use_ais = num_classes, bool(use_ais)
+        if feature_normalization not in {"none", "l2"}:
+            raise ValueError("Unknown feature normalization")
+        self.feature_normalization = feature_normalization
+        self.eval_disabled_modalities = ()
         self.register_buffer("source_class_weights", None)
         self.feature_names = ("RGB", "NIR", "AIS") if use_ais else ("VIS", "IR")
         self.input_keys = ("rgb", "nir", "ais", "ais_mask") if use_ais else ("rgb", "nir")
@@ -304,6 +315,16 @@ class AdaptationModel(nn.Module):
         if getattr(self, "use_ais", True):
             branches += (self.ais_encoder(torch.cat((batch["ais"]*batch["ais_mask"], batch["ais_mask"]), 1)),)
         self.last_features = tuple(branch.detach() for branch in branches)
+        if getattr(self, "feature_normalization", "none") == "l2":
+            # Give each modality the same norm before learned weighting,
+            # without fitting any validation/test statistics.
+            branches = tuple(F.normalize(v, dim=1, eps=1e-8)*math.sqrt(512.) for v in branches)
+        self.last_normalized_features = tuple(branch.detach() for branch in branches)
+        disabled = getattr(self, "eval_disabled_modalities", ())
+        if disabled:
+            if self.training:
+                raise RuntimeError("Feature ablation is restricted to evaluation")
+            branches = tuple(torch.zeros_like(v) if i in disabled else v for i, v in enumerate(branches))
         weights = self.modality_weights()
         fused = torch.cat([len(branches)*weights[i]*v for i, v in enumerate(branches)], 1)
         self.last_fused = fused.detach()
@@ -320,13 +341,17 @@ class AdaptationModel(nn.Module):
             fs = self.encode(source)
             source_fused = self.last_fused if log_moments else None
             source_branches = self.last_features
+            source_normalized = self.last_normalized_features
             ys = self.head(fs)
             ft = self.encode(target)
             if log_moments:
                 fused_for_diagnostics = torch.cat((source_fused, self.last_fused))
             target_branches = self.last_features
+            target_normalized = self.last_normalized_features
             yt = self.head(ft)
             self.last_features = tuple(torch.cat((s, t)) for s, t in zip(source_branches, target_branches))
+            self.last_normalized_features = (tuple(torch.cat((s, t)) for s, t in zip(source_normalized, target_normalized))
+                                             if getattr(self, "feature_normalization", "none") == "l2" else self.last_features)
             features, logits = torch.cat((fs, ft)), torch.cat((ys, yt))
         else:
             # MDD/MCC released examples concatenate the domains before BN.

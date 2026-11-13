@@ -209,6 +209,55 @@ class TinyModel(AdaptationModel):
 
 
 class TrainingProtocolTests(unittest.TestCase):
+    def test_mcc_v3_controls_start_after_ramp_and_normalization_is_sample_local(self):
+        args = train_adaptation.parser().parse_args(["--method", "mcc", "--profile", "mcc_v3"])
+        resolve_training_settings(args)
+        self.assertEqual((args.adaptation_warmup_epochs, args.adaptation_ramp_epochs), (20, 20))
+        self.assertEqual((args.feature_normalization, args.validation_control_start_epoch), ("l2", 40))
+        self.assertEqual((args.early_stopping_min_epochs, args.early_stopping_patience), (60, 25))
+        model = TinyModel("dann")
+        model.feature_normalization = "l2"
+        batch = {"rgb": torch.randn(4, 3, 16, 16), "nir": torch.randn(4, 1, 16, 16),
+                 "ais": torch.randn(4, 13), "ais_mask": torch.ones(4, 13)}
+        model(batch)
+        for values in model.last_normalized_features:
+            torch.testing.assert_close(values.norm(dim=1), torch.full((4,), 512.**.5))
+
+    def test_validation_controls_do_not_reduce_lr_or_keep_warmup_loss_as_best(self):
+        args = SimpleNamespace(val_plateau_patience=1, val_plateau_factor=.5, val_plateau_min_scale=.1,
+                               validation_loss_min_delta=.0001, validation_control_start_epoch=40)
+        control = train_adaptation.ValidationLossControl(args)
+        optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=.01)
+        for epoch in range(1, 40):
+            record = control.observe(.1+epoch, epoch, optimizer)
+            self.assertFalse(record["monitor_active"])
+            self.assertIsNone(record["best_validation_CE"])
+            self.assertEqual(optimizer.param_groups[0]["lr"], .01)
+            json.dumps(record, allow_nan=False)
+        record = control.observe(2., 40, optimizer)
+        self.assertTrue(record["monitor_active"])
+        self.assertEqual((record["best_validation_CE_epoch"], record["best_validation_CE"]), (40, 2.))
+        record = control.observe(3., 41, optimizer)
+        self.assertTrue(record["lr_reduced"])
+        self.assertEqual(optimizer.param_groups[0]["lr"], .005)
+
+    def test_modality_diagnostics_use_only_validation_restore_mask_and_ignore_label_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture(root)
+            images, ais = prepare_statistics(root, root/"statistics.json")
+            validation = AdaptationDataset(root, "target_val", images, ais)
+            model = TinyModel("dann").eval()
+            before = {name: value.clone() for name, value in model.state_dict().items()}
+            report = train_adaptation.validation_modality_diagnostics(model, validation, torch.device("cpu"), 1, root/"output")
+            self.assertTrue(report["inference_independent_of_label_and_path"])
+            self.assertEqual(set(report["zeroed"]), {"RGB", "NIR", "AIS"})
+            self.assertEqual(model.eval_disabled_modalities, ())
+            for name, value in model.state_dict().items():
+                torch.testing.assert_close(value, before[name])
+            for path in (root/"output").rglob("predictions.jsonl"):
+                self.assertTrue(all(json.loads(s)["partition"] == "target_val" for s in path.read_text().splitlines()))
+
     def test_mcc_v2_uses_source_only_class_weights_and_delays_confusion_updates(self):
         args = train_adaptation.parser().parse_args(["--method", "mcc", "--profile", "mcc_v2"])
         resolve_training_settings(args)

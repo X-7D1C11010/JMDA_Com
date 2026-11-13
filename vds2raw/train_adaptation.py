@@ -97,6 +97,7 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
     num_classes = getattr(model, "num_classes", 3)
     names = getattr(model, "feature_names", ("RGB", "NIR", "AIS"))
     feature_sums = [0.0]*len(names)
+    normalized_sums = [0.0]*len(names)
     losses = []
     labelled = dataset.labelled
     with torch.no_grad():
@@ -112,6 +113,8 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
             predicted.extend(guesses.tolist())
             for index, values in enumerate(model.last_features):
                 feature_sums[index] += float(values.norm(dim=1).sum())
+            for index, values in enumerate(getattr(model, "last_normalized_features", model.last_features)):
+                normalized_sums[index] += float(values.norm(dim=1).sum())
             for index, (path, guess, scores, raw_logits) in enumerate(zip(
                     batch["path"], guesses.tolist(), probabilities.tolist(), logits.cpu().tolist())):
                 row = {"epoch": epoch, "partition": dataset.partition, "sample_index": len(records),
@@ -134,6 +137,7 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
                "mean_entropy": statistics.mean(-sum(p*math.log(max(p, 1e-12)) for p in row["probabilities"]) for row in records),
                "predicted_class_counts": [predicted.count(i) for i in range(num_classes)],
                "feature_norms": dict(zip(names, (x/len(dataset) for x in feature_sums))),
+               "normalized_feature_norms": dict(zip(names, (x/len(dataset) for x in normalized_sums))),
                "modality_weights": model.modality_weights().detach().cpu().tolist()}
     if labelled:
         details.update(cross_entropy=statistics.mean(losses),
@@ -245,6 +249,7 @@ class ValidationLossControl:
         self.patience = args.val_plateau_patience
         self.factor, self.min_scale = args.val_plateau_factor, args.val_plateau_min_scale
         self.min_delta = args.validation_loss_min_delta
+        self.start_epoch = getattr(args, "validation_control_start_epoch", 1)
         self.best_loss, self.best_loss_epoch = math.inf, 0
         self.bad_epochs = self.plateau_bad_epochs = 0
         self.lr_scale = 1.0
@@ -253,6 +258,10 @@ class ValidationLossControl:
         loss = float(loss)
         if not math.isfinite(loss):
             raise FloatingPointError("Nonfinite target_val cross entropy")
+        if epoch < self.start_epoch:
+            return {"validation_cross_entropy": loss, "monitor_active": False,
+                    "CE_improved": False, "best_validation_CE": None, "best_validation_CE_epoch": None,
+                    "CE_bad_epochs": 0, "plateau_bad_epochs": 0, "lr_scale": self.lr_scale, "lr_reduced": False}
         improved = loss < self.best_loss-self.min_delta
         if improved:
             self.best_loss, self.best_loss_epoch = loss, epoch
@@ -268,7 +277,7 @@ class ValidationLossControl:
                 group["lr"] *= self.lr_scale/old_scale
             reduced = self.lr_scale < old_scale
             self.plateau_bad_epochs = 0
-        return {"validation_cross_entropy": loss, "CE_improved": improved,
+        return {"validation_cross_entropy": loss, "monitor_active": True, "CE_improved": improved,
                 "best_validation_CE": self.best_loss, "best_validation_CE_epoch": self.best_loss_epoch,
                 "CE_bad_epochs": self.bad_epochs, "plateau_bad_epochs": self.plateau_bad_epochs,
                 "lr_scale": self.lr_scale, "lr_reduced": reduced}
@@ -289,6 +298,51 @@ def step_scaled_scheduler(scheduler, optimizer, scale):
     if scale != 1.0:
         for group in optimizer.param_groups:
             group["lr"] *= scale
+
+
+def validation_modality_diagnostics(model, dataset, device, selected_epoch, directory, batch_size=64):
+    """Validation-only feature sensitivity and label-metadata independence checks.
+
+    Zeroed features are an ablation of this trained fusion network, not an
+    independently trained single-modality model. No test data are evaluated.
+    """
+    model.eval()
+    names = getattr(model, "feature_names", ("RGB", "NIR", "AIS"))
+    previous = getattr(model, "eval_disabled_modalities", ())
+    result = {"partition": dataset.partition, "selected_epoch": selected_epoch,
+              "kind": "zeroed_feature_sensitivity", "independent_single_modality_models": False}
+    if dataset.partition != "target_val":
+        raise ValueError("Modality diagnostics may only use target_val")
+    (directory/"modality_diagnostics/full").mkdir(parents=True, exist_ok=True)
+    try:
+        model.eval_disabled_modalities = ()
+        sample = move(next(iter(DataLoader(dataset, batch_size=min(8, len(dataset)), num_workers=0,
+                                          generator=torch.Generator().manual_seed(0)))), device)
+        with torch.no_grad():
+            original = model(sample)
+            altered = dict(sample)
+            altered["label"] = (sample["label"]+1) % getattr(model, "num_classes", 3)
+            altered["path"] = ["metadata_changed"]*len(sample["path"])
+            independent = torch.equal(original, model(altered))
+        if not independent:
+            raise RuntimeError("Inference depends on label/path metadata")
+        result["inference_independent_of_label_and_path"] = independent
+        full, _ = evaluate(model, dataset, device, selected_epoch, directory/"modality_diagnostics/full",
+                           batch_size, event_prefix="MODALITY_DIAGNOSTIC")
+        result["full"] = full
+        result["zeroed"] = {}
+        for index, name in enumerate(names):
+            model.eval_disabled_modalities = (index,)
+            folder = directory/"modality_diagnostics"/f"zero_{name}"
+            folder.mkdir(parents=True, exist_ok=True)
+            metrics, _ = evaluate(model, dataset, device, selected_epoch, folder, batch_size,
+                                  event_prefix="MODALITY_DIAGNOSTIC")
+            result["zeroed"][name] = {"metrics": metrics,
+                                      "ACC_drop": full["accuracy"]-metrics["accuracy"]}
+    finally:
+        model.eval_disabled_modalities = previous
+    write_json(directory/"modality_diagnostics.json", result)
+    return result
 
 
 def run(args):
@@ -335,6 +389,7 @@ def run(args):
                for index, (ds, sampler) in enumerate(zip((source, target), samplers))]
     device = torch.device(args.device if args.device else "cuda" if torch.cuda.is_available() else "cpu")
     model = AdaptationModel(args.method, args.weights, not args.no_pretrained).to(device)
+    model.feature_normalization = args.feature_normalization
     source_counts, source_weights = source_classification_weights(source.samples, model.num_classes if hasattr(model, "num_classes") else 3)
     if args.source_class_balance:
         model.source_class_weights = source_weights.to(device)
@@ -364,6 +419,7 @@ def run(args):
                                "plateau_patience": args.val_plateau_patience,
                                "plateau_factor": args.val_plateau_factor,
                                "plateau_min_scale": args.val_plateau_min_scale,
+                               "control_start_epoch": args.validation_control_start_epoch,
                                "early_stopping_monitor": args.early_stopping_monitor,
                                "early_stopping_patience": args.early_stopping_patience,
                                "early_stopping_min_epochs": args.early_stopping_min_epochs,
@@ -426,6 +482,7 @@ def run(args):
                       "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
                       "source_ce_unweighted": float(details["source_ce_unweighted"]),
                       "domain_feature_moments": details["domain_feature_moments"],
+                      "normalized_feature_norms": feature_norms(model.last_normalized_features, len(source_batch["label"])),
                       "modality_weights": model.modality_weights().detach().cpu().tolist(),
                       "learning_rates": [g["lr"] for g in optimizer.param_groups]}
             event(run_dir, "updates.jsonl", record)
@@ -475,6 +532,13 @@ def run(args):
             break
     # No test loader or test predictions exist in the optimization loop.
     model.load_state_dict(best_state, strict=True)
+    sensitivity = None
+    if args.modality_diagnostics:
+        (run_dir/"modality_diagnostics/full").mkdir(parents=True, exist_ok=True)
+        sensitivity = validation_modality_diagnostics(model, validation, device, best_epoch, run_dir)
+        if sensitivity["full"] != best_metrics:
+            raise RuntimeError("Restored validation metrics differ from selected metrics")
+        model.load_state_dict(best_state, strict=True)
     test = AdaptationDataset(root, "target_test", images, ais)
     test_metrics, test_records = evaluate(model, test, device, best_epoch, run_dir)
     artifacts = save_prediction_artifacts(run_dir, "target_test", test_records, DISPLAY_CLASS_NAMES)
@@ -512,8 +576,10 @@ def run(args):
               "stop_reason": stop_reason, "stopped_early": len(history) < args.epochs,
               "validation_control": {**config["validation_control"],
                                      "final_lr_scale": validation_control.lr_scale,
-                                     "best_validation_CE": validation_control.best_loss,
+                                     "best_validation_CE": validation_control.best_loss if math.isfinite(validation_control.best_loss) else None,
                                      "best_validation_CE_epoch": validation_control.best_loss_epoch},
+              "feature_normalization": args.feature_normalization,
+              "modality_diagnostics": sensitivity,
               "target_val": best_metrics, "target_test": test_metrics, "complexity": complexity,
               "prediction_artifacts": artifacts, "diagnostics_dir": str(run_dir),
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
@@ -532,7 +598,9 @@ def parser():
     p.add_argument("--stats-file", default="")
     p.add_argument("--weights", default=str(ROOT/"pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"))
     p.add_argument("--epochs", type=int, default=None)
-    p.add_argument("--profile", choices=("baseline", "optimized", "mcc_v2"), default="baseline")
+    p.add_argument("--profile", choices=("baseline", "optimized", "mcc_v2", "mcc_v3"), default="baseline")
+    p.add_argument("--feature-normalization", choices=("none", "l2"), default=None)
+    p.add_argument("--modality-diagnostics", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--source-class-balance", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--domain-forward", choices=("reference", "joint"), default=None)
     p.add_argument("--log-feature-moments", action=argparse.BooleanOptionalAction, default=None)
@@ -558,6 +626,7 @@ def parser():
     p.add_argument("--val-plateau-factor", type=float, default=None)
     p.add_argument("--val-plateau-min-scale", type=float, default=None)
     p.add_argument("--validation-loss-min-delta", type=float, default=None)
+    p.add_argument("--validation-control-start-epoch", type=int, default=None)
     p.add_argument("--max-train-batches", type=int, default=0)
     p.add_argument("--device", default="")
     p.add_argument("--no-augment", dest="augment", action="store_false")
@@ -585,6 +654,6 @@ if __name__ == "__main__":
         raise ValueError("Validation plateau minimum scale must be in (0,1]")
     if min(args.adaptation_warmup_epochs or 0, args.adaptation_ramp_epochs or 0, args.early_stopping_patience or 0,
            args.early_stopping_min_epochs or 0, args.val_plateau_patience or 0, args.validation_loss_min_delta or 0,
-           args.max_train_batches, args.weight_decay) < 0:
+           args.validation_control_start_epoch or 0, args.max_train_batches, args.weight_decay) < 0:
         raise ValueError("Negative schedule or regularization argument")
     run(args)

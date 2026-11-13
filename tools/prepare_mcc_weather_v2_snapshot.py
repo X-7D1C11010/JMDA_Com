@@ -22,6 +22,7 @@ REQUIRED_FILES = EXTRA_FILES + (
     "tools/run_on_available_gpu.py", "tools/prepare_paired_protocol_lists.py",
     "tools/uda_multimodal.py", "tools/uda_data.py", "tools/data_paths.py",
     "tools/reproducibility.py", "tools/efficiency_common.py", "tools/classification_metrics.py",
+    "tools/audit_vds2raw_inputs.py",
     "Transfer-Learning-Library/tllib/alignment/mdd.py",
     "Transfer-Learning-Library/tllib/self_training/mcc.py",
 )

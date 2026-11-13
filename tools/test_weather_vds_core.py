@@ -63,6 +63,23 @@ class WeatherTests(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(2)
 
+    def test_bn_stable_changes_only_running_stat_policy_relative_to_baseline(self):
+        parsed = []
+        for profile in ("baseline", "bn_stable"):
+            args = weather.parser().parse_args(["--method", "dann", "--target", "backlight", "--data-dir", ".", "--weather-profile", profile])
+            weather.resolve_weather_settings(args)
+            parsed.append(args)
+        for key in ("epochs", "lr", "trade_off", "lr_scheduler", "domain_forward", "adaptation_ramp_epochs", "early_stopping_patience"):
+            self.assertEqual(getattr(parsed[0], key), getattr(parsed[1], key))
+        model = AdaptationModel("dann", pretrained=False, use_ais=False, ir_channels=3).train()
+        self.assertFalse(weather.apply_batchnorm_policy(model, 3, 3)["BN_running_stats_frozen"])
+        policy = weather.apply_batchnorm_policy(model, 4, 3)
+        self.assertTrue(policy["BN_running_stats_frozen"])
+        self.assertFalse(model.rgb_encoder.bn1.training)
+        self.assertFalse(model.bottleneck[1].training)
+        self.assertTrue(model.rgb_encoder.bn1.weight.requires_grad)
+        self.assertTrue(model.discriminator[2].training)
+
     def test_timing_v2_has_separate_weather_defaults_and_keeps_explicit_cli_settings(self):
         for method, lr, trade in (("dann", .00015, .20), ("deepcoral", .0001, .10)):
             args = weather.parser().parse_args(["--method", method, "--target", "dark", "--data-dir", ".",

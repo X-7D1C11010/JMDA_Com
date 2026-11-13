@@ -4,9 +4,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_ROOT="${JMDA_PROJECT_ROOT:?Start with scripts/run_server_mcc_weather_v2_background.sh}"
 SEED="${1:-42}"
-SCOPE="${2:-all}"
+SCOPE="${2:-v3}"
 [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $SEED" >&2; exit 1; }
-case "$SCOPE" in all|cdan-only) ;; *) echo "usage: $0 SEED {all|cdan-only}" >&2; exit 1 ;; esac
+case "$SCOPE" in all|cdan-only|v3|vds-only) ;; *) echo "usage: $0 SEED {all|cdan-only|v3|vds-only}" >&2; exit 1 ;; esac
 export VDS2RAW_DATA_ROOT="${VDS2RAW_DATA_ROOT:-/home/lixiang/lx/VDS2Raw/threeclass_ready}"
 export JMDA_DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 export VDS2RAW_DA_OUTPUT_ROOT="${VDS2RAW_DA_OUTPUT_ROOT:-$PROJECT_ROOT/runs/vds2raw_da}"
@@ -22,6 +22,37 @@ export VDS2RAW_DA_BATCH_SIZE=16
 export VDS2RAW_NUM_WORKERS=2
 unset VDS2RAW_DA_EPOCHS
 FAILED=0
+if [ "$SCOPE" = v3 ] || [ "$SCOPE" = vds-only ]; then
+  AUDIT_DIR="$PROJECT_ROOT/results/adaptation_v3_$(date +%Y%m%d_%H%M%S)_$$"
+  "${PYTHON:-python}" -B -u "$HERE/tools/audit_vds2raw_inputs.py" --data-root "$VDS2RAW_DATA_ROOT" --output "$AUDIT_DIR/dataset_input_audit.json"
+  export ADAPTATION_MODALITY_DIAGNOSTICS=1
+  export VDS2RAW_DA_METHODS=mcc
+  export VDS2RAW_DA_PROFILE=mcc_v3
+  export VDS2RAW_SEEDS="42 43 44 45 46"
+  echo "[$SCOPE VDS 1/2] MCC v3 seeds=$VDS2RAW_SEEDS: normalized modality features and post-ramp validation controls."
+  if ! bash "$HERE/scripts/run_vds2raw_da_methods.sh" formal; then FAILED=$((FAILED+1)); fi
+  export VDS2RAW_DA_METHODS=cdan
+  export VDS2RAW_DA_PROFILE=optimized
+  echo "[$SCOPE VDS 2/2] CDAN seeds=$VDS2RAW_SEEDS: unchanged training parameters, validation modality diagnostics added."
+  if ! bash "$HERE/scripts/run_vds2raw_da_methods.sh" formal; then FAILED=$((FAILED+1)); fi
+  if [ "$SCOPE" = vds-only ]; then
+    echo "VDS-only finished: failed groups=$FAILED (MCC x5 + CDAN x5, seeds 42-46; no weather tasks)."
+    [ "$FAILED" -eq 0 ]
+    exit
+  fi
+  export WEATHER_VDS_BATCH_SIZE=16
+  export WEATHER_VDS_NUM_WORKERS=2
+  export WEATHER_VDS_TARGETS="backlight rainy foggy dark"
+  unset WEATHER_VDS_EPOCHS
+  for WEATHER_VDS_PROFILE in baseline bn_stable; do
+    export WEATHER_VDS_PROFILE
+    echo "[v3 weather] $WEATHER_VDS_PROFILE, identical baseline LR/budget/loss settings; BN is the only changed factor."
+    if ! bash "$HERE/scripts/run_weather_vds_core_methods.sh" "$SEED"; then FAILED=$((FAILED+1)); fi
+  done
+  echo "v3 finished: failed groups=$FAILED (MCC x5 + CDAN x5, seeds 42-46; then weather baseline x8 + BN-stable x8, seed $SEED)."
+  [ "$FAILED" -eq 0 ]
+  exit
+fi
 if [ "$SCOPE" = all ]; then
   export VDS2RAW_DA_METHODS=mcc
   export VDS2RAW_DA_PROFILE=mcc_v2

@@ -32,6 +32,7 @@ from vds2raw.train_adaptation import (
     make_optimizer, move, synchronize, write_json,
     event, evaluate, profile, gradient_diagnostics, feature_norms, validate_diagnostics,
     ValidationLossControl, step_scaled_scheduler,
+    validation_modality_diagnostics,
 )
 
 TARGETS = ("backlight", "rainy", "foggy", "dark")
@@ -40,11 +41,16 @@ TARGETS = ("backlight", "rainy", "foggy", "dark")
 def resolve_weather_settings(args):
     defaults = {"epochs": 100, "lr_scheduler": "reference", "adaptation_warmup_epochs": 0,
                 "early_stopping_patience": 0, "early_stopping_min_epochs": 0,
-                "domain_forward": "reference", "log_feature_moments": False}
+                "domain_forward": "reference", "log_feature_moments": False,
+                "freeze_bn_after_epochs": -1}
     if args.weather_profile == "timing_v2":
         defaults.update(epochs=40, lr_scheduler="cosine", domain_forward="joint", log_feature_moments=True,
                         adaptation_ramp_epochs=5, early_stopping_patience=15, early_stopping_min_epochs=20)
         defaults.update(lr=.00015, trade_off=.20) if args.method == "dann" else defaults.update(lr=.0001, trade_off=.10)
+    elif args.weather_profile == "bn_stable":
+        # Single-factor change relative to the baseline: after three epochs
+        # keep BN running statistics fixed, with affine/conv weights trainable.
+        defaults.update(freeze_bn_after_epochs=3, log_feature_moments=True, modality_diagnostics=True)
     for key, value in defaults.items():
         if getattr(args, key, None) is None:
             setattr(args, key, value)
@@ -52,6 +58,18 @@ def resolve_weather_settings(args):
     if args.adaptation_ramp_epochs is None:
         args.adaptation_ramp_epochs = args.epochs if args.method == "deepcoral" else 0
     return args
+
+
+def apply_batchnorm_policy(model, epoch, freeze_after):
+    frozen = freeze_after >= 0 and epoch > freeze_after
+    count = 0
+    if frozen:
+        for module in model.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                module.eval()
+                count += 1
+    return {"BN_running_stats_frozen": frozen, "frozen_BN_modules": count,
+            "affine_parameters_trainable": True}
 
 
 class WeatherView(Dataset):
@@ -184,6 +202,7 @@ def run(args):
         for sampler in samplers:
             sampler.epoch = epoch-1
         model.train()
+        bn_policy = apply_batchnorm_policy(model, epoch, args.freeze_bn_after_epochs)
         synchronize(device)
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
@@ -222,6 +241,7 @@ def run(args):
                   "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
                   "source_ce_unweighted": float(details["source_ce_unweighted"]),
                   "domain_feature_moments": details["domain_feature_moments"],
+                  "normalized_feature_norms": feature_norms(model.last_normalized_features, len(sb["label"]), names=("VIS", "IR")),
                   "modality_weights": model.modality_weights().detach().cpu().tolist(),
                   "learning_rates": [g["lr"] for g in optimizer.param_groups]})
             if scheduler is not None and schedule_per_update:
@@ -243,6 +263,7 @@ def run(args):
               "source_unique_samples": len(seen_source), "target_unique_samples": len(seen_target),
               "source_train_accuracy": source_correct/source_seen, "target_training_labels_used": False,
               "training_time_s": times[-1]})
+        event(output, "normalization_policy.jsonl", {"epoch": epoch, **bn_policy})
         for ds in (source_eval, target_eval):
             evaluate(model, ds, device, epoch, output, args.eval_batch_size, event_prefix="WEATHER_EVALUATION")
         metrics, records, val_details = evaluate(model, validation, device, epoch, output, args.eval_batch_size,
@@ -267,6 +288,13 @@ def run(args):
             stop_reason = "validation_"+args.early_stopping_monitor+"_patience"
             break
     model.load_state_dict(best_state, strict=True)
+    sensitivity = None
+    if args.modality_diagnostics:
+        sensitivity = validation_modality_diagnostics(model, validation, device, best_epoch, output,
+                                                       batch_size=args.eval_batch_size)
+        if sensitivity["full"] != best_metrics:
+            raise RuntimeError("Restored validation metrics differ from selected metrics")
+        model.load_state_dict(best_state, strict=True)
     write_json(output/"selected_target_val_predictions.json", best_records)
     complexity = profile(model, validation, device, times, peak_reserved)
     for key in ("total_params", "trainable_params", "inference_GFLOPs", "total_train_time_s", "train_epoch_mean_s", "latency_mean_ms", "throughput_samples_s"):
@@ -286,6 +314,7 @@ def run(args):
               "weather_profile": args.weather_profile, "domain_forward": args.domain_forward,
               "selected_epoch": best_epoch, "completed_epochs": len(history), "optimizer_updates": update,
               "stop_reason": stop_reason, "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
+              "freeze_bn_after_epochs": args.freeze_bn_after_epochs, "modality_diagnostics": sensitivity,
               "evaluation_protocol": "best_target_val_within_budget", "target_test_available": False,
               "target_training_labels_used": False, "target_val": best_metrics, "complexity": complexity,
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
@@ -300,7 +329,9 @@ def parser():
     p.add_argument("--method", choices=("dann", "deepcoral"), required=True)
     p.add_argument("--data-dir", required=True, help="prepared exact-pair lists")
     p.add_argument("--target", choices=TARGETS, required=True)
-    p.add_argument("--weather-profile", choices=("baseline", "timing_v2"), default="baseline")
+    p.add_argument("--weather-profile", choices=("baseline", "timing_v2", "bn_stable"), default="baseline")
+    p.add_argument("--freeze-bn-after-epochs", type=int, default=None)
+    p.add_argument("--modality-diagnostics", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--domain-forward", choices=("reference", "joint"), default=None)
     p.add_argument("--log-feature-moments", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--save-dir", default=str(ROOT/"runs/weather_vds_core"))
@@ -338,6 +369,8 @@ if __name__ == "__main__":
         raise ValueError("Invalid training budget or loader settings")
     if not 0 <= args.label_smoothing < 1 or (args.lr is not None and args.lr <= 0):
         raise ValueError("Invalid smoothing or learning rate")
+    if args.freeze_bn_after_epochs is not None and args.freeze_bn_after_epochs < -1:
+        raise ValueError("BN freeze epoch must be -1 (off) or nonnegative")
     if (args.trade_off is not None and args.trade_off < 0) or min(args.adaptation_warmup_epochs or 0, args.adaptation_ramp_epochs or 0,
             args.early_stopping_patience or 0, args.early_stopping_min_epochs or 0, args.weight_decay) < 0:
         raise ValueError("Negative adaptation or regularization argument")

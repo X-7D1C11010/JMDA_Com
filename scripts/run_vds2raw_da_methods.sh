@@ -10,7 +10,7 @@ OUTPUT_ROOT="${VDS2RAW_DA_OUTPUT_ROOT:-$HERE/runs/vds2raw_da}"
 WEIGHTS="${VDS2RAW_DA_WEIGHTS:-$HERE/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth}"
 EPOCHS="${VDS2RAW_DA_EPOCHS:-}"
 PROFILE="${VDS2RAW_DA_PROFILE:-baseline}"
-case "$PROFILE" in baseline|optimized|mcc_v2) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
+case "$PROFILE" in baseline|optimized|mcc_v2|mcc_v3) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
 BATCH="${VDS2RAW_DA_BATCH_SIZE:-16}"
 METHODS_TEXT="${VDS2RAW_DA_METHODS:-dann deepcoral cdan mdd mcc}"
 SEEDS_TEXT="${VDS2RAW_SEEDS:-42}"
@@ -28,7 +28,7 @@ for method in "${METHODS[@]}"; do
   case "$method" in dann|deepcoral|cdan|mdd|mcc) ;; *) echo "Unknown method: $method" >&2; exit 1 ;; esac
   if [ -n "${METHOD_SEEN[$method]:-}" ]; then echo "Duplicate method: $method" >&2; exit 1; fi
   METHOD_SEEN[$method]=1
-  if [ "$PROFILE" = mcc_v2 ] && [ "$method" != mcc ]; then echo "mcc_v2 only supports MCC" >&2; exit 1; fi
+  if [[ "$PROFILE" = mcc_v* ]] && [ "$method" != mcc ]; then echo "$PROFILE only supports MCC" >&2; exit 1; fi
 done
 for seed in "${SEEDS[@]}"; do
   [[ "$seed" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $seed" >&2; exit 1; }
@@ -38,9 +38,10 @@ export JMDA_DETERMINISTIC="${JMDA_DETERMINISTIC:-1}"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export TORCH_HOME="${TORCH_HOME:-$HERE/pretrained_weights/torch}"
 EXTRA=()
+if [ "${ADAPTATION_MODALITY_DIAGNOSTICS:-0}" = 1 ]; then EXTRA+=(--modality-diagnostics); fi
 if [ "$MODE" = smoke ]; then
   EPOCHS=2
-  EXTRA=(--max-train-batches 1 --adaptation-warmup-epochs 0 --adaptation-ramp-epochs 1)
+  EXTRA+=(--max-train-batches 1 --adaptation-warmup-epochs 0 --adaptation-ramp-epochs 1)
 fi
 if [ ! -f "$WEIGHTS" ]; then
   "$PYTHON_BIN" -B -u "$HERE/tools/download_official_uda_weights.py" --only resnet18
