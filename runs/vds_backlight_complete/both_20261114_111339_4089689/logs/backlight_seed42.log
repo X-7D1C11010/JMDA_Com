@@ -1,0 +1,28 @@
+Run directory: /home/lixiang/lx/JMDA_Com/runs/vds_backlight_complete/both_20261114_111339_4089689/weather/backlight_seed42
+[DOWNLOAD] Qualified weather ConvNeXt-Small candidates: https://download.pytorch.org/models/convnext_small-0c510722.pth
+Traceback (most recent call last):
+  File "/home/lixiang/lx/JMDA_Com/experiment_updates/mcc_weather_v2_d6797477ea6bb2f6/weather/run_qualified_backlight.py", line 148, in <module>
+    main()
+  File "/home/lixiang/lx/JMDA_Com/experiment_updates/mcc_weather_v2_d6797477ea6bb2f6/weather/run_qualified_backlight.py", line 117, in main
+    ensure_weight("convnext_small", root/"pretrained_weights")
+  File "/home/lixiang/lx/JMDA_Com/experiment_updates/mcc_weather_v2_d6797477ea6bb2f6/tools/download_official_uda_weights.py", line 168, in ensure_weight
+    return download(spec, os.path.abspath(output_dir))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/lx/JMDA_Com/experiment_updates/mcc_weather_v2_d6797477ea6bb2f6/tools/download_official_uda_weights.py", line 146, in download
+    download_https(spec["url"], temporary)
+  File "/home/lixiang/lx/JMDA_Com/experiment_updates/mcc_weather_v2_d6797477ea6bb2f6/tools/download_official_uda_weights.py", line 112, in download_https
+    chunk = response.read(1024 * 1024)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/http/client.py", line 478, in read
+    s = self.fp.read(amt)
+        ^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/socket.py", line 718, in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/ssl.py", line 1314, in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lixiang/envs/lx_pytorch/lib/python3.11/ssl.py", line 1166, in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
