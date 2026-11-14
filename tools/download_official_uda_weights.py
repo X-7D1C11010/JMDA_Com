@@ -42,7 +42,15 @@ WEIGHTS = (
     },
 )
 
-WEIGHTS_BY_ID = {spec["id"]: spec for spec in WEIGHTS}
+OPTIONAL_WEIGHTS = ({
+    "id": "convnext_small",
+    "method": "Qualified weather ConvNeXt-Small candidates",
+    "url": "https://download.pytorch.org/models/convnext_small-0c510722.pth",
+    "relative_path": os.path.join("torch", "hub", "checkpoints", "convnext_small-0c510722.pth"),
+    "sha256_prefix": "0c510722",
+},)
+
+WEIGHTS_BY_ID = {spec["id"]: spec for spec in WEIGHTS+OPTIONAL_WEIGHTS}
 
 
 def sha256(path):

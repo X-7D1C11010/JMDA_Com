@@ -12,13 +12,16 @@ sys.path.insert(0, str(ROOT))
 
 import numpy as np
 from vds2raw.dataset import audit_dataset, TRAIN_PARTITIONS
+from vds2raw.adaptation import ais_input_protocol
 
 
-def audit_inputs(root):
+def audit_inputs(root, ais_fields="heading_size"):
     root = Path(root).resolve()
     audit = audit_dataset(root)
     schema = json.loads((root/"feature_schema.json").read_text(encoding="utf-8"))
     names = schema["ais_feature_names"]
+    protocol = ais_input_protocol(schema, ais_fields)
+    indices = protocol["feature_indices"]
     if (names[:4] != ["heading_sin", "heading_cos", "length_z", "width_z"]
             or len(names) != 13 or not all(name.startswith("nav_") for name in names[4:])):
         raise ValueError("Unexpected AIS fields; inspect the feature schema before training")
@@ -29,13 +32,13 @@ def audit_inputs(root):
         partition, label = path.relative_to(root/"samples").parts[:2]
         with np.load(path, allow_pickle=False) as sample:
             images[hashlib.sha256(sample["rgb"].tobytes()+sample["nir"].tobytes()).hexdigest()].append((partition, label))
-            ais_groups[hashlib.sha256(sample["ais"].tobytes()+sample["ais_mask"].tobytes()).hexdigest()].append((partition, label))
+            ais_groups[hashlib.sha256(sample["ais"][indices].tobytes()+sample["ais_mask"][indices].tobytes()).hexdigest()].append((partition, label))
     cross = lambda groups: [items for items in groups.values() if len({partition for partition, _ in items}) > 1]
     image_cross, ais_cross = cross(images), cross(ais_groups)
     if image_cross:
         raise ValueError(f"Found {len(image_cross)} exact RGB+NIR duplicate groups across partitions")
-    audit.update(model_ais_feature_names=names, excluded_ais_proxy_features=[],
-                 ais_mask_usage="13 validity values plus 13 gated features",
+    audit.update(model_ais_feature_names=protocol["feature_names"], excluded_ais_proxy_features=protocol["excluded_features"],
+                 ais_protocol=protocol, ais_mask_usage=f"{len(indices)} retained validity values plus {len(indices)} gated features",
                  exact_image_duplicate_groups_across_partitions=0,
                  exact_AIS_duplicate_groups_across_partitions=len(ais_cross),
                  AIS_duplicate_groups_with_different_labels=sum(len({label for _, label in items}) > 1 for items in ais_cross),
@@ -48,8 +51,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--ais-fields", choices=("heading_size", "full13"), default="heading_size")
     args = parser.parse_args()
-    report = audit_inputs(args.data_root)
+    report = audit_inputs(args.data_root, args.ais_fields)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")

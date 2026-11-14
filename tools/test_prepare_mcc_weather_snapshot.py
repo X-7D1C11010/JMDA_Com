@@ -105,7 +105,7 @@ class SnapshotTests(unittest.TestCase):
 
 @unittest.skipUnless(bash_executable(), "Bash is needed for dispatch checks")
 class PendingDispatchTests(unittest.TestCase):
-    def capture(self, scope=None):
+    def capture(self, scope=None, expected_exit=0):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             scripts = root/"runtime/scripts"
@@ -117,29 +117,33 @@ class PendingDispatchTests(unittest.TestCase):
             shutil.copyfile(source, scripts/source.name)
             (scripts/"run_vds2raw_da_methods.sh").write_text(
                 '#!/usr/bin/env bash\n'
+                '[[ "$VDS2RAW_AIS_FIELDS" = heading_size ]] || exit 23\n'
                 'printf "VDS|%s|%s|%s|%s\\n" "$VDS2RAW_DA_METHODS" "$VDS2RAW_DA_PROFILE" '
                 '"$VDS2RAW_SEEDS" "${VDS2RAW_DA_EPOCHS-unset}"\n', encoding="utf-8")
             (scripts/"run_weather_vds_core_methods.sh").write_text(
                 '#!/usr/bin/env bash\n'
-                'printf "WEATHER|%s|%s|%s|%s\\n" "$WEATHER_VDS_PROFILE" "$WEATHER_VDS_TARGETS" '
-                '"$1" "${WEATHER_VDS_EPOCHS-unset}"\n', encoding="utf-8")
+                'printf "WEATHER|%s|%s|%s|%s|%s\\n" "$WEATHER_VDS_PROFILE" "$WEATHER_VDS_TARGETS" '
+                '"$1" "${WEATHER_VDS_EPOCHS-unset}" "${WEATHER_VDS_METHODS:-dann deepcoral}"\n', encoding="utf-8")
             environment = os.environ.copy()
             environment.update(JMDA_PROJECT_ROOT=(root/"project").as_posix(),
                                VDS2RAW_DA_METHODS="mdd dann deepcoral", VDS2RAW_SEEDS="7",
+                               VDS2RAW_AIS_FIELDS="full13",
                                VDS2RAW_DA_EPOCHS="250", WEATHER_VDS_EPOCHS="100", PYTHON="true")
             arguments = [bash_executable(), str(scripts/source.name), "42"]
             if scope is not None:
                 arguments.append(scope)
             result = subprocess.run(arguments,
                                     env=environment, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.returncode, expected_exit, result.stderr)
+            if expected_exit:
+                self.assertIn("did not pass the local seed42 screen", result.stderr)
             return [row for row in result.stdout.splitlines() if row.startswith(("VDS|", "WEATHER|"))]
 
     def test_full_queue_includes_optimized_cdan_five_seeds_and_no_completed_vds_methods(self):
         self.assertEqual(self.capture("all"), [
             "VDS|mcc|mcc_v2|42|unset",
             "VDS|cdan|optimized|42 43 44 45 46|unset",
-            "WEATHER|timing_v2|backlight rainy foggy dark|42|unset",
+            "WEATHER|timing_v2|backlight rainy foggy dark|42|unset|dann deepcoral",
         ])
 
     def test_append_mode_runs_only_cdan_without_repeating_mcc_or_weather(self):
@@ -149,23 +153,31 @@ class PendingDispatchTests(unittest.TestCase):
         self.assertEqual(self.capture("v3"), [
             "VDS|mcc|mcc_v3|42 43 44 45 46|unset",
             "VDS|cdan|optimized|42 43 44 45 46|unset",
-            "WEATHER|baseline|backlight rainy foggy dark|42|unset",
-            "WEATHER|bn_stable|backlight rainy foggy dark|42|unset",
+            "WEATHER|baseline|backlight rainy foggy dark|42|unset|dann deepcoral",
+            "WEATHER|bn_stable|backlight rainy foggy dark|42|unset|dann deepcoral",
         ])
 
     def test_vds_only_runs_latest_mcc_and_cdan_five_seeds_without_weather(self):
         self.assertEqual(self.capture("vds-only"), [
             "VDS|mcc|mcc_v3|42 43 44 45 46|unset",
-            "VDS|cdan|optimized|42 43 44 45 46|unset",
+            "VDS|cdan|cdan_safe_v4|42 43 44 45 46|unset",
         ])
 
-    def test_default_scope_prioritizes_vds_five_seeds_then_continues_weather(self):
+    def test_default_scope_only_dispatches_locally_verified_vds_candidates(self):
         self.assertEqual(self.capture(), [
             "VDS|mcc|mcc_v3|42 43 44 45 46|unset",
-            "VDS|cdan|optimized|42 43 44 45 46|unset",
-            "WEATHER|baseline|backlight rainy foggy dark|42|unset",
-            "WEATHER|bn_stable|backlight rainy foggy dark|42|unset",
+            "VDS|cdan|cdan_safe_v4|42 43 44 45 46|unset",
         ])
+
+    def test_rejected_weather_queue_fails_before_dispatching_any_training(self):
+        self.assertEqual(self.capture("v4", expected_exit=2), [])
+
+    def test_background_launcher_rejects_weather_before_creating_snapshot_or_job(self):
+        script = Path(__file__).resolve().parents[1]/"scripts/run_server_mcc_weather_v2_background.sh"
+        result = subprocess.run([bash_executable(), str(script), "42", "v4"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("No background task was started", result.stderr)
+        self.assertNotIn("PID=", result.stdout)
 
 
 if __name__ == "__main__":

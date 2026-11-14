@@ -20,6 +20,7 @@ def summarize(root):
             raise ValueError(f"UDA result lacks its label-free training contract: {path}")
         row = {"method": result["method"], "seed": result["seed"],
                "optimization_profile": result.get("optimization_profile", "baseline"),
+               "ais_protocol": result.get("ais_protocol", "full13"),
                "selected_epoch": result["selected_epoch"], "completed_epochs": result["completed_epochs"],
                "stop_reason": result.get("stop_reason", "not_recorded"),
                "stopped_early": result.get("stopped_early"),
@@ -43,6 +44,8 @@ def summarize(root):
         raise ValueError("Do not merge historical SDA and new UDA results into one summary")
     if len({row["optimization_profile"] for row in rows}) != 1:
         raise ValueError("Do not merge baseline and optimized configurations into one summary")
+    if len({row["ais_protocol"] for row in rows}) != 1:
+        raise ValueError("Do not merge heading/size AIS with historical navigation-status inputs")
     output = root/"summary"
     output.mkdir(exist_ok=True)
     with (output/"runs.csv").open("w", encoding="utf-8-sig", newline="") as stream:
@@ -54,6 +57,7 @@ def summarize(root):
         selected = [row for row in rows if row["method"] == method]
         row = {"method": method, "protocol": selected[0]["protocol"],
                "optimization_profile": selected[0]["optimization_profile"],
+               "ais_protocol": selected[0]["ais_protocol"],
                "seeds": " ".join(str(x["seed"]) for x in selected), "num_seeds": len(selected)}
         for key in ("ACC", "Precision_macro", "Recall_macro", "F1_macro"):
             values = [x[key] for x in selected]

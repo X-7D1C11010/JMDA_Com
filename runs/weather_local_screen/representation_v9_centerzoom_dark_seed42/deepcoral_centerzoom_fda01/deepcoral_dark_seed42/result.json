@@ -1,0 +1,459 @@
+{
+  "method": "deepcoral",
+  "target": "dark",
+  "seed": 42,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "optimizer": "SGD",
+  "weather_profile": "baseline",
+  "domain_forward": "reference",
+  "image_backbone": "convnext_small",
+  "freeze_image_encoders": false,
+  "encoder_training_scope": "last_stages",
+  "unit_method_features": false,
+  "classifier_layout": "reference",
+  "selected_epoch": 1,
+  "completed_epochs": 30,
+  "optimizer_updates": 930,
+  "stop_reason": "screening_epoch_limit",
+  "planned_optimizer_updates": 1860,
+  "freeze_bn_after_epochs": -1,
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 1,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.3,
+      "precision_macro": 0.10101010101010101,
+      "recall_macro": 0.11679174484052533,
+      "f1_macro": 0.09782348720401818,
+      "val_present_classes": 8,
+      "val_total_classes": 8,
+      "val_class_coverage": 1.0,
+      "val_samples": 120,
+      "confusion_matrix": [
+        [
+          4,
+          0,
+          17,
+          0,
+          0,
+          5,
+          0,
+          0
+        ],
+        [
+          5,
+          0,
+          14,
+          0,
+          0,
+          1,
+          1,
+          2
+        ],
+        [
+          0,
+          0,
+          32,
+          0,
+          0,
+          2,
+          0,
+          7
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          2
+        ],
+        [
+          1,
+          0,
+          3,
+          0,
+          0,
+          1,
+          0,
+          6
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          8
+        ],
+        [
+          0,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          1,
+          0,
+          4,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    },
+    "zeroed": {
+      "VIS": {
+        "metrics": {
+          "accuracy": 0.25,
+          "precision_macro": 0.09755244755244755,
+          "recall_macro": 0.09849906191369606,
+          "f1_macro": 0.09334935897435898,
+          "val_present_classes": 8,
+          "val_total_classes": 8,
+          "val_class_coverage": 1.0,
+          "val_samples": 120,
+          "confusion_matrix": [
+            [
+              4,
+              0,
+              9,
+              0,
+              0,
+              13,
+              0,
+              0
+            ],
+            [
+              7,
+              0,
+              11,
+              0,
+              0,
+              2,
+              2,
+              1
+            ],
+            [
+              0,
+              0,
+              26,
+              0,
+              0,
+              9,
+              0,
+              6
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              2
+            ],
+            [
+              1,
+              0,
+              5,
+              0,
+              0,
+              2,
+              0,
+              3
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              8
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              2
+            ],
+            [
+              1,
+              0,
+              4,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.04999999999999999
+      },
+      "IR": {
+        "metrics": {
+          "accuracy": 0.25833333333333336,
+          "precision_macro": 0.056919642857142856,
+          "recall_macro": 0.09627110694183864,
+          "f1_macro": 0.06232028312320283,
+          "val_present_classes": 8,
+          "val_total_classes": 8,
+          "val_class_coverage": 1.0,
+          "val_samples": 120,
+          "confusion_matrix": [
+            [
+              1,
+              0,
+              24,
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              1,
+              0,
+              21,
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              5,
+              0,
+              30,
+              0,
+              0,
+              0,
+              0,
+              6
+            ],
+            [
+              0,
+              0,
+              3,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              9,
+              0,
+              0,
+              0,
+              0,
+              2
+            ],
+            [
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              7
+            ],
+            [
+              0,
+              0,
+              3,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              5,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.04166666666666663
+      }
+    }
+  },
+  "freeze_bn_scope": "all",
+  "feature_normalization": "unit",
+  "domain_running_stats": false,
+  "auxiliary_source_weight": 0.0,
+  "screening_only": true,
+  "planned_epochs": 60,
+  "input_augmentation": {
+    "FDA_beta": 0.01,
+    "FDA_probability": 0.5,
+    "source_zoom_min_area": 0.25,
+    "source_zoom_probability": 0.75
+  },
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.3,
+    "precision_macro": 0.10101010101010101,
+    "recall_macro": 0.11679174484052533,
+    "f1_macro": 0.09782348720401818,
+    "val_present_classes": 8,
+    "val_total_classes": 8,
+    "val_class_coverage": 1.0,
+    "val_samples": 120,
+    "confusion_matrix": [
+      [
+        4,
+        0,
+        17,
+        0,
+        0,
+        5,
+        0,
+        0
+      ],
+      [
+        5,
+        0,
+        14,
+        0,
+        0,
+        1,
+        1,
+        2
+      ],
+      [
+        0,
+        0,
+        32,
+        0,
+        0,
+        2,
+        0,
+        7
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        2
+      ],
+      [
+        1,
+        0,
+        3,
+        0,
+        0,
+        1,
+        0,
+        6
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        8
+      ],
+      [
+        0,
+        0,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        1,
+        0,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 17.5598,
+    "latency_std_ms": 2.4884,
+    "latency_p50_ms": 16.6345,
+    "latency_p95_ms": 22.9704,
+    "throughput_samples_s": 56.95,
+    "total_params": 98921674,
+    "trainable_params": 28594186,
+    "inference_GFLOPs": 34.7318016,
+    "total_train_time_s": 238.2882712000001,
+    "train_epoch_mean_s": 7.942942373333337,
+    "peak_train_reserved_gb": 1.533203125,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "modality_weights_at_selected_epoch": [
+    0.40027496218681335,
+    0.5997250080108643
+  ],
+  "smoke": false
+}

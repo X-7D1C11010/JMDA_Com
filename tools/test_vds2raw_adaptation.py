@@ -72,6 +72,51 @@ class DatasetAndSamplerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 AdaptationDataset(root, "target_val", images, ais, augment=True)
 
+    def test_heading_size_projection_removes_navigation_values_and_masks_before_fit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture(root)
+            images, ais = prepare_statistics(root, root/"safe_statistics.json", "heading_size")
+            ds = AdaptationDataset(root, "source_train", images, ais)
+            before = ds[0]
+            self.assertEqual((ais["input_dimension"], ais["mask_dimension"]), (4, 4))
+            self.assertEqual(ais["feature_names"], ["heading_sin", "heading_cos", "length_z", "width_z"])
+            self.assertEqual(len(ais["excluded_features"]), 9)
+            self.assertEqual(before["ais"].shape, (4,))
+            for path in (root/"samples").rglob("*.npz"):
+                with np.load(path) as item:
+                    contents = {key: item[key] for key in item.files}
+                contents["ais"][4:] = np.arange(9)*1000
+                contents["ais_mask"][4:] = 0
+                np.savez(path, **contents)
+            _, after_stats = prepare_statistics(root, root/"safe_statistics.json", "heading_size")
+            self.assertEqual(ais, after_stats)
+            after = AdaptationDataset(root, "source_train", images, after_stats)[0]
+            for key in ("rgb", "nir", "ais", "ais_mask"):
+                torch.testing.assert_close(before[key], after[key], rtol=0, atol=0)
+            model = AdaptationModel("mcc", pretrained=False, ais_dimensions=4).eval()
+            self.assertEqual(model.ais_encoder[0].in_features, 8)
+            batch = {key: value.unsqueeze(0) for key, value in before.items() if torch.is_tensor(value)}
+            with torch.no_grad():
+                prediction = model(batch)
+                changed = {key: value.unsqueeze(0) for key, value in after.items() if torch.is_tensor(value)}
+                torch.testing.assert_close(prediction, model(changed), rtol=0, atol=0)
+            batch["ais"] = torch.zeros(1, 13)
+            with self.assertRaisesRegex(ValueError, "protocol"):
+                model(batch)
+
+    def test_safe_target_can_have_label_field_physically_removed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture(root)
+            images, ais = prepare_statistics(root, root/"statistics.json", "heading_size")
+            target = AdaptationDataset(root, "target_train", images, ais)
+            with np.load(target.paths[0]) as item:
+                contents = {key: item[key] for key in item.files if key != "label"}
+            np.savez(target.paths[0], **contents)
+            self.assertNotIn("label", target[0])
+            self.assertEqual(target[0]["ais_mask"].shape, (4,))
+
     def test_flips_change_heading_and_keep_registered_native_images(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -197,18 +242,51 @@ class ObjectiveTests(unittest.TestCase):
 
 
 class TinyModel(AdaptationModel):
-    def __init__(self, method, *_args):
+    def __init__(self, method, *_args, ais_dimensions=13):
         nn.Module.__init__(self)
         self.method = method
+        self.ais_dimensions = ais_dimensions
         self.rgb_encoder = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(3, 8))
         self.nir_encoder = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(1, 8))
-        self.ais_encoder = nn.Sequential(nn.Linear(26, 8), nn.ReLU())
+        self.ais_encoder = nn.Sequential(nn.Linear(2*ais_dimensions, 8), nn.ReLU())
         self.modality_logits = nn.Parameter(torch.zeros(3))
         self.bottleneck = nn.Identity()
         self.head, self.discriminator = nn.Linear(24, 3), nn.Linear(24, 1)
 
 
 class TrainingProtocolTests(unittest.TestCase):
+    def test_safe_cdan_preset_matches_validation_selected_heading_size_trial(self):
+        args = train_adaptation.parser().parse_args(["--method", "cdan", "--profile", "cdan_safe_v4"])
+        resolve_training_settings(args)
+        self.assertEqual(args.ais_fields, "heading_size")
+        self.assertEqual((args.lr, args.trade_off, args.ais_lr_multiplier), (.0002, .5, 5.))
+        self.assertEqual((args.feature_normalization, args.source_class_balance), ("l2", True))
+        self.assertEqual((args.adaptation_warmup_epochs, args.adaptation_ramp_epochs, args.validation_control_start_epoch), (20, 20, 40))
+        self.assertEqual((args.early_stopping_min_epochs, args.early_stopping_patience), (60, 25))
+
+    def test_validation_only_screen_never_constructs_or_evaluates_target_test(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture(root)
+            args = train_adaptation.parser().parse_args([
+                "--method", "dann", "--data-root", str(root), "--save-dir", str(root/"output"),
+                "--epochs", "2", "--batch-size", "2", "--max-train-batches", "1", "--validation-only",
+                "--num-workers", "0", "--cpu-threads", "2", "--device", "cpu", "--no-pretrained", "--skip-audit"])
+            original = train_adaptation.AdaptationDataset
+            def dataset(*values, **kwargs):
+                self.assertNotEqual(values[1], "target_test")
+                return original(*values, **kwargs)
+            with patch.object(train_adaptation, "AdaptationDataset", side_effect=dataset), \
+                 patch.object(train_adaptation, "AdaptationModel", TinyModel):
+                result = train_adaptation.run(args)
+            self.assertIsNone(result["target_test"])
+            self.assertEqual(result["test_evaluations"], 0)
+            directory = root/"output/dann_seed42"
+            self.assertTrue((directory/"validation_result.json").is_file())
+            self.assertFalse((directory/"result.json").exists())
+            evaluations = [json.loads(s) for s in (directory/"evaluation.jsonl").read_text().splitlines()]
+            self.assertNotIn("target_test", {row["partition"] for row in evaluations})
+
     def test_mcc_v3_controls_start_after_ramp_and_normalization_is_sample_local(self):
         args = train_adaptation.parser().parse_args(["--method", "mcc", "--profile", "mcc_v3"])
         resolve_training_settings(args)
@@ -439,6 +517,12 @@ class TrainingProtocolTests(unittest.TestCase):
             rows = summarize(output)
             self.assertEqual(rows[0]["test_samples"], 3)
             self.assertTrue((output/"summary/runs.csv").is_file())
+            self.assertEqual(rows[0]["ais_protocol"], "heading_size")
+            historical = output/"historical_seed43"
+            historical.mkdir()
+            (historical/"result.json").write_text(json.dumps({**result, "seed": 43, "ais_protocol": "full13"}))
+            with self.assertRaisesRegex(ValueError, "navigation-status"):
+                summarize(output)
             prediction_rows = [json.loads(s) for s in (output/"dann_seed42/predictions.jsonl").read_text().splitlines()]
             for row in prediction_rows:
                 if row["partition"] == "target_train":

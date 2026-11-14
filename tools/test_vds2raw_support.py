@@ -1,7 +1,9 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -10,7 +12,7 @@ from torch import nn
 from MCFT.mcft_model import MViT
 from TIR.loralib.layers import LinearLoRA
 from TIR.vds2raw_adapter import TIRVDS2Raw, TokenImportanceRecalibration
-from vds2raw.common import capture_selected_state, restore_selected_state
+from vds2raw.common import capture_selected_state, restore_selected_state, build_run_provenance
 from vds2raw.dataset import (
     CLASS_NAMES,
     PARTITIONS,
@@ -57,6 +59,18 @@ class _FixtureMixin:
 
 
 class VDS2RawDatasetTests(_FixtureMixin, unittest.TestCase):
+    def test_provenance_records_numerical_runtime_without_consuming_rng(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch("vds2raw.common._git_output", return_value="test checkout"), \
+             patch.dict(os.environ, {"CUBLAS_WORKSPACE_CONFIG": ":4096:8"}):
+            before = torch.get_rng_state().clone()
+            record = build_run_provenance(SimpleNamespace(seed=42), temporary)
+            self.assertTrue(torch.equal(before, torch.get_rng_state()))
+            runtime = record["numerical_runtime"]
+            self.assertEqual(runtime["deterministic_algorithms"], torch.are_deterministic_algorithms_enabled())
+            self.assertEqual(runtime["cublas_workspace_config"], ":4096:8")
+            self.assertEqual(runtime["cpu_threads"], torch.get_num_threads())
+
     def test_statistics_use_training_partitions_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

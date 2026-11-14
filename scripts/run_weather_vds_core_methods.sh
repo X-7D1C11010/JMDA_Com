@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DANN and Deep CORAL, one complete run for each weather; no real training in setup.
+# Five UDA cores; one complete run per selected method/weather.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SEED="${1:-42}"
@@ -9,7 +9,20 @@ DATA_ROOT="${JMDA_DATA_ROOT:-/mnt/data/lixiang/data/Data}"
 WEIGHTS="${WEATHER_VDS_WEIGHTS:-$HERE/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth}"
 EPOCHS="${WEATHER_VDS_EPOCHS:-}"
 PROFILE="${WEATHER_VDS_PROFILE:-baseline}"
-case "$PROFILE" in baseline|timing_v2|bn_stable) ;; *) echo "Unknown weather profile: $PROFILE" >&2; exit 1 ;; esac
+case "$PROFILE" in baseline|timing_v2|bn_stable|balanced_v4) ;; *) echo "Unknown weather profile: $PROFILE" >&2; exit 1 ;; esac
+DEFAULT_METHODS="dann deepcoral"
+if [ "$PROFILE" = balanced_v4 ]; then DEFAULT_METHODS="dann deepcoral cdan mdd mcc"; fi
+read -r -a METHODS <<< "${WEATHER_VDS_METHODS:-$DEFAULT_METHODS}"
+declare -A METHOD_SEEN=()
+[ "${#METHODS[@]}" -gt 0 ] || { echo "No weather methods selected" >&2; exit 1; }
+for method in "${METHODS[@]}"; do
+  case "$method" in dann|deepcoral|cdan|mdd|mcc) ;; *) echo "Unknown method: $method" >&2; exit 1 ;; esac
+  if [ -n "${METHOD_SEEN[$method]:-}" ]; then echo "Duplicate method: $method" >&2; exit 1; fi
+  METHOD_SEEN[$method]=1
+  if [[ "$PROFILE" = timing_v2 || "$PROFILE" = bn_stable ]] && [[ "$method" != dann && "$method" != deepcoral ]]; then
+    echo "Historical $PROFILE only supports DANN/Deep CORAL" >&2; exit 1
+  fi
+done
 BATCH="${WEATHER_VDS_BATCH_SIZE:-16}"
 if [ -n "$EPOCHS" ]; then
   [[ "$EPOCHS" =~ ^[0-9]+$ ]] && [ "$EPOCHS" -ge 1 ] || { echo "Invalid epochs: $EPOCHS" >&2; exit 1; }
@@ -27,7 +40,7 @@ export TORCH_HOME="${TORCH_HOME:-$HERE/pretrained_weights/torch}"
 RUN_DIR="${WEATHER_VDS_OUTPUT_ROOT:-$HERE/runs/weather_vds_core}/weather_uda_${PROFILE}_seed${SEED}_$(date +%Y%m%d_%H%M%S)_$$"
 mkdir -p "$RUN_DIR/logs"
 echo "Run directory: $RUN_DIR"
-echo "Shared VDS2Raw DANN/Deep CORAL training core; two pretrained ResNet18 encoders; VIS+IR only"
+echo "Shared audited UDA training cores; methods=${METHODS[*]}; two pretrained ResNet18 encoders; VIS+IR only"
 echo "Source=sunny; targets=${TARGETS[*]}; seed=$SEED; profile=$PROFILE; epochs=${EPOCHS:-profile defaults}; batch/domain=$BATCH"
 echo "Target training is label-free; complete source/target coverage; peak target_val reported; no model files"
 if [ ! -f "$WEIGHTS" ]; then
@@ -44,7 +57,7 @@ FAILED=0
 EXTRA=()
 if [ "${ADAPTATION_MODALITY_DIAGNOSTICS:-0}" = 1 ]; then EXTRA+=(--modality-diagnostics); fi
 for target in "${TARGETS[@]}"; do
-  for method in dann deepcoral; do
+  for method in "${METHODS[@]}"; do
     TAG="${method}_${target}_seed${SEED}"
     LOG="$RUN_DIR/logs/$TAG.log"
     EPOCH_ARGS=()

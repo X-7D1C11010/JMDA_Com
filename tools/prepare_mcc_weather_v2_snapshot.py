@@ -14,6 +14,8 @@ EXTRA_FILES = (
     "DeepCORAL/models.py", "CDAN/pytorch/loss.py",
     "scripts/run_pending_adaptation_v2.sh", "scripts/run_vds2raw_da_methods.sh",
     "scripts/run_weather_vds_core_methods.sh",
+    "scripts/run_server_weather_backlight_v8_background.sh",
+    "scripts/run_server_vds_backlight_background.sh",
 )
 REQUIRED_FILES = EXTRA_FILES + (
     "vds2raw/__init__.py", "vds2raw/adaptation.py", "vds2raw/train_adaptation.py",

@@ -22,6 +22,15 @@ def summarize(root):
         metrics = result["target_val"]
         rows.append({"method": result["method"], "target": result["target"], "seed": result["seed"],
                      "weather_profile": result.get("weather_profile", "baseline"),
+                     "image_backbone": result.get("image_backbone", "resnet18"),
+                     "freeze_image_encoders": result.get("freeze_image_encoders", False),
+                     "encoder_training_scope": result.get("encoder_training_scope", "frozen" if result.get("freeze_image_encoders", False) else "all"),
+                     "feature_normalization": result.get("feature_normalization", "none"),
+                     "unit_method_features": result.get("unit_method_features", False),
+                     "classifier_layout": result.get("classifier_layout", "reference"),
+                     "FDA_beta": result.get("input_augmentation", {}).get("FDA_beta", 0.),
+                     "source_zoom_min_area": result.get("input_augmentation", {}).get("source_zoom_min_area", 1.),
+                     "optimizer": result.get("optimizer", "not_recorded"),
                      "domain_forward": result.get("domain_forward", "reference"),
                      "stop_reason": result.get("stop_reason", "not_recorded"),
                      "selected_epoch": result["selected_epoch"], "completed_epochs": result["completed_epochs"],
@@ -30,18 +39,30 @@ def summarize(root):
                      "Recall_macro_percent": 100*metrics["recall_macro"], "F1_macro_percent": 100*metrics["f1_macro"],
                      "val_samples": metrics["val_samples"], "evaluation_protocol": result["evaluation_protocol"],
                      "smoke": result["smoke"], **{key: result["complexity"][key] for key in keys},
+                     "screening_only": result.get("screening_only", False), "planned_epochs": result.get("planned_epochs", result["completed_epochs"]),
                      "result_file": str(path.resolve())})
     if not rows:
         raise FileNotFoundError(f"No completed weather results: {root}")
     if len({row["weather_profile"] for row in rows}) != 1:
-        raise ValueError("Do not merge baseline and timing_v2 weather profiles")
+        raise ValueError("Do not merge different weather profiles")
+    if len({row["screening_only"] for row in rows}) != 1:
+        raise ValueError("Do not merge prefix screens and complete experiments")
+    signatures = {(row["image_backbone"], row["encoder_training_scope"], row["feature_normalization"],
+                   row["classifier_layout"], row["FDA_beta"], row["source_zoom_min_area"]) for row in rows}
+    if len(signatures) != 1:
+        raise ValueError("Do not merge different encoder or fusion-normalization protocols")
+    identities = [(row["method"], row["target"], row["seed"]) for row in rows]
+    if len(identities) != len(set(identities)):
+        raise ValueError("Repeated method/target/seed; keep parameter trials in separate summaries")
     output = root/"summary"
     output.mkdir(exist_ok=True)
     with (output/"runs.csv").open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    lines = ["Weather VIS+IR UDA; peak target_val within each run (no separate target_test).", "",
+    signature = rows[0]
+    lines = ["Weather VIS+IR UDA; peak target_val within each run (no separate target_test).",
+             f"Encoder={signature['image_backbone']}; frozen={signature['freeze_image_encoders']}; fusion normalization={signature['feature_normalization']}.", "",
              "| Method | Target | Seed | Best epoch | ACC | Precision | Recall | F1 |",
              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in rows:

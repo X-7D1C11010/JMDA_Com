@@ -25,7 +25,7 @@ from tools.efficiency_common import measure_inference_latency
 from tools.reproducibility import seed_everything
 from vds2raw.adaptation import (
     METHODS, DEFAULTS, AdaptationDataset, AdaptationModel, PairedEpochSampler,
-    prepare_statistics, optimizer_groups, resolve_training_settings, source_classification_weights,
+    prepare_statistics, optimizer_groups, resolve_training_settings, source_classification_weights, ais_input_protocol,
 )
 from vds2raw.common import better_metrics, build_run_provenance, save_prediction_artifacts
 from vds2raw.dataset import DISPLAY_CLASS_NAMES, audit_dataset
@@ -71,7 +71,9 @@ def gradient_diagnostics(model, classification, transfer):
     result = {}
     for group, prefix in (("RGB", "rgb_encoder."), ("NIR", "nir_encoder."),
                           ("AIS", "ais_encoder."), ("head", "head."),
-                          ("gate", "modality_logits"), ("bottleneck", "bottleneck.")):
+                          ("gate", "modality_logits"), ("bottleneck", "bottleneck."),
+                          ("auxiliary_heads", "auxiliary_heads."),
+                          ("domain_discriminator", "discriminator."), ("adversarial_head", "adv_head.")):
         norm_ce = classification.new_zeros(())
         norm_da = classification.new_zeros(())
         dot = classification.new_zeros(())
@@ -90,14 +92,18 @@ def gradient_diagnostics(model, classification, transfer):
     return result
 
 
-def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_prefix="VDS_EVALUATION", return_details=False):
+def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_prefix="VDS_EVALUATION", return_details=False,
+             normalization_domain_override=None):
     """Deterministic evaluation; every sample receives a probability record."""
     model.eval()
+    if getattr(model, "domain_running_stats", False):
+        model.set_bn_domain(normalization_domain_override or ("source" if dataset.partition == "source_train" else "target"))
     truth, predicted, records = [], [], []
     num_classes = getattr(model, "num_classes", 3)
     names = getattr(model, "feature_names", ("RGB", "NIR", "AIS"))
     feature_sums = [0.0]*len(names)
     normalized_sums = [0.0]*len(names)
+    branch_probabilities = [[] for _ in getattr(model, "auxiliary_heads", ())]
     losses = []
     labelled = dataset.labelled
     with torch.no_grad():
@@ -106,6 +112,8 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
             labels = batch["label"] if labelled else None
             logits = model(move(batch, device))
             probabilities = logits.softmax(1).cpu()
+            for rows, branch in zip(branch_probabilities, getattr(model, "last_branch_logits", ())):
+                rows.extend(branch.softmax(1).cpu().tolist())
             guesses = probabilities.argmax(1)
             if labelled:
                 truth.extend(labels.tolist())
@@ -146,6 +154,20 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
                        mean_confidence_wrong=(statistics.mean(max(row["probabilities"]) for row in records if not row["correct"])
                                               if any(not row["correct"] for row in records) else None),
                        recall_by_class=[row[i]/max(sum(row), 1) for i, row in enumerate(matrix)])
+    if branch_probabilities:
+        details["auxiliary_branches"] = {}
+        for name, rows in zip(names, branch_probabilities):
+            guesses = [max(range(num_classes), key=lambda i: row[i]) for row in rows]
+            summary = {"mean_max_probability": statistics.mean(max(row) for row in rows),
+                       "mean_entropy": statistics.mean(-sum(p*math.log(max(p, 1e-12)) for p in row) for row in rows),
+                       "predicted_class_counts": [guesses.count(i) for i in range(num_classes)]}
+            if labelled:
+                summary["metrics"] = classification_metrics(truth, guesses, num_classes=num_classes)
+                matrix = [[0]*num_classes for _ in range(num_classes)]
+                for true, guessed in zip(truth, guesses):
+                    matrix[true][guessed] += 1
+                summary["metrics"]["confusion_matrix"] = matrix
+            details["auxiliary_branches"][name] = summary
     event(directory, "evaluation.jsonl", details)
     print(event_prefix+": "+json.dumps(details), flush=True)
     return (metrics, records, details) if return_details else (metrics, records)
@@ -226,10 +248,22 @@ def validate_diagnostics(directory, datasets, epochs, selected_epoch, num_classe
 
 
 def make_optimizer(model, args):
-    groups = optimizer_groups(model, args.lr, getattr(args, "ais_lr_multiplier", None) or 1.0)
-    optimizer = (torch.optim.Adam(groups, weight_decay=args.weight_decay) if args.method == "dann"
-                 else torch.optim.SGD(groups, momentum=0.9, nesterov=args.method != "deepcoral",
-                                      weight_decay=args.weight_decay*(2 if args.method == "cdan" else 1)))
+    groups = optimizer_groups(model, args.lr, getattr(args, "ais_lr_multiplier", None) or 1.0,
+                              getattr(args, "gate_lr_multiplier", 1.), getattr(args, "gate_weight_decay", None))
+    image_lr = getattr(args, "image_lr_override", None)
+    if image_lr is not None:
+        if image_lr <= 0:
+            raise ValueError("Encoder learning-rate override must be positive")
+        for group in groups:
+            if group["role"] == "pretrained_RGB_NIR":
+                group["lr"] = image_lr
+    choice = getattr(args, "optimizer", "reference")
+    if choice not in {"reference", "adam", "sgd"}:
+        raise ValueError("Unknown optimizer selection")
+    selected = ("adam" if args.method == "dann" else "sgd") if choice == "reference" else choice
+    decay = args.weight_decay*(2 if args.method == "cdan" else 1)
+    optimizer = (torch.optim.Adam(groups, weight_decay=decay) if selected == "adam"
+                 else torch.optim.SGD(groups, momentum=0.9, nesterov=args.method != "deepcoral", weight_decay=decay))
     # The released MDD example uses gamma=.0002; CDAN/MCC use .001.
     # These clocks must not be collapsed into a single shared constant.
     if args.lr_gamma is None:
@@ -353,13 +387,14 @@ def run(args):
     stats_path = Path(args.stats_file) if args.stats_file else output/"normalization_stats.json"
     if not args.skip_audit:
         report = audit_dataset(root)
-        # The old MCFT/TIR audit annotates a four-field model; this runner uses
-        # the full schema requested for this separate experiment.
-        report.update(model_ais_feature_names=json.loads((root/"feature_schema.json").read_text(encoding="utf-8"))["ais_feature_names"],
-                      excluded_ais_proxy_features=[], ais_mask_usage="13 validity values plus 13 gated features")
+        protocol = ais_input_protocol(json.loads((root/"feature_schema.json").read_text(encoding="utf-8")), args.ais_fields)
+        report.update(model_ais_feature_names=protocol["feature_names"],
+                      excluded_ais_proxy_features=protocol["excluded_features"], ais_protocol=protocol,
+                      ais_mask_usage=(f"{protocol['mask_dimension']} retained validity values plus "
+                                      f"{protocol['input_dimension']} gated features"))
         write_json(output/"dataset_audit.json", report)
         print("VDS_DATA_AUDIT: "+json.dumps(report), flush=True)
-    images, ais = prepare_statistics(root, stats_path)
+    images, ais = prepare_statistics(root, stats_path, args.ais_fields)
     if args.audit_only:
         return
     if args.method is None:
@@ -388,7 +423,8 @@ def run(args):
                           generator=torch.Generator().manual_seed(args.seed+20000+index), **loader_args)
                for index, (ds, sampler) in enumerate(zip((source, target), samplers))]
     device = torch.device(args.device if args.device else "cuda" if torch.cuda.is_available() else "cpu")
-    model = AdaptationModel(args.method, args.weights, not args.no_pretrained).to(device)
+    model = AdaptationModel(args.method, args.weights, not args.no_pretrained,
+                            ais_dimensions=ais["input_dimension"]).to(device)
     model.feature_normalization = args.feature_normalization
     source_counts, source_weights = source_classification_weights(source.samples, model.num_classes if hasattr(model, "num_classes") else 3)
     if args.source_class_balance:
@@ -398,6 +434,8 @@ def run(args):
     config = {
         "method": args.method, "protocol": "UDA", "modalities": ["RGB", "NIR", "AIS"],
         "optimization_profile": args.profile,
+        "ais_protocol": args.ais_fields, "model_ais_feature_names": ais["feature_names"],
+        "excluded_ais_proxy_features": ais["excluded_features"],
         "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
         "source_classification": {"class_counts": source_counts.tolist(),
                                   "weighted_CE": args.source_class_balance,
@@ -405,6 +443,7 @@ def run(args):
                                   "counts_fit_partition": "source_train only"},
         "training_partitions": ["source_train", "target_train"],
         "selection_partition": "target_val", "test_partition": "target_test",
+        "validation_only": args.validation_only,
         "target_training_labels_used": False, "test_selection_bias": False,
         "classification_supervision": "source_train only; target_train label field is never read",
         "target_validation_labels_used_for_selection": True,
@@ -539,9 +578,12 @@ def run(args):
         if sensitivity["full"] != best_metrics:
             raise RuntimeError("Restored validation metrics differ from selected metrics")
         model.load_state_dict(best_state, strict=True)
-    test = AdaptationDataset(root, "target_test", images, ais)
-    test_metrics, test_records = evaluate(model, test, device, best_epoch, run_dir)
-    artifacts = save_prediction_artifacts(run_dir, "target_test", test_records, DISPLAY_CLASS_NAMES)
+    test, test_metrics, artifacts = None, None, None
+    if not args.validation_only:
+        test = AdaptationDataset(root, "target_test", images, ais)
+        test_metrics, test_records = evaluate(model, test, device, best_epoch, run_dir)
+        artifacts = save_prediction_artifacts(run_dir, "target_test", test_records, DISPLAY_CLASS_NAMES)
+    test_evaluations = 0 if args.validation_only else 1
     complexity = profile(model, validation, device, times, peak_reserved)
     for key in ("total_params", "trainable_params", "inference_GFLOPs", "total_train_time_s", "train_epoch_mean_s", "latency_mean_ms", "throughput_samples_s"):
         if not math.isfinite(complexity[key]) or complexity[key] <= 0:
@@ -553,26 +595,31 @@ def run(args):
     for partition in ("source_train", "target_train", "target_val"):
         if len([e for e in evaluations if e["partition"] == partition]) != len(history):
             raise RuntimeError(f"Missing evaluation events: {partition}")
-    if len([e for e in evaluations if e["partition"] == "target_test"]) != 1:
-        raise RuntimeError("target_test must be evaluated exactly once")
-    checked = validate_diagnostics(run_dir, (source_eval, target_eval, validation, test), len(history), best_epoch)
+    if len([e for e in evaluations if e["partition"] == "target_test"]) != test_evaluations:
+        raise RuntimeError("Unexpected target_test evaluation count")
+    checked = validate_diagnostics(run_dir, (source_eval, target_eval, validation)+((test,) if test is not None else ()), len(history), best_epoch)
     control_records = [json.loads(row) for row in (run_dir/"validation_control.jsonl").read_text(encoding="utf-8").splitlines()]
     if len(control_records) != len(history) or [r["epoch"] for r in control_records] != list(range(1, len(history)+1)):
         raise RuntimeError("Missing validation control diagnostics")
     completeness = {"status": "PASS", "epochs": len(history), "selected_epoch": best_epoch,
                     "protocol": "UDA", "target_training_labels_used": False,
-                    "selection_partition": "target_val", "test_evaluations": 1,
+                    "selection_partition": "target_val", "test_evaluations": test_evaluations,
+                    "validation_only": args.validation_only,
                     "test_evaluations_for_selection": 0, "complexity_status": "PASS",
-                    "ais_dimensions": 13, "ais_mask_dimensions": 13,
+                    "ais_dimensions": ais["input_dimension"], "ais_mask_dimensions": ais["mask_dimension"],
+                    "ais_protocol": args.ais_fields,
                     "prediction_rows_checked": checked,
                     "partial_training_smoke": bool(args.max_train_batches)}
     write_json(run_dir/"completeness.json", completeness)
     result = {"method": args.method, "seed": args.seed, "protocol": "UDA", "target_training_labels_used": False,
               "optimization_profile": args.profile,
+              "ais_protocol": args.ais_fields, "model_ais_feature_names": ais["feature_names"],
+              "excluded_ais_proxy_features": ais["excluded_features"],
               "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
               "selected_epoch": best_epoch, "selection_partition": "target_val",
               "test_selection_bias": False, "test_evaluations_for_selection": 0,
-              "test_evaluations": 1, "completed_epochs": len(history),
+              "test_evaluations": test_evaluations, "completed_epochs": len(history),
+              "validation_only": args.validation_only,
               "stop_reason": stop_reason, "stopped_early": len(history) < args.epochs,
               "validation_control": {**config["validation_control"],
                                      "final_lr_scale": validation_control.lr_scale,
@@ -584,9 +631,9 @@ def run(args):
               "prediction_artifacts": artifacts, "diagnostics_dir": str(run_dir),
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
               "smoke": bool(args.max_train_batches)}
-    write_json(run_dir/"result.json", result)
+    write_json(run_dir/("validation_result.json" if args.validation_only else "result.json"), result)
     print("VDS_COMPLETENESS: "+json.dumps(completeness), flush=True)
-    print("FINAL_TEST_METRICS_JSON: "+json.dumps(result), flush=True)
+    print(("VALIDATION_SCREEN_RESULT_JSON: " if args.validation_only else "FINAL_TEST_METRICS_JSON: ")+json.dumps(result), flush=True)
     return result
 
 
@@ -598,7 +645,10 @@ def parser():
     p.add_argument("--stats-file", default="")
     p.add_argument("--weights", default=str(ROOT/"pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"))
     p.add_argument("--epochs", type=int, default=None)
-    p.add_argument("--profile", choices=("baseline", "optimized", "mcc_v2", "mcc_v3"), default="baseline")
+    p.add_argument("--validation-only", action="store_true", help="Hyperparameter screen: never construct/evaluate target_test")
+    p.add_argument("--profile", choices=("baseline", "optimized", "mcc_v2", "mcc_v3", "cdan_safe_v4"), default="baseline")
+    p.add_argument("--ais-fields", choices=("heading_size", "full13"), default="heading_size",
+                   help="Default: heading sin/cos + length + width and only their four masks; full13 is historical")
     p.add_argument("--feature-normalization", choices=("none", "l2"), default=None)
     p.add_argument("--modality-diagnostics", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--source-class-balance", action=argparse.BooleanOptionalAction, default=None)

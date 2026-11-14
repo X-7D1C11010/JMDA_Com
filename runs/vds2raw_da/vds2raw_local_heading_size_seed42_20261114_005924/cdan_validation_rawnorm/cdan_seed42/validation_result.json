@@ -1,0 +1,127 @@
+{
+  "method": "cdan",
+  "seed": 42,
+  "protocol": "UDA",
+  "target_training_labels_used": false,
+  "optimization_profile": "optimized",
+  "ais_protocol": "heading_size",
+  "model_ais_feature_names": [
+    "heading_sin",
+    "heading_cos",
+    "length_z",
+    "width_z"
+  ],
+  "excluded_ais_proxy_features": [
+    "nav_<UNKNOWN>",
+    "nav_at anchor",
+    "nav_engaged in fishing",
+    "nav_moored",
+    "nav_reserved for future amendment [hsc]",
+    "nav_restricted maneuverability",
+    "nav_under way sailing",
+    "nav_under way using engine",
+    "nav_unknown value"
+  ],
+  "planned_optimizer_updates": 800,
+  "selected_epoch": 17,
+  "selection_partition": "target_val",
+  "test_selection_bias": false,
+  "test_evaluations_for_selection": 0,
+  "test_evaluations": 0,
+  "completed_epochs": 69,
+  "validation_only": true,
+  "stop_reason": "validation_cross_entropy_patience",
+  "stopped_early": true,
+  "validation_control": {
+    "plateau_monitor": "target_val cross entropy",
+    "plateau_patience": 12,
+    "plateau_factor": 0.5,
+    "plateau_min_scale": 0.1,
+    "control_start_epoch": 40,
+    "early_stopping_monitor": "cross_entropy",
+    "early_stopping_patience": 25,
+    "early_stopping_min_epochs": 60,
+    "best_state_selection": "target_val ACC, then macro F1",
+    "test_metrics_used_for_control": false,
+    "final_lr_scale": 0.25,
+    "best_validation_CE": 0.5158081195886471,
+    "best_validation_CE_epoch": 44
+  },
+  "feature_normalization": "none",
+  "modality_diagnostics": null,
+  "target_val": {
+    "accuracy": 0.8928571428571429,
+    "precision_macro": 0.875,
+    "recall_macro": 0.8839285714285715,
+    "f1_macro": 0.8567686793493245,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 28,
+    "confusion_matrix": [
+      [
+        15,
+        0,
+        1
+      ],
+      [
+        0,
+        5,
+        2
+      ],
+      [
+        0,
+        0,
+        5
+      ]
+    ]
+  },
+  "target_test": null,
+  "complexity": {
+    "latency_mean_ms": 5.7215,
+    "latency_std_ms": 2.4749,
+    "latency_p50_ms": 4.6002,
+    "latency_p95_ms": 11.556,
+    "throughput_samples_s": 174.78,
+    "total_params": 24498439,
+    "trainable_params": 24498439,
+    "inference_GFLOPs": 1.304137216,
+    "total_train_time_s": 55.23694800000001,
+    "train_epoch_mean_s": 0.8005354782608698,
+    "peak_train_reserved_gb": 0.75390625,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        96,
+        96
+      ],
+      "nir": [
+        1,
+        1,
+        96,
+        96
+      ],
+      "ais": [
+        1,
+        4
+      ],
+      "ais_mask": [
+        1,
+        4
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "prediction_artifacts": null,
+  "diagnostics_dir": "D:\\Code\\JMDA_Com\\runs\\vds2raw_da\\vds2raw_local_heading_size_seed42_20261114_005924\\cdan_validation_rawnorm\\cdan_seed42",
+  "modality_weights_at_selected_epoch": [
+    0.25701475143432617,
+    0.25105002522468567,
+    0.4919353127479553
+  ],
+  "smoke": false
+}

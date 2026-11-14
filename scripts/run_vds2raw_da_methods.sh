@@ -10,7 +10,9 @@ OUTPUT_ROOT="${VDS2RAW_DA_OUTPUT_ROOT:-$HERE/runs/vds2raw_da}"
 WEIGHTS="${VDS2RAW_DA_WEIGHTS:-$HERE/pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth}"
 EPOCHS="${VDS2RAW_DA_EPOCHS:-}"
 PROFILE="${VDS2RAW_DA_PROFILE:-baseline}"
-case "$PROFILE" in baseline|optimized|mcc_v2|mcc_v3) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
+AIS_FIELDS="${VDS2RAW_AIS_FIELDS:-heading_size}"
+case "$AIS_FIELDS" in heading_size|full13) ;; *) echo "Unknown AIS protocol: $AIS_FIELDS" >&2; exit 1 ;; esac
+case "$PROFILE" in baseline|optimized|mcc_v2|mcc_v3|cdan_safe_v4) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
 BATCH="${VDS2RAW_DA_BATCH_SIZE:-16}"
 METHODS_TEXT="${VDS2RAW_DA_METHODS:-dann deepcoral cdan mdd mcc}"
 SEEDS_TEXT="${VDS2RAW_SEEDS:-42}"
@@ -29,6 +31,7 @@ for method in "${METHODS[@]}"; do
   if [ -n "${METHOD_SEEN[$method]:-}" ]; then echo "Duplicate method: $method" >&2; exit 1; fi
   METHOD_SEEN[$method]=1
   if [[ "$PROFILE" = mcc_v* ]] && [ "$method" != mcc ]; then echo "$PROFILE only supports MCC" >&2; exit 1; fi
+  if [ "$PROFILE" = cdan_safe_v4 ] && [ "$method" != cdan ]; then echo "$PROFILE only supports CDAN" >&2; exit 1; fi
 done
 for seed in "${SEEDS[@]}"; do
   [[ "$seed" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $seed" >&2; exit 1; }
@@ -47,14 +50,14 @@ if [ ! -f "$WEIGHTS" ]; then
   "$PYTHON_BIN" -B -u "$HERE/tools/download_official_uda_weights.py" --only resnet18
 fi
 if [ ! -f "$WEIGHTS" ]; then echo "Missing weights: $WEIGHTS" >&2; exit 1; fi
-RUN_DIR="$OUTPUT_ROOT/vds2raw_uda_${PROFILE}_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
+RUN_DIR="$OUTPUT_ROOT/vds2raw_uda_${PROFILE}_${AIS_FIELDS}_${MODE}_$(date +%Y%m%d_%H%M%S)_$$"
 mkdir -p "$RUN_DIR/logs"
 echo "Run directory: $RUN_DIR"
 echo "Protocol: labelled source_train + UNLABELLED target_train; target_val selection; target_test ONCE after selection"
-echo "Inputs: RGB + NIR + full 13 AIS features + 13 validity values; native 96x96"
+echo "Inputs: RGB + NIR + AIS protocol=$AIS_FIELDS (heading_size: 4 values + 4 masks, no navigation status); native 96x96"
 echo "Methods: ${METHODS[*]}; seeds: ${SEEDS[*]}; profile=$PROFILE; epochs=${EPOCHS:-profile defaults}; batch/domain=$BATCH"
 "$PYTHON_BIN" -B -u "$HERE/vds2raw/train_adaptation.py" --audit-only \
-  --data-root "$DATA_ROOT" --save-dir "$RUN_DIR" --stats-file "$RUN_DIR/normalization_stats.json"
+  --data-root "$DATA_ROOT" --save-dir "$RUN_DIR" --stats-file "$RUN_DIR/normalization_stats.json" --ais-fields "$AIS_FIELDS"
 GPU_ARGS=(--min-free-mib "${VDS2RAW_DA_MIN_FREE_MIB:-6144}" \
   --max-util-percent "${VDS2RAW_GPU_MAX_UTIL_PERCENT:-10}" \
   --stable-checks "${VDS2RAW_GPU_STABLE_CHECKS:-3}" \
@@ -73,7 +76,7 @@ for seed in "${SEEDS[@]}"; do
         "$PYTHON_BIN" -B -u "$HERE/vds2raw/train_adaptation.py" \
         --method "$method" --data-root "$DATA_ROOT" --save-dir "$RUN_DIR" \
         --stats-file "$RUN_DIR/normalization_stats.json" --weights "$WEIGHTS" \
-        --profile "$PROFILE" "${EPOCH_ARGS[@]}" --batch-size "$BATCH" --seed "$seed" \
+        --profile "$PROFILE" --ais-fields "$AIS_FIELDS" "${EPOCH_ARGS[@]}" --batch-size "$BATCH" --seed "$seed" \
         --num-workers "${VDS2RAW_NUM_WORKERS:-2}" --skip-audit "${EXTRA[@]}" > "$LOG" 2>&1; then
       echo "    completed: $TAG"
       "$PYTHON_BIN" -B "$HERE/vds2raw/summarize_adaptation.py" --results-dir "$RUN_DIR"

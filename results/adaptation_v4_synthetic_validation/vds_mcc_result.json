@@ -1,0 +1,281 @@
+{
+  "method": "mcc",
+  "seed": 42,
+  "protocol": "UDA",
+  "target_training_labels_used": false,
+  "optimization_profile": "mcc_v3",
+  "ais_protocol": "heading_size",
+  "model_ais_feature_names": [
+    "heading_sin",
+    "heading_cos",
+    "length_z",
+    "width_z"
+  ],
+  "excluded_ais_proxy_features": [
+    "nav0",
+    "nav1",
+    "nav2",
+    "nav3",
+    "nav4",
+    "nav5",
+    "nav6",
+    "nav7",
+    "nav8"
+  ],
+  "planned_optimizer_updates": 8,
+  "selected_epoch": 2,
+  "selection_partition": "target_val",
+  "test_selection_bias": false,
+  "test_evaluations_for_selection": 0,
+  "test_evaluations": 1,
+  "completed_epochs": 4,
+  "stop_reason": "max_epochs",
+  "stopped_early": false,
+  "validation_control": {
+    "plateau_monitor": "target_val cross entropy",
+    "plateau_patience": 12,
+    "plateau_factor": 0.5,
+    "plateau_min_scale": 0.1,
+    "control_start_epoch": 40,
+    "early_stopping_monitor": "cross_entropy",
+    "early_stopping_patience": 25,
+    "early_stopping_min_epochs": 60,
+    "best_state_selection": "target_val ACC, then macro F1",
+    "test_metrics_used_for_control": false,
+    "final_lr_scale": 1.0,
+    "best_validation_CE": null,
+    "best_validation_CE_epoch": 0
+  },
+  "feature_normalization": "l2",
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 2,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.6666666666666666,
+      "precision_macro": 0.5,
+      "recall_macro": 0.6666666666666666,
+      "f1_macro": 0.5555555555555555,
+      "val_present_classes": 3,
+      "val_total_classes": 3,
+      "val_class_coverage": 1.0,
+      "val_samples": 3,
+      "confusion_matrix": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ]
+      ]
+    },
+    "zeroed": {
+      "RGB": {
+        "metrics": {
+          "accuracy": 0.3333333333333333,
+          "precision_macro": 0.1111111111111111,
+          "recall_macro": 0.3333333333333333,
+          "f1_macro": 0.16666666666666666,
+          "val_present_classes": 3,
+          "val_total_classes": 3,
+          "val_class_coverage": 1.0,
+          "val_samples": 3,
+          "confusion_matrix": [
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.3333333333333333
+      },
+      "NIR": {
+        "metrics": {
+          "accuracy": 0.3333333333333333,
+          "precision_macro": 0.1111111111111111,
+          "recall_macro": 0.3333333333333333,
+          "f1_macro": 0.16666666666666666,
+          "val_present_classes": 3,
+          "val_total_classes": 3,
+          "val_class_coverage": 1.0,
+          "val_samples": 3,
+          "confusion_matrix": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.3333333333333333
+      },
+      "AIS": {
+        "metrics": {
+          "accuracy": 0.3333333333333333,
+          "precision_macro": 0.1111111111111111,
+          "recall_macro": 0.3333333333333333,
+          "f1_macro": 0.16666666666666666,
+          "val_present_classes": 3,
+          "val_total_classes": 3,
+          "val_class_coverage": 1.0,
+          "val_samples": 3,
+          "confusion_matrix": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.3333333333333333
+      }
+    }
+  },
+  "target_val": {
+    "accuracy": 0.6666666666666666,
+    "precision_macro": 0.5,
+    "recall_macro": 0.6666666666666666,
+    "f1_macro": 0.5555555555555555,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 3,
+    "confusion_matrix": [
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ]
+    ]
+  },
+  "target_test": {
+    "accuracy": 0.6666666666666666,
+    "precision_macro": 0.5,
+    "recall_macro": 0.6666666666666666,
+    "f1_macro": 0.5555555555555555,
+    "val_present_classes": 3,
+    "val_total_classes": 3,
+    "val_class_coverage": 1.0,
+    "val_samples": 3,
+    "confusion_matrix": [
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 4.3142,
+    "latency_std_ms": 1.1905,
+    "latency_p50_ms": 3.9366,
+    "latency_p95_ms": 7.0208,
+    "throughput_samples_s": 231.79,
+    "total_params": 22660870,
+    "trainable_params": 22660870,
+    "inference_GFLOPs": 1.304137216,
+    "total_train_time_s": 3.4489923000000005,
+    "train_epoch_mean_s": 0.8622480750000001,
+    "peak_train_reserved_gb": 0.501953125,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        96,
+        96
+      ],
+      "nir": [
+        1,
+        1,
+        96,
+        96
+      ],
+      "ais": [
+        1,
+        4
+      ],
+      "ais_mask": [
+        1,
+        4
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head"
+  },
+  "prediction_artifacts": {
+    "predictions_csv": "C:\\Users\\Admin\\AppData\\Local\\Temp\\adaptation_v4_fixture_7f8jnqbb\\vds_mcc\\mcc_seed42\\target_test_predictions.csv",
+    "confusion_matrix_csv": "C:\\Users\\Admin\\AppData\\Local\\Temp\\adaptation_v4_fixture_7f8jnqbb\\vds_mcc\\mcc_seed42\\target_test_confusion_matrix.csv",
+    "confusion_matrix_json": "C:\\Users\\Admin\\AppData\\Local\\Temp\\adaptation_v4_fixture_7f8jnqbb\\vds_mcc\\mcc_seed42\\target_test_confusion_matrix.json"
+  },
+  "diagnostics_dir": "C:\\Users\\Admin\\AppData\\Local\\Temp\\adaptation_v4_fixture_7f8jnqbb\\vds_mcc\\mcc_seed42",
+  "modality_weights_at_selected_epoch": [
+    0.3333410620689392,
+    0.33331331610679626,
+    0.3333456516265869
+  ],
+  "smoke": true
+}
