@@ -255,7 +255,8 @@ class AdaptationModel(nn.Module):
     def __init__(self, method, weights_path=None, pretrained=True, *, num_classes=3, use_ais=True, ir_channels=1,
                  feature_normalization="none", ais_dimensions=13, auxiliary_source_weight=0.,
                  image_backbone="resnet18", freeze_image_encoders=False, unit_method_features=False,
-                 encoder_training_scope=None, classifier_layout="reference"):
+                 encoder_training_scope=None, classifier_layout="reference",
+                 ir_backbone=None, ir_weights_path=None, ir_feature_mode="patch_mean",calibration_feature_dim=None):
         super().__init__()
         if method not in METHODS:
             raise ValueError(method)
@@ -283,13 +284,17 @@ class AdaptationModel(nn.Module):
             raise ValueError("Unknown image backbone")
         if image_backbone == "convnext_small" and (use_ais or ir_channels != 3):
             raise ValueError("ConvNeXt screening is defined for paired weather VIS/IR only")
+        if ir_backbone not in {None, "unip_tiny", "unip_small"}:
+            raise ValueError("Unknown infrared backbone")
+        if ir_backbone is not None and (use_ais or ir_channels != 3):
+            raise ValueError("Infrared UNIP screening is defined for weather VIS/IR only")
         scope = encoder_training_scope or ("frozen" if freeze_image_encoders else "all")
         if scope not in {"all", "frozen", "ir_last_stage", "last_stages"}:
             raise ValueError("Unknown encoder training scope")
         if freeze_image_encoders and scope != "frozen":
             raise ValueError("Do not combine fully frozen encoders with a trainable encoder scope")
-        if scope in {"ir_last_stage", "last_stages"} and image_backbone != "convnext_small":
-            raise ValueError("Last-stage screening is defined for the ConvNeXt weather encoder")
+        if scope in {"ir_last_stage", "last_stages"} and (use_ais or ir_channels!=3):
+            raise ValueError("Last-stage screening is defined for paired weather VIS/IR encoders")
         self.image_backbone, self.encoder_training_scope = image_backbone, scope
         self.freeze_image_encoders = scope == "frozen"
         self.unit_method_features = bool(unit_method_features)
@@ -308,7 +313,14 @@ class AdaptationModel(nn.Module):
             self.rgb_encoder.fc = nn.Identity()
         else:
             self.rgb_encoder.classifier[-1] = nn.Identity()
-        self.nir_encoder = deepcopy(self.rgb_encoder)
+        self.ir_backbone = ir_backbone
+        if ir_backbone is None:
+            self.nir_encoder = deepcopy(self.rgb_encoder)
+            self.ir_feature_dim = self.image_feature_dim
+        else:
+            from weather.unip_encoder import UNIPEncoder
+            self.nir_encoder = UNIPEncoder(ir_weights_path, ir_backbone.removeprefix("unip_"), ir_feature_mode)
+            self.ir_feature_dim = self.nir_encoder.output_dim
         if ir_channels == 1:
             conv = nn.Conv2d(1, 64, 7, stride=2, padding=3, bias=False)
             with torch.no_grad():
@@ -320,13 +332,22 @@ class AdaptationModel(nn.Module):
         if scope in {"ir_last_stage", "last_stages"}:
             encoders = (self.nir_encoder,) if scope == "ir_last_stage" else (self.rgb_encoder, self.nir_encoder)
             for encoder in encoders:
-                encoder.features[-1].requires_grad_(True)
-                encoder.classifier[0].requires_grad_(True)
+                if hasattr(encoder, "unfreeze_last_stage"):
+                    encoder.unfreeze_last_stage()
+                elif hasattr(encoder,"layer4"):
+                    encoder.layer4.requires_grad_(True)
+                else:
+                    encoder.features[-1].requires_grad_(True)
+                    encoder.classifier[0].requires_grad_(True)
         if use_ais:
             self.ais_encoder = nn.Sequential(nn.Linear(2*ais_dimensions, 128), nn.ReLU(),
                                              nn.Dropout(0.1), nn.Linear(128, 128), nn.ReLU())
         self.modality_logits = nn.Parameter(torch.zeros(3 if use_ais else 2))
-        fused_dimension = 2*self.image_feature_dim+(128 if use_ais else 0)
+        fused_dimension = self.image_feature_dim+self.ir_feature_dim+(128 if use_ais else 0)
+        if calibration_feature_dim is not None:
+            if use_ais or not 2<=calibration_feature_dim<=fused_dimension:
+                raise ValueError("Invalid opt-in weather calibration feature width")
+            fused_dimension=int(calibration_feature_dim)
         if method == "deepcoral" or classifier_layout == "linear":
             # Opt-in weather probe: retain the pretrained representation and
             # isolate adaptation from the learned reference bottleneck.
@@ -375,8 +396,8 @@ class AdaptationModel(nn.Module):
         self.mcc = MinimumClassConfusionLoss(temperature=2.5)
         if auxiliary_source_weight:
             self.auxiliary_heads = nn.ModuleList(nn.Linear(width, num_classes)
-                                                for width in ((self.image_feature_dim, self.image_feature_dim, 128)
-                                                              if use_ais else (self.image_feature_dim, self.image_feature_dim)))
+                                                for width in ((self.image_feature_dim, self.ir_feature_dim, 128)
+                                                              if use_ais else (self.image_feature_dim, self.ir_feature_dim)))
         self.last_features = None
 
     def train(self, mode=True):
@@ -391,14 +412,35 @@ class AdaptationModel(nn.Module):
     def modality_weights(self):
         return 0.05 + (1-0.05*self.modality_logits.numel())*self.modality_logits.softmax(0)
 
-    def encode(self, batch):
+    def encode_visible(self,images):
+        if getattr(self,"vis_gradient_checkpointing",False):
+            from weather.encoder_checkpoint import checkpointed_convnext
+            return checkpointed_convnext(self.rgb_encoder,images)
+        return self.rgb_encoder(images)
+
+    def encode(self, batch,source_count=None):
         # Only the mask entries corresponding to retained AIS fields enter.
-        branches = (self.rgb_encoder(batch["rgb"]), self.nir_encoder(batch["nir"]))
+        if getattr(self, "encoder_precision", "fp32") == "bf16":
+            if batch["rgb"].device.type != "cuda":
+                raise ValueError("BF16 encoder screening requires a CUDA device")
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                branches = (self.encode_visible(batch["rgb"]), self.nir_encoder(batch["nir"]))
+            branches = tuple(value.float() for value in branches)
+        else:
+            branches = (self.encode_visible(batch["rgb"]), self.nir_encoder(batch["nir"]))
         if getattr(self, "use_ais", True):
             expected = getattr(self, "ais_dimensions", 13)
             if batch["ais"].shape[1:] != (expected,) or batch["ais_mask"].shape[1:] != (expected,):
                 raise ValueError("AIS value/mask width differs from the declared model protocol")
             branches += (self.ais_encoder(torch.cat((batch["ais"]*batch["ais_mask"], batch["ais_mask"]), 1)),)
+        self.last_crossmodal_features=None
+        self.last_object_features=branches if self.training and getattr(self,"source_object_enabled",False) else None
+        if self.training and getattr(self,"crossmodal_alignment_enabled",False):
+            stopped=getattr(self,"crossmodal_stop_gradient","none")
+            paired=tuple(branch.detach() if stopped==name else branch for name,branch in zip(("vis","ir"),branches[:2]))
+            self.last_crossmodal_features=(tuple(projector(branch) for projector,branch in zip(self.crossmodal_projectors,paired))
+                if hasattr(self,"crossmodal_projectors") else paired)
+        self.last_representation_features=(branches if self.training and getattr(self,"target_representation_cache",None) is not None else None)
         self.last_features = tuple(branch.detach() for branch in branches)
         normalization = getattr(self, "feature_normalization", "none")
         if normalization in {"l2", "unit"}:
@@ -423,21 +465,44 @@ class AdaptationModel(nn.Module):
             unmasked = (torch.cat([len(branches)*weights[i]*v for i, v in enumerate(branches_before_ablation)], 1)
                         if disabled else fused)
             fused = fused/unmasked.norm(dim=1, keepdim=True).clamp_min(1e-8)
+        self.last_teacher_logits=None
+        if getattr(self,"feature_calibrator",None) is not None:
+            domain=getattr(self,"feature_domain","target")
+            fused=self.feature_calibrator(fused,domain,source_count)
+            if getattr(self,"cluster_teacher",None) is not None:
+                with torch.no_grad():
+                    fixed=self.teacher_modality_weights
+                    teacher_input=F.normalize(torch.cat([fixed[i]*v.detach() for i,v in enumerate(branches_before_ablation)],1),dim=1)
+                    self.last_teacher_logits=self.cluster_teacher(self.feature_calibrator(teacher_input,domain,source_count))
         self.last_fused = fused.detach()
+        if getattr(self,"feature_adapter",None) is not None:fused=self.feature_adapter(fused)
         method_features = self.bottleneck(fused)
         return (F.normalize(method_features, dim=1, eps=1e-8)
                 if getattr(self, "unit_method_features", False) else method_features)
 
     def forward(self, batch):
-        return self.head(self.encode(batch))
+        logits=self.head(self.encode(batch))
+        self.last_unblended_logits=None
+        if (not self.training and getattr(self,"prediction_teacher",None) is not None
+                and getattr(self,"prediction_teacher_inference",True)):
+            self.last_unblended_logits=logits.detach()
+            return self.prediction_teacher(logits,batch,getattr(self,"feature_domain","target"),
+                getattr(self,"eval_disabled_modalities",()))
+        return logits
 
     def set_bn_domain(self, domain):
+        self.feature_domain=domain
         if getattr(self, "domain_running_stats", False):
             from weather.domain_running_stats import set_domain
             set_domain(self, domain)
 
     def objective(self, source, target, update, planned_updates, args):
         source_count = len(source["label"])
+        feature_style=getattr(self,"target_feature_style",None)
+        if feature_style is not None:
+            if getattr(args,"domain_forward","reference")!="joint" or getattr(self,"domain_running_stats",False):
+                raise ValueError("Target feature style requires a joint training forward without domain BN")
+            feature_style.begin_step(update,source_count,len(target["rgb"]))
         if self.method == "mdd" and source_count != len(target["rgb"]):
             raise ValueError("The released MDD loss requires equal source/target batch sizes; use full paired batches")
         log_moments = getattr(args, "log_feature_moments", False)
@@ -446,29 +511,42 @@ class AdaptationModel(nn.Module):
             # Preserve the separate domain forwards in these released loops.
             self.set_bn_domain("source")
             fs = self.encode(source)
+            source_object_features=self.last_object_features
             source_fused = self.last_fused if log_moments else None
             source_branches = self.last_features
             source_normalized = self.last_normalized_features
             source_auxiliary = self.last_branch_logits
+            source_teacher=self.last_teacher_logits
+            source_crossmodal=self.last_crossmodal_features
             ys = self.head(fs)
             self.set_bn_domain("target")
             ft = self.encode(target)
+            target_representation_features=self.last_representation_features
             if log_moments:
                 fused_for_diagnostics = torch.cat((source_fused, self.last_fused))
             target_branches = self.last_features
             target_normalized = self.last_normalized_features
             target_auxiliary = self.last_branch_logits
+            target_teacher=self.last_teacher_logits
+            target_crossmodal=self.last_crossmodal_features
             yt = self.head(ft)
             self.last_features = tuple(torch.cat((s, t)) for s, t in zip(source_branches, target_branches))
             self.last_normalized_features = (tuple(torch.cat((s, t)) for s, t in zip(source_normalized, target_normalized))
                                              if getattr(self, "feature_normalization", "none") in {"l2", "unit"} else self.last_features)
             self.last_branch_logits = tuple(torch.cat((s, t)) for s, t in zip(source_auxiliary, target_auxiliary))
+            self.last_teacher_logits=(torch.cat((source_teacher,target_teacher)) if source_teacher is not None else None)
+            self.last_crossmodal_features=(tuple(torch.cat((s,t)) for s,t in zip(source_crossmodal,target_crossmodal))
+                if source_crossmodal is not None else None)
             features, logits = torch.cat((fs, ft)), torch.cat((ys, yt))
         else:
             # MDD/MCC released examples concatenate the domains before BN.
             inputs = {key: torch.cat((source[key], target[key]), 0)
                       for key in getattr(self, "input_keys", ("rgb", "nir", "ais", "ais_mask"))}
-            features = self.encode(inputs)
+            features = self.encode(inputs,source_count=source_count)
+            target_representation_features=(tuple(v[source_count:] for v in self.last_representation_features)
+                if self.last_representation_features is not None else None)
+            source_object_features=(tuple(branch[:source_count] for branch in self.last_object_features)
+                                    if self.last_object_features is not None else None)
             if log_moments:
                 fused_for_diagnostics = self.last_fused
             logits = self.head(features)
@@ -482,6 +560,45 @@ class AdaptationModel(nn.Module):
                           for branch in self.last_branch_logits)
         auxiliary_ce = torch.stack(auxiliary).mean() if auxiliary else ce_source.new_zeros(())
         classification = classification + getattr(self, "auxiliary_source_weight", 0.)*auxiliary_ce
+        object_ce=object_consistency=weighted_object=ce_source.new_zeros(())
+        object_correct=0
+        if getattr(self,"source_object_enabled",False):
+            from weather.source_object_views import source_object_loss
+            object_ce,object_consistency,object_correct=source_object_loss(self,source,source_object_features,args.label_smoothing)
+            weighted_object=args.source_object_ce_weight*object_ce+args.source_object_consistency_weight*object_consistency
+            classification=classification+weighted_object
+        source_prototype_loss=ce_source.new_zeros(())
+        weighted_source_prototype=ce_source.new_zeros(())
+        source_prototype_classes_seen=0
+        if getattr(args,"source_prototype_weight",0)>0:
+            if self.last_crossmodal_features is None:raise RuntimeError("Source prototypes require live crossmodal features")
+            vis,ir=self.last_crossmodal_features
+            source_prototype_loss,source_prototype_classes_seen=self.source_category_memory(vis[:source_count],ir[:source_count],source["label"],
+                args.crossmodal_temperature,getattr(self,"source_class_weights",None))
+            weighted_source_prototype=args.source_prototype_weight*source_prototype_loss
+            classification=classification+weighted_source_prototype
+        source_crossmodal_loss=ce_source.new_zeros(())
+        target_crossmodal_loss=ce_source.new_zeros(())
+        weighted_source_crossmodal=ce_source.new_zeros(())
+        source_pair_cosine=target_pair_cosine=None
+        target_crossmodal_components=None
+        source_crossmodal_weight=getattr(args,"source_crossmodal_weight",0.)
+        target_crossmodal_weight=getattr(args,"target_crossmodal_weight",0.)
+        if source_crossmodal_weight or target_crossmodal_weight:
+            if self.last_crossmodal_features is None:raise RuntimeError("Live crossmodal features were not enabled")
+            from vds2raw.crossmodal_loss import paired_crossmodal_loss
+            vis,ir=self.last_crossmodal_features
+            source_crossmodal_loss,source_pair_cosine=paired_crossmodal_loss(vis[:source_count],ir[:source_count],
+                args.crossmodal_temperature,source["label"])
+            if target_crossmodal_weight and getattr(args,"target_crossmodal_objective","contrastive")=="vicreg":
+                from vds2raw.crossmodal_loss import paired_variance_covariance_loss
+                target_crossmodal_loss,target_pair_cosine,target_crossmodal_components=paired_variance_covariance_loss(
+                    vis[source_count:],ir[source_count:])
+            elif target_crossmodal_weight:
+                target_crossmodal_loss,target_pair_cosine=paired_crossmodal_loss(vis[source_count:],ir[source_count:],args.crossmodal_temperature)
+            if source_crossmodal_weight:
+                weighted_source_crossmodal=source_crossmodal_weight*source_crossmodal_loss
+                classification=classification+weighted_source_crossmodal
         progress = update/max(planned_updates, 1)
         coefficient = 2/(1+math.exp(-10*progress))-1
         domain_accuracy = None
@@ -517,11 +634,82 @@ class AdaptationModel(nn.Module):
         # those untrained parameters. Keep inactive heads outside the loss
         # graph so source-supervision warm-up actually preserves them.
         total = classification+weighted_transfer if weight > 0 else classification
+        weighted_core_transfer=weighted_transfer
+        weighted_target_crossmodal=ce_source.new_zeros(())
+        ramp_fraction=min(max((update+1-warmup)/ramp,0),1)
+        domain_confusion=ce_source.new_zeros(())
+        weighted_domain_confusion=ce_source.new_zeros(())
+        domain_confusion_weight=getattr(args,"domain_confusion_weight",0.)
+        if domain_confusion_weight and ramp_fraction>0:
+            from vds2raw.domain_confusion import encoder_domain_confusion
+            domain_confusion=encoder_domain_confusion(features,logits,self.discriminator,source_count,self.method)
+            weighted_domain_confusion=domain_confusion_weight*ramp_fraction*domain_confusion
+            total=total+weighted_domain_confusion
+            weighted_transfer=weighted_transfer+weighted_domain_confusion
+        if target_crossmodal_weight and ramp_fraction>0:
+            weighted_target_crossmodal=target_crossmodal_weight*ramp_fraction*target_crossmodal_loss
+            total=total+weighted_target_crossmodal
+            weighted_transfer=weighted_transfer+weighted_target_crossmodal
+        teacher_loss=ce_source.new_zeros(())
+        weighted_teacher=teacher_loss
+        teacher_selected=0
+        if getattr(self,"cluster_teacher",None) is not None and getattr(args,"cluster_teacher_weight",0)>0:
+            probabilities=self.last_teacher_logits[source_count:].detach().softmax(1)
+            confidence,guesses=probabilities.max(1)
+            selected=(confidence>=args.cluster_teacher_confidence)&(self.cluster_teacher.reliability[guesses]>0)
+            teacher_selected=int(selected.sum())
+            if teacher_selected:
+                teacher_loss=F.kl_div(yt[selected].log_softmax(1),probabilities[selected],reduction="batchmean")
+                weighted_teacher=args.cluster_teacher_weight*teacher_loss
+                total=total+weighted_teacher
+                weighted_transfer=weighted_transfer+weighted_teacher
+        prediction_distillation=ce_source.new_zeros(())
+        weighted_prediction_distillation=ce_source.new_zeros(())
+        distillation_weight=getattr(args,"prediction_distillation_weight",0.)
+        probability_cache=getattr(self,"target_probability_cache",None)
+        distillation_ready=probability_cache is not None and bool(probability_cache.ready)
+        if distillation_weight and distillation_ready:
+            prediction_distillation=probability_cache(yt,target["path"])
+            weighted_prediction_distillation=distillation_weight*prediction_distillation
+            total=total+weighted_prediction_distillation
+            weighted_transfer=weighted_transfer+weighted_prediction_distillation
+        representation_anchor=ce_source.new_zeros(())
+        weighted_representation_anchor=ce_source.new_zeros(())
+        representation_cosines=None
+        representation_weight=getattr(args,"target_representation_anchor_weight",0.)
+        if representation_weight:
+            cache=getattr(self,"target_representation_cache",None)
+            if cache is None or target_representation_features is None:
+                raise RuntimeError("Initial target representations were not prepared")
+            representation_anchor,representation_cosines=cache(target_representation_features,target["path"])
+            weighted_representation_anchor=representation_weight*representation_anchor
+            total=total+weighted_representation_anchor
+            weighted_transfer=weighted_transfer+weighted_representation_anchor
         return total, {
             "classification": classification, "source_ce": ce_source,
+            "source_object_ce":object_ce,"source_object_consistency":object_consistency,
+            "weighted_source_object":weighted_object,"source_object_correct":object_correct,
             "auxiliary_source_ce": auxiliary_ce, "auxiliary_source_weight": getattr(self, "auxiliary_source_weight", 0.),
             "transfer": transfer, "weighted_transfer": weighted_transfer,
-            "adaptation_graph_in_loss": weight > 0,
+            "weighted_core_transfer":weighted_core_transfer,"cluster_teacher_loss":teacher_loss,
+            "weighted_cluster_teacher":weighted_teacher,"cluster_teacher_selected":teacher_selected,
+            "prediction_distillation_loss":prediction_distillation,
+            "weighted_prediction_distillation":weighted_prediction_distillation,
+            "prediction_distillation_ready":distillation_ready,
+            "target_representation_anchor_loss":representation_anchor,
+            "weighted_target_representation_anchor":weighted_representation_anchor,
+            "target_representation_cosines":representation_cosines,
+            "source_crossmodal_loss":source_crossmodal_loss,"target_crossmodal_loss":target_crossmodal_loss,
+            "weighted_source_crossmodal":weighted_source_crossmodal,"weighted_target_crossmodal":weighted_target_crossmodal,
+            "source_pair_cosine":source_pair_cosine,"target_pair_cosine":target_pair_cosine,
+            "target_crossmodal_components":target_crossmodal_components,
+            **({"target_vicreg_"+key:value for key,value in target_crossmodal_components.items()}
+               if target_crossmodal_components is not None else {}),
+            "source_prototype_loss":source_prototype_loss,"weighted_source_prototype":weighted_source_prototype,
+            "source_prototype_classes_seen":source_prototype_classes_seen,
+            "domain_confusion_loss":domain_confusion,"weighted_domain_confusion":weighted_domain_confusion,
+            "adaptation_graph_in_loss": weight > 0 or teacher_selected>0 or (target_crossmodal_weight>0 and ramp_fraction>0) or (domain_confusion_weight>0 and ramp_fraction>0) or (distillation_weight>0 and distillation_ready) or representation_weight>0,
+            "core_adaptation_graph_in_loss":weight>0,
             "transfer_weight": weight, "grl_coefficient": coefficient,
             "entropy_grl_coefficient": entropy_coefficient if self.method == "cdan" else None,
             "domain_accuracy": domain_accuracy, "source_logits": ys, "target_logits": yt,

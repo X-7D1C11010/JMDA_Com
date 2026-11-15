@@ -38,6 +38,26 @@ from vds2raw.train_adaptation import (
 TARGETS = ("backlight", "rainy", "foggy", "dark")
 
 
+def configure_allocator_budget(device, fraction):
+    if not 0 < fraction <= 1:
+        raise ValueError("CUDA allocator fraction must lie in (0,1]")
+    if device.type=="cuda" and fraction<1:
+        index=device.index if device.index is not None else torch.cuda.current_device()
+        torch.cuda.set_per_process_memory_fraction(fraction,index)
+
+
+def paired_epoch_samplers(source, target, source_batch_size, target_batch_size, seed, method):
+    target_batch_size = target_batch_size if target_batch_size is not None else source_batch_size
+    if min(source_batch_size, target_batch_size) < 2:
+        raise ValueError("Both training domain batch sizes must be at least two")
+    if method == "mdd" and source_batch_size != target_batch_size:
+        raise ValueError("The released MDD objective requires equal source/target batch sizes")
+    steps = max(math.ceil(len(source)/source_batch_size), math.ceil(len(target)/target_batch_size))
+    samplers = [PairedEpochSampler(ds, size, steps, seed+offset)
+                for ds, size, offset in ((source, source_batch_size, 0), (target, target_batch_size, 10000))]
+    return steps, samplers
+
+
 def resolve_weather_settings(args):
     defaults = {"epochs": 100, "lr_scheduler": "reference", "adaptation_warmup_epochs": 0,
                 "early_stopping_patience": 0, "early_stopping_min_epochs": 0,
@@ -132,6 +152,9 @@ class WeatherView(Dataset):
             result["label"] = label
         elif label != -1:
             raise RuntimeError("Target loader returned a real label")
+        if hasattr(self,"source_object_views"):
+            if self.partition!="source_train":raise RuntimeError("Extra object views are source-only")
+            result["source_object_rgb"],result["source_object_is_roi"]=self.source_object_views.sample(index)
         return result
 
     def cache_evaluation_inputs(self, workers=0):
@@ -213,13 +236,82 @@ def prepare_datasets(data_dir, target_name, augment=True):
 def run(args):
     if args.method not in METHODS:
         raise ValueError("Unknown weather adaptation method")
+    if not math.isfinite(args.mcc_temperature) or args.mcc_temperature<=0:
+        raise ValueError("MCC temperature must be finite and positive")
+    if args.checkpoint_vis_blocks and args.image_backbone!="convnext_small":
+        raise ValueError("VIS block checkpointing is defined for ConvNeXt")
+    if (args.calibration_components<2 or args.calibration_shrinkage<=0 or args.cluster_teacher_weight<0 or
+            args.cluster_teacher_temperature<=0 or not 0<=args.cluster_teacher_confidence<=1):
+        raise ValueError("Invalid feature calibration/cluster-teacher settings")
+    if not math.isfinite(args.calibration_adapter_scale) or args.calibration_adapter_scale<=0:
+        raise ValueError("Calibration adapter scale must be finite and positive")
+    if not 0<=args.cluster_association_vis_weight<=1:raise ValueError("Invalid cross-modal association weight")
+    if (not all(math.isfinite(x) and x>=0 for x in (args.source_crossmodal_weight,args.target_crossmodal_weight))
+            or not math.isfinite(args.crossmodal_temperature) or args.crossmodal_temperature<=0):
+        raise ValueError("Invalid paired crossmodal loss settings")
+    if args.crossmodal_projection_dim<0 or args.crossmodal_projection_dim==1:raise ValueError("Invalid contrastive projection width")
+    if (not math.isfinite(args.prediction_teacher_weight) or not 0<=args.prediction_teacher_weight<1
+            or not all(math.isfinite(x) and x>0 for x in
+                (args.prediction_teacher_temperature,args.prediction_student_temperature))):
+        raise ValueError("Invalid frozen prediction teacher settings")
+    if (not math.isfinite(args.prediction_distillation_weight) or args.prediction_distillation_weight<0
+            or not math.isfinite(args.prediction_distillation_sharpening) or args.prediction_distillation_sharpening<=0
+            or args.prediction_distillation_start_epoch<1):
+        raise ValueError("Invalid prediction distillation settings")
+    if not math.isfinite(args.prediction_distillation_encoder_lr_scale) or args.prediction_distillation_encoder_lr_scale<=0:
+        raise ValueError("Invalid post-cache encoder LR scale")
+    if args.prediction_distillation_weight and not args.prediction_teacher_weight:
+        raise ValueError("Prediction distillation requires a frozen probability teacher")
+    if args.prediction_teacher_weight and (args.feature_calibration or args.source_crossmodal_weight
+            or args.target_crossmodal_weight or args.source_prototype_weight or args.domain_confusion_weight
+            or args.target_feature_style_probability or args.source_object_ce_weight or args.source_object_consistency_weight):
+        raise ValueError("Screen the frozen prediction blend independently of other enhancements")
+    if args.target_crossmodal_objective=="vicreg" and args.target_crossmodal_weight and not args.crossmodal_projection_dim:
+        raise ValueError("VICReg crossmodal screening requires explicit training-only projections")
+    if not math.isfinite(args.source_ir_inversion_probability) or not 0<=args.source_ir_inversion_probability<=1:
+        raise ValueError("Invalid source IR inversion probability")
+    if not math.isfinite(args.target_representation_anchor_weight) or args.target_representation_anchor_weight<0:
+        raise ValueError("Invalid target representation anchor weight")
+    if args.target_representation_anchor_weight and (args.feature_calibration or args.prediction_teacher_weight or args.target_feature_style_probability):
+        raise ValueError("Screen target representation anchoring independently of other teacher/style variants")
+    if not all(math.isfinite(x) and 0<=x<=1 for x in (args.source_ir_statistics_probability,args.source_ir_statistics_strength)):
+        raise ValueError("Invalid source IR-statistics augmentation settings")
+    if not math.isfinite(args.source_prototype_weight) or args.source_prototype_weight<0:raise ValueError("Invalid source prototype weight")
+    if not math.isfinite(args.domain_confusion_weight) or args.domain_confusion_weight<0:
+        raise ValueError("Invalid encoder domain-confusion weight")
+    if args.domain_confusion_weight and args.method not in {"dann","cdan"}:
+        raise ValueError("Encoder domain confusion is only defined for DANN/CDAN")
+    if not 0<=args.target_feature_style_probability<=1 or not 0<=args.target_feature_style_source_max<=1:
+        raise ValueError("Invalid target feature-style settings")
+    if not all(math.isfinite(x) and x>=0 for x in (args.source_object_ce_weight,args.source_object_consistency_weight)):
+        raise ValueError("Invalid source object loss weights")
+    object_enabled=bool(args.source_object_ce_weight or args.source_object_consistency_weight)
+    if object_enabled and (not args.source_object_manifest or args.feature_calibration or args.target_feature_style_probability
+                           or args.image_backbone!="convnext_small" or args.domain_running_stats):
+        raise ValueError("Source object views require a manifest and an independent ConvNeXt/no-calibration screen")
+    if args.cluster_teacher_weight and not args.feature_calibration:
+        raise ValueError("Cluster teacher loss requires the explicitly enabled enhancement")
     if args.weather_profile in {"timing_v2", "bn_stable"} and args.method not in {"dann", "deepcoral"}:
         raise ValueError("Historical timing/BN comparison is only defined for DANN and Deep CORAL")
     args.seed = seed_everything(args.seed)
     torch.set_num_threads(args.cpu_threads)
     resolve_weather_settings(args)
+    if object_enabled and args.domain_running_stats:
+        raise ValueError("Source object screening does not combine separate domain BN")
+    if args.target_feature_style_probability and (args.domain_forward!="joint" or args.domain_running_stats or args.feature_calibration):
+        raise ValueError("Feature-style screening requires joint domain forward and no separate calibration/domain BN")
     datasets, audit = prepare_datasets(args.data_dir, args.target, args.augment)
     source, target, source_eval, target_eval, validation = datasets
+    training_cache={"enabled":args.cache_training_images}
+    if args.cache_training_images:
+        from weather.training_image_cache import cache_training_resizes
+        training_cache.update({"source_train":cache_training_resizes(source.dataset),
+                               "target_train":cache_training_resizes(target.dataset)})
+    object_views=None
+    if object_enabled:
+        from weather.source_object_views import SourceObjectViews
+        source.source_object_views=SourceObjectViews(source,args.source_object_manifest,audit["compact_label_map"],args.seed)
+        object_views=source.source_object_views.metadata
     cache_record = {"enabled": args.cache_evaluation, "partitions": {}}
     if args.cache_evaluation:
         cache_started = time.perf_counter()
@@ -232,9 +324,8 @@ def run(args):
         raise FileExistsError(f"Use a new output directory: {output}")
     write_json(output/"dataset_audit.json", audit)
     write_json(output/"evaluation_cache.json", cache_record)
-    args.steps_per_epoch = math.ceil(max(len(source), len(target))/args.batch_size)
-    samplers = [PairedEpochSampler(ds, args.batch_size, args.steps_per_epoch, args.seed+offset)
-                for ds, offset in ((source, 0), (target, 10000))]
+    args.steps_per_epoch, samplers = paired_epoch_samplers(
+        source, target, args.batch_size, args.target_batch_size, args.seed, args.method)
     loader_args = {"num_workers": args.num_workers, "pin_memory": torch.cuda.is_available()}
     if args.num_workers:
         loader_args.update(persistent_workers=True, prefetch_factor=2, timeout=300)
@@ -242,6 +333,7 @@ def run(args):
                           generator=torch.Generator().manual_seed(args.seed+20000+i), **loader_args)
                for i, (ds, sampler) in enumerate(zip((source, target), samplers))]
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    configure_allocator_budget(device,args.cuda_memory_fraction)
     classes = len(audit["original_class_ids"])
     model = AdaptationModel(args.method, args.weights, not args.no_pretrained,
                             num_classes=classes, use_ais=False, ir_channels=3,
@@ -251,7 +343,18 @@ def run(args):
                             freeze_image_encoders=args.freeze_image_encoders,
                             unit_method_features=args.unit_method_features,
                             encoder_training_scope=args.encoder_training_scope,
-                            classifier_layout=args.classifier_layout).to(device)
+                            classifier_layout=args.classifier_layout,
+                            ir_backbone=args.ir_backbone, ir_weights_path=args.ir_weights,
+                            ir_feature_mode=args.ir_feature_mode,
+                            calibration_feature_dim=args.calibration_components if args.feature_calibration else None).to(device)
+    model.encoder_precision = args.encoder_precision
+    model.vis_gradient_checkpointing=args.checkpoint_vis_blocks
+    if args.method=="mcc":
+        model.mcc.temperature=args.mcc_temperature
+    if args.ir_training_scope=="all_used_layers":
+        if not hasattr(model.nir_encoder,"unfreeze_all_used_layers"):
+            raise ValueError("Full IR layer policy requires the declared UNIP encoder")
+        model.nir_encoder.unfreeze_all_used_layers()
     if args.initial_vis_weight is not None:
         desired = args.initial_vis_weight
         if not .05 < desired < .95:
@@ -268,21 +371,122 @@ def run(args):
     source_counts, source_weights = source_classification_weights(source.dataset.samples, classes)
     if args.source_class_balance:
         model.source_class_weights = source_weights.to(device)
+    enhancement={"enabled":False}
+    if args.prediction_teacher_weight:
+        from weather.prediction_teacher import prepare_prediction_teacher
+        prediction_metadata=prepare_prediction_teacher(model,source_eval,target_eval,device,
+            args.prediction_teacher_weights,args.prediction_teacher_weight,
+            args.prediction_teacher_temperature,args.prediction_student_temperature,args.seed)
+        enhancement={"enabled":True,"variant_family":"core_plus_frozen_cluster_probability_blend",
+            "prediction_teacher":prediction_metadata}
+        write_json(output/"prediction_teacher_audit.json",prediction_metadata)
+        if args.prediction_distillation_weight:
+            from weather.prediction_distillation import TargetProbabilityCache
+            model.prediction_teacher_inference=False
+            model.target_probability_cache=TargetProbabilityCache(target_eval.paths,classes).to(device)
+            prediction_metadata.update(extra_inference_image_encoders=0,training_only=True,
+                student_objective_changed=True,inference="student only; ensemble prepares training pseudo-probabilities")
+            enhancement.update(variant_family="core_plus_cached_ensemble_target_distillation",
+                prediction_distillation_weight=args.prediction_distillation_weight,
+                prediction_distillation_start_epoch=args.prediction_distillation_start_epoch,
+                prediction_distillation_encoder_lr_scale=args.prediction_distillation_encoder_lr_scale,
+                prediction_distillation_sharpening=args.prediction_distillation_sharpening)
+            write_json(output/"prediction_teacher_audit.json",prediction_metadata)
+    model.source_object_enabled=object_enabled
+    if args.source_crossmodal_weight or args.target_crossmodal_weight or args.source_prototype_weight:
+        if model.image_feature_dim!=model.ir_feature_dim and not args.crossmodal_projection_dim:
+            raise ValueError("Unequal encoder widths require a declared train-only contrastive projection")
+        if not any(p.requires_grad for encoder in (model.rgb_encoder,model.nir_encoder) for p in encoder.parameters()):
+            raise ValueError("Crossmodal losses require at least one trainable image encoder")
+        if args.feature_calibration:raise ValueError("Screen contrastive and cluster enhancements separately")
+        model.crossmodal_alignment_enabled=True
+        model.crossmodal_stop_gradient=args.crossmodal_stop_gradient
+        projection={"width":0,"trainable_parameters":0,"type":"raw equal-width features"}
+        if args.crossmodal_projection_dim:
+            from vds2raw.crossmodal_loss import install_crossmodal_projectors
+            projection=install_crossmodal_projectors(model,args.crossmodal_projection_dim,args.seed)
+        if args.source_prototype_weight:
+            from vds2raw.crossmodal_loss import SourceCategoryMemory
+            model.source_category_memory=SourceCategoryMemory(classes,args.crossmodal_projection_dim or model.image_feature_dim).to(device)
+        enhancement={"enabled":True,"variant_family":"core_plus_paired_crossmodal_alignment",
+            "source_supervised_crossmodal_weight":args.source_crossmodal_weight,
+            "source_prototype_weight":args.source_prototype_weight,
+            "target_instance_crossmodal_weight":args.target_crossmodal_weight,"temperature":args.crossmodal_temperature,
+            "target_crossmodal_objective":args.target_crossmodal_objective,
+            "target_crossmodal_coefficients":({"invariance":1.,"variance":1.,"covariance":.04}
+                if args.target_crossmodal_objective=="vicreg" else None),
+            "target_positives":"exact VIS/IR pair index; no target class labels",
+            "source_positives":"source class labels across VIS and IR",
+            "paired_alignment_changes_image_preprocessing":False,"projection":projection,
+            "stop_contrastive_gradient_at_encoder":args.crossmodal_stop_gradient,
+            "extra_trainable_parameters":projection["trainable_parameters"]}
+        if args.target_crossmodal_weight and args.target_crossmodal_objective=="vicreg":
+            enhancement["variant_family"] += "_negative_free_target_pairs"
+    if args.feature_calibration:
+        from weather.prepare_calibrated_initialization import prepare_calibrated_initialization
+        enhancement=prepare_calibrated_initialization(model,source_eval,target_eval,device,args)
+        write_json(output/"calibration_audit.json",enhancement)
+    if args.domain_confusion_weight:
+        family=enhancement["variant_family"]+"_and_domain_confusion" if enhancement["enabled"] else "core_plus_encoder_domain_confusion"
+        enhancement.update(enabled=True,variant_family=family,domain_confusion_weight=args.domain_confusion_weight,
+            domain_confusion={"objective":"uniform-domain BCE; encoder-only additional loss",
+                "discriminator_parameters_detached":True,"class_probabilities_and_entropy_weights_detached":True,
+                "original_discriminator_BCE_retained":True,"target_instance_labels_used":False})
+    if args.target_feature_style_probability:
+        from weather.target_feature_style import install_target_feature_style
+        style=install_target_feature_style(model,args.target_feature_style_probability,args.target_feature_style_source_max,args.seed)
+        family=enhancement["variant_family"]+"_and_target_feature_style" if enhancement["enabled"] else "core_plus_target_feature_style"
+        enhancement.update(enabled=True,variant_family=family,target_feature_style=style)
+    if object_enabled:
+        family=enhancement["variant_family"]+"_and_source_object_views" if enhancement["enabled"] else "core_plus_source_object_views"
+        enhancement.update(enabled=True,variant_family=family,source_object_views=object_views,
+            source_object_ce_weight=args.source_object_ce_weight,
+            source_object_consistency_weight=args.source_object_consistency_weight)
+    if args.source_ir_statistics_probability:
+        family=enhancement["variant_family"]+"_and_source_IR_statistics" if enhancement["enabled"] else "core_plus_source_IR_statistics"
+        enhancement.update(enabled=True,variant_family=family,source_IR_statistics={
+            "probability":args.source_ir_statistics_probability,"strength":args.source_ir_statistics_strength,
+            "scope":"source IR only; target_train moments detached; evaluation unchanged",
+            "core_loss_changed":False,"extra_inference_parameters":0})
+    if args.target_representation_anchor_weight:
+        from weather.target_representation_anchor import prepare_target_representation_cache
+        model.target_representation_cache,anchor_metadata=prepare_target_representation_cache(model,target_eval,device,output,args.eval_batch_size)
+        family=enhancement["variant_family"]+"_and_initial_target_anchor" if enhancement["enabled"] else "core_plus_initial_target_anchor"
+        enhancement.update(enabled=True,variant_family=family,target_representation_anchor=anchor_metadata,
+            target_representation_anchor_weight=args.target_representation_anchor_weight,
+            target_representation_anchor_active_from_update=1)
     optimizer, scheduler, schedule_per_update = make_optimizer(model, args)
     fda_generator = torch.Generator(device=device).manual_seed(args.seed+33000) if args.fda_beta else None
     zoom_generator = (torch.Generator(device=device).manual_seed(args.seed+34000)
                       if args.source_zoom_min_area < 1 and args.source_zoom_probability else None)
+    weather_generator = (torch.Generator(device=device).manual_seed(args.seed+35000)
+                         if args.source_weather_probability else None)
+    aspect_generator = (torch.Generator(device=device).manual_seed(args.seed+36000)
+                        if args.source_aspect_min != 1 or args.source_aspect_max != 1 else None)
+    polarity_generator=(torch.Generator(device=device).manual_seed(args.seed+38000) if args.source_ir_inversion_probability else None)
+    ir_statistics_generator=(torch.Generator(device=device).manual_seed(args.seed+39000) if args.source_ir_statistics_probability else None)
     validation_control = ValidationLossControl(args)
     inputs = list(Path(args.data_dir).glob("*.txt"))+list(Path(args.data_dir).glob("*.tsv"))
+    if object_enabled:inputs.append(Path(args.source_object_manifest))
     if not args.no_pretrained:
         inputs.append(Path(args.weights))
+    if args.ir_backbone:
+        inputs.append(Path(args.ir_weights))
+    if args.prediction_teacher_weight:inputs.append(Path(args.prediction_teacher_weights))
     config = {"method": args.method, "protocol": "UDA", "source": "sunny", "target": args.target,
               "modalities": ["VIS", "IR"], "core": "vds2raw.adaptation.AdaptationModel",
+              "enhancement":enhancement,
               "weather_profile": args.weather_profile, "domain_forward": args.domain_forward,
               "target_training_labels_used": False, "target_test_available": False,
               "selection_partition": "target_val", "evaluation_protocol": "best_target_val_within_budget",
-              "architecture": f"two independent ImageNet {args.image_backbone} encoders; learned global weights; feature concatenation",
+              "architecture": (f"ImageNet {args.image_backbone} VIS; official {args.ir_backbone} IR; learned global weights; feature concatenation"
+                               if args.ir_backbone else f"two independent ImageNet {args.image_backbone} encoders; learned global weights; feature concatenation"),
               "image_backbone": args.image_backbone, "freeze_image_encoders": getattr(model, "freeze_image_encoders", args.freeze_image_encoders),
+              "ir_backbone": args.ir_backbone or args.image_backbone,
+              "encoder_precision": args.encoder_precision,
+              "checkpoint_vis_blocks":args.checkpoint_vis_blocks,
+              "ir_training_scope": args.ir_training_scope,
+              "infrared_pretraining": getattr(model.nir_encoder, "provenance", None),
               "encoder_training_scope": getattr(model, "encoder_training_scope", "all"),
               "unit_method_features": args.unit_method_features,
               "classifier_layout": args.classifier_layout,
@@ -293,11 +497,19 @@ def run(args):
               "feature_normalization": args.feature_normalization,
               "domain_running_stats": args.domain_running_stats,
               "evaluation_cache": cache_record,
+              "training_resize_cache":training_cache,
               "augmentation": "JMDA paired Resize256x256/RandomCrop224/HFlip; eval Resize224x224; VIS ImageNet norm, IR .5/.5",
               "extra_training_augmentation": {"FDA_beta": args.fda_beta, "FDA_probability": args.fda_probability,
                                                "source_zoom_min_area": args.source_zoom_min_area,
-                                               "source_zoom_probability": args.source_zoom_probability},
+                                               "source_zoom_probability": args.source_zoom_probability,
+                                               "source_weather_probability": args.source_weather_probability,
+                                               "source_ir_inversion_probability":args.source_ir_inversion_probability,
+                                               "source_ir_statistics_probability":args.source_ir_statistics_probability,
+                                               "source_ir_statistics_strength":args.source_ir_statistics_strength,
+                                               "source_aspect_min": args.source_aspect_min, "source_aspect_max": args.source_aspect_max,
+                                               "weather_augmentation_scope": "source_train only; validation unchanged"},
               "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
+              "per_domain_batch_sizes": {"source":args.batch_size,"target":args.target_batch_size or args.batch_size},
               "sampler": "complete larger-domain coverage; cycle shorter domain; fixed full per-domain batches",
               "optimizer": type(optimizer).__name__, "dataset_audit": audit,
               "optimizer_groups": [{"lr": g["lr"], "role": g["role"], "weight_decay": g["weight_decay"],
@@ -309,6 +521,13 @@ def run(args):
                                ROOT/"tools/uda_multimodal.py", ROOT/"tools/uda_data.py")}}
     write_json(output/"run_config.json", config)
     print("WEATHER_PROTOCOL: "+json.dumps({**audit, "arguments": vars(args)}), flush=True)
+    if args.feature_calibration:
+        initial_dir=output/"initialization_diagnostic"
+        initial_dir.mkdir()
+        initial_metrics,_=evaluate(model,validation,device,0,initial_dir,args.eval_batch_size,
+                                   event_prefix="INITIALIZATION_DIAGNOSTIC_NOT_TRAINED_RESULT")
+        write_json(output/"initialization_diagnostic.json",{"target_val":initial_metrics,
+            "student_optimizer_updates":0,"formal_method_result":False,"used_for_best_epoch_selection":False})
     best_state = best_metrics = best_records = None
     best_epoch = update = stale = 0
     screening = bool(args.stop_after_epochs and args.stop_after_epochs < args.epochs)
@@ -316,15 +535,39 @@ def run(args):
     stop_reason = "screening_epoch_limit" if screening else "max_epochs"
     times, history, peak_reserved = [], [], None
     for epoch in range(1, epoch_limit+1):
+        if args.prediction_distillation_weight and epoch==args.prediction_distillation_start_epoch:
+            from weather.prediction_distillation import prepare_cached_target_probabilities
+            enhancement["prediction_distillation"]=prepare_cached_target_probabilities(model,target_eval,device,
+                output,epoch,args.prediction_distillation_sharpening,args.seed)
+            from weather.encoder_schedule import scale_image_lr_for_cached_distillation
+            enhancement["prediction_distillation"]["encoder_LR_phase"]=scale_image_lr_for_cached_distillation(
+                optimizer,scheduler,args.prediction_distillation_encoder_lr_scale)
+            write_json(output/"prediction_distillation_audit.json",enhancement["prediction_distillation"])
         for sampler in samplers:
             sampler.epoch = epoch-1
         model.train()
+        from weather.encoder_schedule import apply_encoder_warmup
+        encoder_policy = apply_encoder_warmup(model, epoch, args.encoder_warmup_freeze_epochs)
+        from weather.encoder_schedule import lower_image_lr_after_source_warmup
+        encoder_policy.update(lower_image_lr_after_source_warmup(optimizer, scheduler, epoch,
+            args.adaptation_warmup_epochs, args.image_adaptation_lr_scale))
+        encoder_policy["phase"] = ("source_supervised" if epoch <= args.adaptation_warmup_epochs else "domain_adaptation")
         bn_policy = apply_batchnorm_policy(model, epoch, args.freeze_bn_after_epochs, args.freeze_bn_scope)
+        event(output, "encoder_trainability.jsonl", {"epoch": epoch, **encoder_policy})
         synchronize(device)
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         started = time.perf_counter()
         totals = {key: 0.0 for key in ("classification", "source_ce", "transfer", "weighted_transfer")}
+        if args.prediction_distillation_weight:
+            totals.update(prediction_distillation_loss=0.,weighted_prediction_distillation=0.)
+        if args.source_crossmodal_weight or args.target_crossmodal_weight or args.source_prototype_weight:
+            totals.update({key:0. for key in ("source_crossmodal_loss","target_crossmodal_loss","weighted_source_crossmodal","weighted_target_crossmodal")})
+        if args.target_crossmodal_weight and args.target_crossmodal_objective=="vicreg":
+            totals.update({"target_vicreg_"+key:0. for key in ("invariance","variance","covariance","VIS_mean_std","IR_mean_std")})
+        if args.source_prototype_weight:totals.update(source_prototype_loss=0.,weighted_source_prototype=0.)
+        if args.domain_confusion_weight:totals.update(domain_confusion_loss=0.,weighted_domain_confusion=0.)
+        if object_enabled:totals.update(source_object_ce=0.,source_object_consistency=0.,weighted_source_object=0.)
         seen_source, seen_target = set(), set()
         source_correct = source_seen = target_seen = steps = 0
         for step, (sb, tb) in enumerate(zip(*loaders), 1):
@@ -338,6 +581,22 @@ def run(args):
             from weather.source_zoom import augment_source_zoom
             sb, zoom_record = augment_source_zoom(sb, args.source_zoom_min_area, args.source_zoom_probability, zoom_generator)
             input_augmentation.update(zoom_record)
+            from weather.weather_augmentation import augment_source_weather
+            sb, weather_record = augment_source_weather(sb, args.target, args.source_weather_probability, weather_generator)
+            input_augmentation.update(weather_record)
+            if args.source_ir_statistics_probability:
+                from weather.infrared_statistics import augment_source_ir_statistics
+                sb,ir_statistics_record=augment_source_ir_statistics(sb,tb,args.source_ir_statistics_probability,
+                    args.source_ir_statistics_strength,ir_statistics_generator)
+                input_augmentation.update(ir_statistics_record)
+            if args.source_ir_inversion_probability:
+                from weather.infrared_polarity import augment_source_ir_polarity
+                sb,polarity_record=augment_source_ir_polarity(sb,args.source_ir_inversion_probability,polarity_generator)
+                input_augmentation.update(polarity_record)
+            from weather.source_aspect import augment_source_aspect
+            sb, aspect_record = augment_source_aspect(sb, args.source_aspect_min, args.source_aspect_max,
+                                                    args.source_aspect_probability, aspect_generator)
+            input_augmentation.update(aspect_record)
             optimizer.zero_grad(set_to_none=True)
             loss, details = model.objective(sb, tb, update, args.epochs*args.steps_per_epoch, args)
             if not bool(torch.isfinite(loss)):
@@ -346,13 +605,49 @@ def run(args):
                 gradients = gradient_diagnostics(model, details["classification"], details["weighted_transfer"])
                 gradients["VIS"], gradients["IR"] = gradients.pop("RGB"), gradients.pop("NIR")
                 gradients.pop("AIS")
-                event(output, "gradients.jsonl", {"epoch": epoch, "update": update+1, "gradients": gradients})
+                separate={}
+                if args.feature_calibration:
+                    separate={"core":gradient_diagnostics(model,details["classification"],details["weighted_core_transfer"]),
+                              "cluster_teacher":gradient_diagnostics(model,details["classification"],details["weighted_cluster_teacher"])}
+                if args.source_crossmodal_weight or args.target_crossmodal_weight or args.source_prototype_weight:
+                    separate={"core":gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"]),
+                        "source_crossmodal":gradient_diagnostics(model,details["source_ce"],details["weighted_source_crossmodal"]),
+                        "target_crossmodal":gradient_diagnostics(model,details["source_ce"],details["weighted_target_crossmodal"])}
+                    if args.source_prototype_weight:
+                        separate["source_prototypes"]=gradient_diagnostics(model,details["source_ce"],details["weighted_source_prototype"])
+                if args.domain_confusion_weight:
+                    if "core" not in separate:
+                        separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
+                    separate["domain_confusion"]=gradient_diagnostics(model,details["source_ce"],details["weighted_domain_confusion"])
+                if object_enabled:
+                    if "core" not in separate:separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
+                    separate["source_object_views"]=gradient_diagnostics(model,details["source_ce"],details["weighted_source_object"])
+                if args.prediction_distillation_weight:
+                    if "core" not in separate:separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
+                    separate["prediction_distillation"]=gradient_diagnostics(model,details["source_ce"],details["weighted_prediction_distillation"])
+                if args.target_representation_anchor_weight:
+                    if "core" not in separate:separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
+                    separate["target_representation_anchor"]=gradient_diagnostics(model,details["source_ce"],details["weighted_target_representation_anchor"])
+                event(output, "gradients.jsonl", {"epoch": epoch, "update": update+1, "gradients": gradients,"enhancement_components":separate})
             norms = feature_norms(model.last_features, len(sb["label"]), names=("VIS", "IR"))
+            target_diagnostics = None
+            if args.log_feature_moments:
+                from weather.target_batch_diagnostics import target_batch_diagnostics
+                target_diagnostics = target_batch_diagnostics(details["target_logits"],tb["path"],
+                    model.mcc.temperature if args.method=="mcc" else None)
             loss.backward()
             unclipped_norm = (float(torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip_norm,
                                                                error_if_nonfinite=True))
                               if args.gradient_clip_norm else None)
+            sampled = None
+            if args.log_parameter_updates and (step == len(loaders[0]) or (args.max_train_batches and step == args.max_train_batches)):
+                from weather.encoder_schedule import capture_parameter_sample
+                sampled = capture_parameter_sample(model)
             optimizer.step()
+            if sampled is not None:
+                from weather.encoder_schedule import parameter_update_record
+                event(output, "parameter_updates.jsonl", {"epoch": epoch, "update": update+1,
+                      "sampled_parameters": parameter_update_record(sampled, optimizer)})
             source_correct += int((details["source_logits"].argmax(1) == sb["label"]).sum())
             source_seen += len(sb["label"])
             target_seen += len(tb["rgb"])
@@ -364,12 +659,45 @@ def run(args):
             event(output, "updates.jsonl", {"epoch": epoch, "update": update, **values,
                   "transfer_weight": details["transfer_weight"], "grl_coefficient": details["grl_coefficient"],
                   "adaptation_graph_in_loss": details["adaptation_graph_in_loss"],
+                  "core_adaptation_graph_in_loss":details["core_adaptation_graph_in_loss"],
                   "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
                   "entropy_grl_coefficient": details["entropy_grl_coefficient"],
                   "auxiliary_source_ce": float(details["auxiliary_source_ce"].detach()),
                   "auxiliary_source_weight": details["auxiliary_source_weight"],
+                  "weighted_core_transfer":float(details["weighted_core_transfer"].detach()),
+                  "cluster_teacher_loss":float(details["cluster_teacher_loss"].detach()),
+                  "weighted_cluster_teacher":float(details["weighted_cluster_teacher"].detach()),
+                  "cluster_teacher_selected":details["cluster_teacher_selected"],
+                  "prediction_distillation_loss":float(details["prediction_distillation_loss"].detach()),
+                  "weighted_prediction_distillation":float(details["weighted_prediction_distillation"].detach()),
+                  "prediction_distillation_ready":details["prediction_distillation_ready"],
+                  "target_representation_anchor_loss":float(details["target_representation_anchor_loss"].detach()),
+                  "weighted_target_representation_anchor":float(details["weighted_target_representation_anchor"].detach()),
+                  "target_representation_cosines":details["target_representation_cosines"],
+                  "source_crossmodal_loss":float(details["source_crossmodal_loss"].detach()),
+                  "target_crossmodal_loss":float(details["target_crossmodal_loss"].detach()),
+                  "target_crossmodal_objective":args.target_crossmodal_objective,
+                  **({"target_vicreg_"+k:float(v.detach()) for k,v in details["target_crossmodal_components"].items()}
+                     if details["target_crossmodal_components"] is not None else {}),
+                  "weighted_source_crossmodal":float(details["weighted_source_crossmodal"].detach()),
+                  "weighted_target_crossmodal":float(details["weighted_target_crossmodal"].detach()),
+                  "source_pair_cosine":float(details["source_pair_cosine"]) if details["source_pair_cosine"] is not None else None,
+                  "target_pair_cosine":float(details["target_pair_cosine"]) if details["target_pair_cosine"] is not None else None,
+                  "source_prototype_loss":float(details["source_prototype_loss"].detach()),
+                  "weighted_source_prototype":float(details["weighted_source_prototype"].detach()),
+                  "source_prototype_classes_seen":details["source_prototype_classes_seen"],
+                  "domain_confusion_loss":float(details["domain_confusion_loss"].detach()),
+                  "weighted_domain_confusion":float(details["weighted_domain_confusion"].detach()),
+                  "source_object_ce":float(details["source_object_ce"].detach()),
+                  "source_object_consistency":float(details["source_object_consistency"].detach()),
+                  "weighted_source_object":float(details["weighted_source_object"].detach()),
+                  "source_object_correct":details["source_object_correct"],
+                  "source_object_roi_samples":int(sb["source_object_is_roi"].sum()) if object_enabled else 0,
+                  "target_feature_style":model.target_feature_style.diagnostics() if args.target_feature_style_probability else None,
                   "gradient_norm_before_clipping": unclipped_norm,
                   "input_augmentation": input_augmentation,
+                  "source_batch_unique_samples": len(set(sb["path"])),
+                  "target_batch_diagnostics": target_diagnostics,
                   "source_ce_unweighted": float(details["source_ce_unweighted"]),
                   "domain_feature_moments": details["domain_feature_moments"],
                   "method_feature_norms": details["method_feature_norms"],
@@ -432,6 +760,11 @@ def run(args):
         if stop:
             stop_reason = "validation_"+args.early_stopping_monitor+"_patience"
             break
+    if args.source_branch_probe:
+        from weather.branch_probe import source_branch_probe
+        final_probe = source_branch_probe(model, source_eval, validation, device, args.eval_batch_size, args.seed)
+        final_probe.update(epoch=len(history), stage="last_epoch_before_best_restore")
+        write_json(output/"source_branch_probe_final.json", final_probe)
     model.load_state_dict(best_state, strict=True)
     sensitivity = None
     if args.modality_diagnostics:
@@ -441,7 +774,25 @@ def run(args):
             raise RuntimeError("Restored validation metrics differ from selected metrics")
         model.load_state_dict(best_state, strict=True)
     write_json(output/"selected_target_val_predictions.json", best_records)
+    selected_features=None
+    if args.cache_best_features:
+        from weather.feature_cache import cache_selected_features
+        selected_features=cache_selected_features(model,(source_eval,target_eval,validation),device,output,best_epoch,args.eval_batch_size)
+    if args.source_branch_probe:
+        from weather.branch_probe import source_branch_probe
+        probe = source_branch_probe(model, source_eval, validation, device, args.eval_batch_size, args.seed)
+        probe["selected_epoch"] = best_epoch
+        write_json(output/"source_branch_probe.json", probe)
     complexity = profile(model, validation, device, times, peak_reserved)
+    if args.prediction_teacher_weight:
+        complexity["teacher_preparation_time_s"]=enhancement["prediction_teacher"]["preparation_time_s"]
+        complexity["pseudo_probability_preparation_time_s"]=enhancement.get("prediction_distillation",{}).get("preparation_time_s",0.)
+        complexity["optimizer_and_teacher_preparation_time_s"]=(complexity["total_train_time_s"]
+            +complexity["teacher_preparation_time_s"]+complexity["pseudo_probability_preparation_time_s"])
+    if args.target_representation_anchor_weight:
+        complexity["target_representation_preparation_time_s"]=enhancement["target_representation_anchor"]["preparation_time_s"]
+        complexity["optimizer_and_representation_preparation_time_s"]=(complexity["total_train_time_s"]
+            +complexity["target_representation_preparation_time_s"])
     for key in ("total_params", "trainable_params", "inference_GFLOPs", "total_train_time_s", "train_epoch_mean_s", "latency_mean_ms", "throughput_samples_s"):
         if not math.isfinite(complexity[key]) or complexity[key] <= 0:
             raise RuntimeError(f"Invalid complexity metric: {key}")
@@ -457,12 +808,21 @@ def run(args):
     result = {"method": args.method, "target": args.target, "seed": args.seed, "protocol": "UDA",
               "core": "vds2raw.adaptation.AdaptationModel", "modalities": ["VIS", "IR"],
               "optimizer": type(optimizer).__name__,
+              "selected_feature_cache":selected_features,
+              "enhancement":enhancement,
+              "mcc_temperature": args.mcc_temperature if args.method=="mcc" else None,
               "weather_profile": args.weather_profile, "domain_forward": args.domain_forward,
               "image_backbone": args.image_backbone, "freeze_image_encoders": getattr(model, "freeze_image_encoders", args.freeze_image_encoders),
+              "ir_backbone": args.ir_backbone or args.image_backbone,
+              "encoder_precision": args.encoder_precision,
+              "ir_training_scope": args.ir_training_scope,
+              "infrared_pretraining": getattr(model.nir_encoder, "provenance", None),
+              "image_adaptation_lr_scale": args.image_adaptation_lr_scale,
               "encoder_training_scope": getattr(model, "encoder_training_scope", "all"),
               "unit_method_features": args.unit_method_features,
               "classifier_layout": args.classifier_layout,
               "selected_epoch": best_epoch, "completed_epochs": len(history), "optimizer_updates": update,
+              "per_domain_batch_sizes": {"source":args.batch_size,"target":args.target_batch_size or args.batch_size},
               "stop_reason": stop_reason, "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
               "freeze_bn_after_epochs": args.freeze_bn_after_epochs, "modality_diagnostics": sensitivity,
               "freeze_bn_scope": args.freeze_bn_scope, "feature_normalization": args.feature_normalization,
@@ -471,7 +831,13 @@ def run(args):
               "screening_only": screening, "planned_epochs": args.epochs,
               "input_augmentation": {"FDA_beta": args.fda_beta, "FDA_probability": args.fda_probability,
                                      "source_zoom_min_area": args.source_zoom_min_area,
-                                     "source_zoom_probability": args.source_zoom_probability},
+                                     "source_zoom_probability": args.source_zoom_probability,
+                                     "source_weather_probability": args.source_weather_probability,
+                                     "source_ir_inversion_probability":args.source_ir_inversion_probability,
+                                     "source_ir_statistics_probability":args.source_ir_statistics_probability,
+                                     "source_ir_statistics_strength":args.source_ir_statistics_strength},
+              "source_aspect": {"minimum": args.source_aspect_min, "maximum": args.source_aspect_max,
+                                "probability": args.source_aspect_probability},
               "evaluation_protocol": "best_target_val_within_budget", "target_test_available": False,
               "target_training_labels_used": False, "target_val": best_metrics, "complexity": complexity,
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
@@ -491,18 +857,80 @@ def parser():
     p.add_argument("--freeze-bn-after-epochs", type=int, default=None)
     p.add_argument("--freeze-bn-scope", choices=("all", "encoders"), default=None)
     p.add_argument("--feature-normalization", choices=("none", "l2", "unit"), default=None)
+    p.add_argument("--feature-calibration",action="store_true",help="Explicit enhanced variant: training-only statistics plus source-mapped target cluster initialization")
+    p.add_argument("--calibration-components",type=int,default=32)
+    p.add_argument("--calibration-shrinkage",type=float,default=.1)
+    p.add_argument("--calibration-adapter-scale",type=float,default=.1)
+    p.add_argument("--cluster-teacher-weight",type=float,default=0.)
+    p.add_argument("--cluster-teacher-confidence",type=float,default=.4)
+    p.add_argument("--cluster-teacher-temperature",type=float,default=.1)
+    p.add_argument("--source-crossmodal-weight",type=float,default=0.)
+    p.add_argument("--source-prototype-weight",type=float,default=0.)
+    p.add_argument("--domain-confusion-weight",type=float,default=0.,
+                   help="Opt-in additional encoder-only uniform-domain loss for saturated DANN/CDAN discriminators")
+    p.add_argument("--target-feature-style-probability",type=float,default=0.,
+                   help="Explicit enhancement: source feature statistics mixed with unlabelled target references during joint training")
+    p.add_argument("--target-feature-style-source-max",type=float,default=.5)
+    p.add_argument("--source-object-manifest",default=None)
+    p.add_argument("--source-object-ce-weight",type=float,default=0.)
+    p.add_argument("--source-object-consistency-weight",type=float,default=0.)
+    p.add_argument("--cache-training-images",action="store_true")
+    p.add_argument("--target-crossmodal-weight",type=float,default=0.)
+    p.add_argument("--prediction-teacher-weight",type=float,default=0.)
+    p.add_argument("--prediction-distillation-weight",type=float,default=0.)
+    p.add_argument("--target-representation-anchor-weight",type=float,default=0.,
+                   help="Opt-in training cosine loss to initial target_train encoder features; no target labels or added inference encoder")
+    p.add_argument("--prediction-distillation-encoder-lr-scale",type=float,default=1.)
+    p.add_argument("--prediction-distillation-start-epoch",type=int,default=2)
+    p.add_argument("--prediction-distillation-sharpening",type=float,default=.5)
+    p.add_argument("--prediction-teacher-temperature",type=float,default=1.)
+    p.add_argument("--prediction-student-temperature",type=float,default=1.)
+    p.add_argument("--prediction-teacher-weights",default=None)
+    p.add_argument("--target-crossmodal-objective",choices=("contrastive","vicreg"),default="contrastive",
+                   help="Opt-in negative-free target-pair regularizer; original method cores remain separate")
+    p.add_argument("--crossmodal-temperature",type=float,default=.2)
+    p.add_argument("--crossmodal-projection-dim",type=int,default=0,help="Opt-in training-only nonlinear projection; required for unequal modality widths")
+    p.add_argument("--crossmodal-stop-gradient",choices=("none","vis","ir"),default="none")
+    p.add_argument("--source-ir-inversion-probability",type=float,default=0.)
+    p.add_argument("--cache-best-features",action="store_true")
+    p.add_argument("--cluster-association",choices=("source_votes","source_prototypes","source_neighbors","source_trimmed"),default="source_votes")
+    p.add_argument("--cluster-neighbors",type=int,default=3)
+    p.add_argument("--cluster-trim-fraction",type=float,default=.25)
+    p.add_argument("--cluster-crossmodal-association",action="store_true")
+    p.add_argument("--cluster-association-vis-weight",type=float,default=.75)
+    p.add_argument("--cluster-initialization",choices=("kmeans++","source_prototypes"),default="kmeans++")
     p.add_argument("--auxiliary-source-weight", type=float, default=None)
     p.add_argument("--source-class-balance", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--gradient-clip-norm", type=float, default=None)
     p.add_argument("--modality-diagnostics", action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--source-branch-probe", action="store_true",
+                   help="Separate diagnostic: fit branch linear probes using source labels only")
+    p.add_argument("--encoder-warmup-freeze-epochs", type=int, default=0,
+                   help="Optional: keep encoder weights fixed before joint image/domain adaptation")
+    p.add_argument("--log-parameter-updates", action="store_true",
+                   help="Record actual optimizer changes in representative encoder/head/gate parameters")
     p.add_argument("--domain-forward", choices=("reference", "joint"), default=None)
     p.add_argument("--log-feature-moments", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--save-dir", default=str(ROOT/"runs/weather_vds_core"))
     p.add_argument("--weights", default=str(ROOT/"pretrained_weights/torch/hub/checkpoints/resnet18-f37072fd.pth"))
     p.add_argument("--image-backbone", choices=("resnet18", "convnext_small"), default="resnet18")
+    p.add_argument("--checkpoint-vis-blocks",action="store_true",
+                   help="Optional activation checkpointing inside the original ConvNeXt; keeps its module structure and outputs")
+    p.add_argument("--ir-backbone", choices=("unip_tiny", "unip_small"), default=None,
+                   help="Opt-in official infrared pretraining; existing defaults stay unchanged")
+    p.add_argument("--ir-weights", default=None)
+    p.add_argument("--ir-feature-mode", choices=("patch_mean", "cls", "qk_mean", "last4", "cls_attention"), default="patch_mean")
+    p.add_argument("--encoder-precision", choices=("fp32", "bf16"), default="fp32",
+                   help="Optional CUDA BF16 encoder forward; method heads and all losses remain FP32")
+    p.add_argument("--ir-training-scope", choices=("inherit","all_used_layers"), default="inherit")
     p.add_argument("--freeze-image-encoders", action="store_true", help="Freeze encoder weights and stochastic layers; train method bottleneck/heads/gates")
     p.add_argument("--encoder-training-scope", choices=("all", "frozen", "ir_last_stage", "last_stages"), default=None)
     p.add_argument("--image-lr-override", type=float, default=None, help="Absolute LR for trainable encoder parameters; keeps the method head LR separate")
+    p.add_argument("--ir-lr-override", type=float, default=None, help="Optional separate IR encoder LR; does not alter method-head LR")
+    p.add_argument("--adversarial-lr-override", type=float, default=None,
+                   help="Optional separate discriminator/MDD adversarial-head LR; the method loss and classifier LR stay unchanged")
+    p.add_argument("--image-adaptation-lr-scale", type=float, default=1.,
+                   help="Optional encoder LR reduction after source-supervision warmup; keeps head LR unchanged")
     p.add_argument("--initial-vis-weight", type=float, default=None, help="Optional initialization of the still-trainable global VIS/IR gate")
     p.add_argument("--gate-lr-multiplier", type=float, default=1., help="Relative to the method new-layer LR")
     p.add_argument("--gate-weight-decay", type=float, default=None)
@@ -518,14 +946,26 @@ def parser():
     p.add_argument("--source-zoom-min-area", type=float, default=1.,
                    help="Separate opt-in center-zoom experiment; 1 is the exact original augmentation")
     p.add_argument("--source-zoom-probability", type=float, default=.5)
+    p.add_argument("--source-weather-probability", type=float, default=0.,
+                   help="Explicit source-only gray/exposure/fog/blur/IR-contrast variant; evaluation stays unchanged")
+    p.add_argument("--source-ir-statistics-probability", type=float, default=0.,
+                   help="Opt-in IR-only source intensity transfer from unlabelled target_train; validation unchanged")
+    p.add_argument("--source-ir-statistics-strength", type=float, default=1.)
+    p.add_argument("--source-aspect-min", type=float, default=1.)
+    p.add_argument("--source-aspect-max", type=float, default=1.)
+    p.add_argument("--source-aspect-probability", type=float, default=.75)
     p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--target-batch-size", type=int, default=None,
+                   help="Optional target-only batch size, e.g. for MCC class-confusion estimation; MDD requires equal batches")
     p.add_argument("--eval-batch-size", type=int, default=32)
     p.add_argument("--num-workers", type=int, default=2)
     p.add_argument("--cpu-threads", type=int, default=4)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--lr", type=float)
-    p.add_argument("--optimizer", choices=("reference", "adam", "sgd"), default="reference")
+    p.add_argument("--optimizer", choices=("reference", "adam", "adamw", "sgd"), default="reference")
     p.add_argument("--trade-off", type=float)
+    p.add_argument("--mcc-temperature",type=float,default=2.5,
+                   help="MCC softmax temperature; default preserves the existing released loss setting")
     p.add_argument("--weight-decay", type=float, default=0.0005)
     p.add_argument("--label-smoothing", type=float, default=None)
     p.add_argument("--lr-scheduler", choices=("reference", "constant", "cosine"), default=None)
@@ -540,6 +980,7 @@ def parser():
     p.add_argument("--validation-control-start-epoch", type=int, default=None)
     p.add_argument("--max-train-batches", type=int, default=0)
     p.add_argument("--device", default="")
+    p.add_argument("--cuda-memory-fraction", type=float, default=1.,help="Optional per-worker allocator cap for local resource-controlled screening")
     p.add_argument("--no-pretrained", action="store_true")
     p.add_argument("--no-augment", dest="augment", action="store_false")
     p.set_defaults(profile="baseline", ais_lr_multiplier=1.)
@@ -565,4 +1006,6 @@ if __name__ == "__main__":
         raise ValueError("Invalid FDA beta/probability")
     if not .1 <= args.source_zoom_min_area <= 1 or not 0 <= args.source_zoom_probability <= 1:
         raise ValueError("Invalid source center-zoom area/probability")
+    if args.encoder_warmup_freeze_epochs < 0:
+        raise ValueError("Encoder warm-up freeze must be nonnegative")
     run(args)

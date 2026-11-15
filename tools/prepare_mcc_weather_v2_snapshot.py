@@ -16,6 +16,7 @@ EXTRA_FILES = (
     "scripts/run_weather_vds_core_methods.sh",
     "scripts/run_server_weather_backlight_v8_background.sh",
     "scripts/run_server_vds_backlight_background.sh",
+    "scripts/run_server_backlight_rainy_background.sh",
 )
 REQUIRED_FILES = EXTRA_FILES + (
     "vds2raw/__init__.py", "vds2raw/adaptation.py", "vds2raw/train_adaptation.py",
@@ -25,6 +26,14 @@ REQUIRED_FILES = EXTRA_FILES + (
     "tools/uda_multimodal.py", "tools/uda_data.py", "tools/data_paths.py",
     "tools/reproducibility.py", "tools/efficiency_common.py", "tools/classification_metrics.py",
     "tools/audit_vds2raw_inputs.py",
+    "tools/run_backlight_rainy_suite.py", "weather/rainy_presets.py",
+    "weather/prediction_teacher.py", "weather/prediction_distillation.py",
+    "weather/statistical_calibration.py", "weather/encoder_schedule.py",
+    "weather/unip_encoder.py", "weather/branch_probe.py", "weather/feature_cache.py",
+    "weather/training_image_cache.py", "weather/weather_augmentation.py", "weather/source_aspect.py",
+    "tools/run_weather_crossmodal_screen.py", "weather/run_qualified_backlight.py",
+    "weather/encoder_checkpoint.py", "weather/target_batch_diagnostics.py",
+    "weather/fourier_style.py", "weather/source_zoom.py",
     "Transfer-Learning-Library/tllib/alignment/mdd.py",
     "Transfer-Learning-Library/tllib/self_training/mcc.py",
 )

@@ -1,0 +1,496 @@
+{
+  "updated_UTC": "2026-11-15T01:42:59.294570+00:00",
+  "target_training_labels_used": false,
+  "validation_used_for_cache_initialization": false,
+  "evaluation": "within-run peak target_val; no independent weather test",
+  "initialization_diagnostics_counted_as_training_results": false,
+  "comparisons": [
+    {
+      "variant": "initial_target_anchor_deepcoral_dark_seed42_v1",
+      "changed_factor": "target_representation_anchor_weight",
+      "argument_changes": {
+        "target_representation_anchor_weight": {
+          "reference": 0.0,
+          "candidate": 1.0,
+          "reference_default_used": true
+        },
+        "save_dir": {
+          "reference": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\negative_free_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1",
+          "candidate": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\initial_target_anchor_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1"
+        }
+      },
+      "reference": {
+        "variant": "reference",
+        "method": "deepcoral",
+        "target": "dark",
+        "seed": 42,
+        "ACC_percent": 30.0,
+        "Precision_percent": 10.1010101010101,
+        "Recall_percent": 11.679174484052533,
+        "F1_percent": 9.782348720401817,
+        "selected_epoch": 1,
+        "completed_epochs": 30,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 30,
+        "selected_before_adaptation": true,
+        "core_trade_off": 0.05,
+        "adaptation_warmup_epochs": 3,
+        "adaptation_ramp_epochs": 10,
+        "post_adaptation_peak_ACC_percent": 8.333333333333332,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "convnext_small",
+        "encoder_scope": "last_stages",
+        "precision": "fp32",
+        "source_batch_size": 16,
+        "target_batch_size": 16,
+        "adversarial_lr_override": null,
+        "mcc_temperature": null,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 449.86506710000015,
+        "peak_reserved_GiB": 1.5390625,
+        "source_weather_probability": 0.0,
+        "source_aspect_min": 1.0,
+        "source_aspect_max": 1.0,
+        "result_completed_UTC_epoch": 1794687878.075907,
+        "result_file": "runs/weather_enhanced_screen/negative_free_deepcoral_dark_seed42_v1/deepcoral_dark_source0.1_target0.1/deepcoral_dark_seed42/result.json"
+      },
+      "candidate": {
+        "variant": "initial_target_anchor_deepcoral_dark_seed42_v1",
+        "method": "deepcoral",
+        "target": "dark",
+        "seed": 42,
+        "ACC_percent": 30.0,
+        "Precision_percent": 10.1010101010101,
+        "Recall_percent": 11.679174484052533,
+        "F1_percent": 9.782348720401817,
+        "selected_epoch": 1,
+        "completed_epochs": 30,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 30,
+        "selected_before_adaptation": true,
+        "core_trade_off": 0.05,
+        "adaptation_warmup_epochs": 3,
+        "adaptation_ramp_epochs": 10,
+        "post_adaptation_peak_ACC_percent": 8.333333333333332,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "convnext_small",
+        "encoder_scope": "last_stages",
+        "precision": "fp32",
+        "source_batch_size": 16,
+        "target_batch_size": 16,
+        "adversarial_lr_override": null,
+        "mcc_temperature": null,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 249.03276299999987,
+        "peak_reserved_GiB": 1.509765625,
+        "source_weather_probability": 0.0,
+        "source_aspect_min": 1.0,
+        "source_aspect_max": 1.0,
+        "result_completed_UTC_epoch": 1794704877.615656,
+        "result_file": "runs/weather_enhanced_screen/initial_target_anchor_deepcoral_dark_seed42_v1/deepcoral_dark_source0.1_target0.1/deepcoral_dark_seed42/result.json"
+      },
+      "ACC_change_points": 0.0,
+      "effective_initial_optimizer_groups": [
+        {
+          "lr": 0.0001,
+          "role": "pretrained_RGB_NIR",
+          "weight_decay": 0.002,
+          "parameters": 28581888
+        },
+        {
+          "lr": 0.1,
+          "role": "new_layers",
+          "weight_decay": 0.002,
+          "parameters": 471816
+        },
+        {
+          "lr": 0.001,
+          "role": "modality_gate",
+          "weight_decay": 0.0,
+          "parameters": 2
+        }
+      ],
+      "initial_target_cache_audit": {
+        "kind": "initial-encoder target representation anchor; not class pseudo-labels",
+        "fit_partition": "target_train",
+        "target_training_labels_used": false,
+        "validation_used": false,
+        "initialization_before_optimizer_updates": true,
+        "samples": 465,
+        "feature_widths": [
+          768,
+          768
+        ],
+        "extra_trainable_parameters": 0,
+        "extra_inference_image_encoders": 0,
+        "inference_changed": false,
+        "loss": "mean of per-modality cosine distances to cached initial target representation",
+        "initial_target_mean_norms": [
+          18.058340072631836,
+          17.240798950195312
+        ],
+        "target_cohort_sha256": "e921f107dcfd9ae52b4e03e02e5c4a657dcc96b9b7ff3c193f07a8b62046a964",
+        "cache_sha256": "49c7e674ffc2991ad9e27fc6b11c7c7d94730b593b80a9c2887aaacae589b849",
+        "cache_file": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\initial_target_anchor_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1\\deepcoral_dark_seed42\\target_initial_representations.npz",
+        "preparation_time_s": 2.828839599999995
+      },
+      "last_three_epoch_mean_cosines": {
+        "VIS": 0.904529756756239,
+        "IR": 0.9259461773339138
+      },
+      "last_three_epoch_mean_weighted_anchor": 0.08476203215378587
+    },
+    {
+      "variant": "initial_target_anchor_mcc_foggy_seed42_v1",
+      "changed_factor": "target_representation_anchor_weight",
+      "argument_changes": {
+        "save_dir": {
+          "reference": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\ir_statistics_mcc_foggy_seed42_v1\\mcc_foggy_source0.1_target0.1",
+          "candidate": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\initial_target_anchor_mcc_foggy_seed42_v1\\mcc_foggy_source0.1_target0.1"
+        },
+        "target_representation_anchor_weight": {
+          "reference": 0.0,
+          "candidate": 1.0,
+          "reference_default_used": true
+        }
+      },
+      "reference": {
+        "variant": "reference",
+        "method": "mcc",
+        "target": "foggy",
+        "seed": 42,
+        "ACC_percent": 53.91304347826087,
+        "Precision_percent": 54.56867932358128,
+        "Recall_percent": 58.10466336782126,
+        "F1_percent": 48.714086898230114,
+        "selected_epoch": 19,
+        "completed_epochs": 20,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 20,
+        "selected_before_adaptation": false,
+        "core_trade_off": 1.0,
+        "adaptation_warmup_epochs": 4,
+        "adaptation_ramp_epochs": 6,
+        "post_adaptation_peak_ACC_percent": 53.91304347826087,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "unip_tiny",
+        "encoder_scope": "last_stages",
+        "precision": "bf16",
+        "source_batch_size": 8,
+        "target_batch_size": 32,
+        "adversarial_lr_override": null,
+        "mcc_temperature": 1.0,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 175.11038570000005,
+        "peak_reserved_GiB": 1.548828125,
+        "source_weather_probability": 0.75,
+        "source_aspect_min": 0.5,
+        "source_aspect_max": 2.0,
+        "result_completed_UTC_epoch": 1794697372.7457895,
+        "result_file": "runs/weather_enhanced_screen/ir_statistics_mcc_foggy_seed42_v1/mcc_foggy_source0.1_target0.1/mcc_foggy_seed42/result.json"
+      },
+      "candidate": {
+        "variant": "initial_target_anchor_mcc_foggy_seed42_v1",
+        "method": "mcc",
+        "target": "foggy",
+        "seed": 42,
+        "ACC_percent": 38.26086956521739,
+        "Precision_percent": 37.26899753344542,
+        "Recall_percent": 41.840819998714736,
+        "F1_percent": 34.607999272633414,
+        "selected_epoch": 19,
+        "completed_epochs": 20,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 20,
+        "selected_before_adaptation": false,
+        "core_trade_off": 1.0,
+        "adaptation_warmup_epochs": 4,
+        "adaptation_ramp_epochs": 6,
+        "post_adaptation_peak_ACC_percent": 38.26086956521739,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "unip_tiny",
+        "encoder_scope": "last_stages",
+        "precision": "bf16",
+        "source_batch_size": 8,
+        "target_batch_size": 32,
+        "adversarial_lr_override": null,
+        "mcc_temperature": 1.0,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 179.51028589999996,
+        "peak_reserved_GiB": 1.548828125,
+        "source_weather_probability": 0.75,
+        "source_aspect_min": 0.5,
+        "source_aspect_max": 2.0,
+        "result_completed_UTC_epoch": 1794705204.2159429,
+        "result_file": "runs/weather_enhanced_screen/initial_target_anchor_mcc_foggy_seed42_v1/mcc_foggy_source0.1_target0.1/mcc_foggy_seed42/result.json"
+      },
+      "ACC_change_points": -15.652173913043477,
+      "effective_initial_optimizer_groups": [
+        {
+          "lr": 5e-05,
+          "role": "pretrained_RGB",
+          "weight_decay": 0.0001,
+          "parameters": 14290944
+        },
+        {
+          "lr": 0.001,
+          "role": "new_layers",
+          "weight_decay": 0.0001,
+          "parameters": 329371
+        },
+        {
+          "lr": 0.0001,
+          "role": "modality_gate",
+          "weight_decay": 0.0,
+          "parameters": 2
+        },
+        {
+          "lr": 0.0001,
+          "role": "pretrained_NIR",
+          "weight_decay": 0.0001,
+          "parameters": 5041728
+        }
+      ],
+      "initial_target_cache_audit": {
+        "kind": "initial-encoder target representation anchor; not class pseudo-labels",
+        "fit_partition": "target_train",
+        "target_training_labels_used": false,
+        "validation_used": false,
+        "initialization_before_optimizer_updates": true,
+        "samples": 440,
+        "feature_widths": [
+          768,
+          192
+        ],
+        "extra_trainable_parameters": 0,
+        "extra_inference_image_encoders": 0,
+        "inference_changed": false,
+        "loss": "mean of per-modality cosine distances to cached initial target representation",
+        "initial_target_mean_norms": [
+          15.274577140808105,
+          11.53537368774414
+        ],
+        "target_cohort_sha256": "1202350702d63923d588f16a9f366cf364c196bd2633e4c1986091529efbb7eb",
+        "cache_sha256": "6aa407f8107eedc4e64353e860c5c384625c667441c19a3d8100fafe268fb47b",
+        "cache_file": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\initial_target_anchor_mcc_foggy_seed42_v1\\mcc_foggy_source0.1_target0.1\\mcc_foggy_seed42\\target_initial_representations.npz",
+        "preparation_time_s": 1.180582300000001
+      },
+      "last_three_epoch_mean_cosines": {
+        "VIS": 0.843877450013772,
+        "IR": 0.9052758274934231
+      },
+      "last_three_epoch_mean_weighted_anchor": 0.12542336220160508
+    },
+    {
+      "variant": "new_layers_lr_deepcoral_dark_seed42_v1",
+      "changed_factor": "lr",
+      "argument_changes": {
+        "save_dir": {
+          "reference": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\negative_free_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1",
+          "candidate": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\new_layers_lr_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1"
+        },
+        "lr": {
+          "reference": 0.01,
+          "candidate": 0.001
+        }
+      },
+      "reference": {
+        "variant": "reference",
+        "method": "deepcoral",
+        "target": "dark",
+        "seed": 42,
+        "ACC_percent": 30.0,
+        "Precision_percent": 10.1010101010101,
+        "Recall_percent": 11.679174484052533,
+        "F1_percent": 9.782348720401817,
+        "selected_epoch": 1,
+        "completed_epochs": 30,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 30,
+        "selected_before_adaptation": true,
+        "core_trade_off": 0.05,
+        "adaptation_warmup_epochs": 3,
+        "adaptation_ramp_epochs": 10,
+        "post_adaptation_peak_ACC_percent": 8.333333333333332,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "convnext_small",
+        "encoder_scope": "last_stages",
+        "precision": "fp32",
+        "source_batch_size": 16,
+        "target_batch_size": 16,
+        "adversarial_lr_override": null,
+        "mcc_temperature": null,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 449.86506710000015,
+        "peak_reserved_GiB": 1.5390625,
+        "source_weather_probability": 0.0,
+        "source_aspect_min": 1.0,
+        "source_aspect_max": 1.0,
+        "result_completed_UTC_epoch": 1794687878.075907,
+        "result_file": "runs/weather_enhanced_screen/negative_free_deepcoral_dark_seed42_v1/deepcoral_dark_source0.1_target0.1/deepcoral_dark_seed42/result.json"
+      },
+      "candidate": {
+        "variant": "new_layers_lr_deepcoral_dark_seed42_v1",
+        "method": "deepcoral",
+        "target": "dark",
+        "seed": 42,
+        "ACC_percent": 5.833333333333333,
+        "Precision_percent": 9.642857142857142,
+        "Recall_percent": 2.6618198874296435,
+        "F1_percent": 3.9126016260162606,
+        "selected_epoch": 4,
+        "completed_epochs": 30,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 30,
+        "selected_before_adaptation": false,
+        "core_trade_off": 0.05,
+        "adaptation_warmup_epochs": 3,
+        "adaptation_ramp_epochs": 10,
+        "post_adaptation_peak_ACC_percent": 5.833333333333333,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "convnext_small",
+        "encoder_scope": "last_stages",
+        "precision": "fp32",
+        "source_batch_size": 16,
+        "target_batch_size": 16,
+        "adversarial_lr_override": null,
+        "mcc_temperature": null,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 242.86441999999974,
+        "peak_reserved_GiB": 1.5390625,
+        "source_weather_probability": 0.0,
+        "source_aspect_min": 1.0,
+        "source_aspect_max": 1.0,
+        "result_completed_UTC_epoch": 1794705741.4800766,
+        "result_file": "runs/weather_enhanced_screen/new_layers_lr_deepcoral_dark_seed42_v1/deepcoral_dark_source0.1_target0.1/deepcoral_dark_seed42/result.json"
+      },
+      "ACC_change_points": -24.166666666666668,
+      "effective_initial_optimizer_groups": [
+        {
+          "lr": 0.0001,
+          "role": "pretrained_RGB_NIR",
+          "weight_decay": 0.002,
+          "parameters": 28581888
+        },
+        {
+          "lr": 0.01,
+          "role": "new_layers",
+          "weight_decay": 0.002,
+          "parameters": 471816
+        },
+        {
+          "lr": 0.0001,
+          "role": "modality_gate",
+          "weight_decay": 0.0,
+          "parameters": 2
+        }
+      ]
+    },
+    {
+      "variant": "source_weather_deepcoral_dark_seed42_v1",
+      "changed_factor": "source_weather_probability",
+      "argument_changes": {
+        "source_weather_probability": {
+          "reference": 0.0,
+          "candidate": 0.75
+        },
+        "save_dir": {
+          "reference": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\negative_free_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1",
+          "candidate": "D:\\Code\\JMDA_Com\\runs\\weather_enhanced_screen\\source_weather_deepcoral_dark_seed42_v1\\deepcoral_dark_source0.1_target0.1"
+        }
+      },
+      "reference": {
+        "variant": "reference",
+        "method": "deepcoral",
+        "target": "dark",
+        "seed": 42,
+        "ACC_percent": 30.0,
+        "Precision_percent": 10.1010101010101,
+        "Recall_percent": 11.679174484052533,
+        "F1_percent": 9.782348720401817,
+        "selected_epoch": 1,
+        "completed_epochs": 30,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 30,
+        "selected_before_adaptation": true,
+        "core_trade_off": 0.05,
+        "adaptation_warmup_epochs": 3,
+        "adaptation_ramp_epochs": 10,
+        "post_adaptation_peak_ACC_percent": 8.333333333333332,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "convnext_small",
+        "encoder_scope": "last_stages",
+        "precision": "fp32",
+        "source_batch_size": 16,
+        "target_batch_size": 16,
+        "adversarial_lr_override": null,
+        "mcc_temperature": null,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 449.86506710000015,
+        "peak_reserved_GiB": 1.5390625,
+        "source_weather_probability": 0.0,
+        "source_aspect_min": 1.0,
+        "source_aspect_max": 1.0,
+        "result_completed_UTC_epoch": 1794687878.075907,
+        "result_file": "runs/weather_enhanced_screen/negative_free_deepcoral_dark_seed42_v1/deepcoral_dark_source0.1_target0.1/deepcoral_dark_seed42/result.json"
+      },
+      "candidate": {
+        "variant": "source_weather_deepcoral_dark_seed42_v1",
+        "method": "deepcoral",
+        "target": "dark",
+        "seed": 42,
+        "ACC_percent": 32.5,
+        "Precision_percent": 10.014204545454545,
+        "Recall_percent": 12.593808630393996,
+        "F1_percent": 9.93410766138039,
+        "selected_epoch": 1,
+        "completed_epochs": 30,
+        "unblended_student_ACC_percent": null,
+        "planned_epochs": 30,
+        "selected_before_adaptation": true,
+        "core_trade_off": 0.05,
+        "adaptation_warmup_epochs": 3,
+        "adaptation_ramp_epochs": 10,
+        "post_adaptation_peak_ACC_percent": 8.333333333333332,
+        "image_backbone": "convnext_small",
+        "IR_backbone": "convnext_small",
+        "encoder_scope": "last_stages",
+        "precision": "fp32",
+        "source_batch_size": 16,
+        "target_batch_size": 16,
+        "adversarial_lr_override": null,
+        "mcc_temperature": null,
+        "VIS_gradient_checkpointing": false,
+        "training_time_s": 302.11357029999994,
+        "peak_reserved_GiB": 1.5390625,
+        "source_weather_probability": 0.75,
+        "source_aspect_min": 1.0,
+        "source_aspect_max": 1.0,
+        "result_completed_UTC_epoch": 1794706632.2435484,
+        "result_file": "runs/weather_enhanced_screen/source_weather_deepcoral_dark_seed42_v1/deepcoral_dark_source0.1_target0.1/deepcoral_dark_seed42/result.json"
+      },
+      "ACC_change_points": 2.5,
+      "effective_initial_optimizer_groups": [
+        {
+          "lr": 0.0001,
+          "role": "pretrained_RGB_NIR",
+          "weight_decay": 0.002,
+          "parameters": 28581888
+        },
+        {
+          "lr": 0.1,
+          "role": "new_layers",
+          "weight_decay": 0.002,
+          "parameters": 471816
+        },
+        {
+          "lr": 0.001,
+          "role": "modality_gate",
+          "weight_decay": 0.0,
+          "parameters": 2
+        }
+      ]
+    }
+  ],
+  "pending": []
+}

@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 RUNTIME = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RUNTIME))
 SEEDS = tuple(range(42, 47))
 WEATHER_METHODS = ("dann", "deepcoral", "cdan", "mdd", "mcc")
 COMPLEXITY = ("total_params", "trainable_params", "inference_GFLOPs", "total_train_time_s",
@@ -116,6 +117,13 @@ def main():
         print(json.dumps(plan, indent=2)); return
     if output.exists():
         raise FileExistsError(f"Use a new output directory: {output}")
+    # Fetch once before seed dispatch; a transient download must not consume
+    # individual seed groups while later seeds happen to use the cache.
+    from tools.download_official_uda_weights import ensure_weight
+    if args.scope != "vds":
+        ensure_weight("convnext_small", root/"pretrained_weights")
+    if args.scope != "backlight":
+        ensure_weight("resnet18", root/"pretrained_weights")
     (output/"logs").mkdir(parents=True)
     write_json(output/"run_plan.json", plan)
     env = dict(os.environ, JMDA_PROJECT_ROOT=str(root), PYTHON=sys.executable, PYTHONUNBUFFERED="1",

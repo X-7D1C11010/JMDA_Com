@@ -1,0 +1,87 @@
+{
+  "user_reported_server_suite_running": true,
+  "local_runner_session": 88917,
+  "local_output": "runs/weather_local_screen/remaining_weather_v10_calibrated_r18_seed42",
+  "runtime_snapshot": "experiment_updates/mcc_weather_v2_2752a74ec11054ac",
+  "requested_candidates": 15,
+  "max_parallel": 2,
+  "seed": 42,
+  "methods": [
+    "dann",
+    "deepcoral",
+    "cdan",
+    "mdd",
+    "mcc"
+  ],
+  "targets": [
+    "rainy",
+    "foggy",
+    "dark"
+  ],
+  "new_source_branch_probe": "diagnostic only; source labels fit fixed-C1 classifier, source3-foldCV; target_val labels score predictions only",
+  "source_branch_tests": "results/remaining_weather_v10_probe_tests.log: 15 PASS",
+  "memory_check": "results/remaining_weather_v10_memory_check.json: synthetic CUDA update only, 1.9-2.2GiB per process",
+  "parameter_check": "results/remaining_weather_v10_parameter_check.json: PASS15 settings",
+  "boat_crop_inspection_authorized": true,
+  "boat_detector_session": 18545,
+  "boat_detector_finished_exit": 0,
+  "boat_crop_report": "runs/weather_local_screen/boat_roi_inspection_seed42/inspection.json",
+  "detector_weights": "pretrained_weights/yolo11s.pt",
+  "detector_sha256": "85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5",
+  "detector_url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
+  "detector_library": "ultralytics8.4.50 preinstalled",
+  "detector_device": "cpu",
+  "crop_classifier_training_started": false,
+  "sample_crop_decisions": {
+    "sunny": {
+      "cropped": 4,
+      "no_reliable_boat": 4
+    },
+    "rainy": {
+      "no_reliable_boat": 12
+    },
+    "foggy": {
+      "cropped": 3,
+      "no_reliable_boat": 9
+    },
+    "dark": {
+      "cropped": 2,
+      "no_reliable_boat": 10
+    }
+  },
+  "inspection_images_viewed": [
+    "sunny",
+    "rainy",
+    "foggy",
+    "dark"
+  ],
+  "notes": [
+    "Most target inputs already tightly frame ships; detection misses do not automatically imply full-image fallback is wrong.",
+    "Sunny sample3 has two boats: detector chose lower/right larger boat. Must verify it is the intended labelled object before adopting crop.",
+    "Source IR sample0 is a zoomed ship part, already filling the frame; no reliable detector box.",
+    "Rainy full images are close-up blurry/low-contrast boat crops; no detections, preserving originals seems appropriate.",
+    "Dark inputs often extremely wide strips. Resize224square stretches hulls strongly, visible in contact sheets.",
+    "IR dark sample3/4 boats detected and safely cropped; otherIR detections missed.",
+    "Do not launch crop-classifier experiment until inspection quality rule selected.",
+    "Foggy IR sample target_val#3 detector crops only the cabin/bright structure and excludes hull; explicit unsafe example.",
+    "Added optional source-only branch probe, actual parameter update logs, and encoder warm-up freeze; server defaults unchanged.",
+    "Linear-probe source CV is classifier-only on a fixed encoder, not independent validation of a source-trained encoder.",
+    "The first low-LR 15-run screen did not improve earlier weather best scores.",
+    "Two stronger-backbone rainy pilots peak before DA warmup ends; do not claim improved adaptation."
+  ],
+  "local_runner_session_closed": 88917,
+  "local_runner_exit": 0,
+  "pilot_session_closed": 55180,
+  "pilot_exit": 0,
+  "active_local_training_jobs": 0,
+  "completed_real_training_runs": 17,
+  "final_results": "results/remaining_weather_seed42_results.json",
+  "report": "REMAINING_WEATHER_SEED42_20261114.md",
+  "current_candidates_released_to_server": false,
+  "all_remaining_weather_ACC_goal_verified": false,
+  "full_regression_tests": 110,
+  "full_regression_log": "results/remaining_weather_v11_full_tests.log",
+  "actual_returned_label_audit": "results/remaining_weather_returned_label_audit.json",
+  "boat_crop_decision": "NOT_ADOPTED",
+  "boat_crop_classifier_training_started": false
+}

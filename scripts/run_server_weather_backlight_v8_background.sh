@@ -5,6 +5,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SEED="${1:-42}"
 [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $SEED" >&2; exit 1; }
 PYTHON_BIN="${PYTHON:-python}"
+"$PYTHON_BIN" -B -u "$HERE/tools/download_official_uda_weights.py" \
+  --output-dir "$HERE/pretrained_weights" --check-only --only convnext_small
 UPDATE="$("$PYTHON_BIN" -B "$HERE/tools/prepare_mcc_weather_v2_snapshot.py" --project-root "$HERE")"
 LOG_DIR="$HERE/server_logs/weather_qualified_v8_launcher"
 mkdir -p "$LOG_DIR"

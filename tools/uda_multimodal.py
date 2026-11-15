@@ -90,8 +90,12 @@ class UdaPairedImageListDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         vis_path, ir_path, label = self.paired_samples[index]
-        vis = Image.open(vis_path).convert('RGB')
-        ir = Image.open(ir_path).convert('L').convert('RGB')
+        cached=getattr(self,"_resized_pair_cache",None)
+        if cached is None:
+            vis = Image.open(vis_path).convert('RGB')
+            ir = Image.open(ir_path).convert('L').convert('RGB')
+        else:
+            vis,ir=(image.copy() for image in cached[index])
 
         start_state = self._rng_state()
         vis = self.transform(vis)
@@ -158,8 +162,12 @@ class UdaLabelFreePairedDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         vis_path, ir_path = self.paired_samples[index]
-        vis = Image.open(vis_path).convert('RGB')
-        ir = Image.open(ir_path).convert('L').convert('RGB')
+        cached=getattr(self,"_resized_pair_cache",None)
+        if cached is None:
+            vis = Image.open(vis_path).convert('RGB')
+            ir = Image.open(ir_path).convert('L').convert('RGB')
+        else:
+            vis,ir=(image.copy() for image in cached[index])
         start_state = UdaPairedImageListDataset._rng_state()
         vis = self.transform(vis)
         end_state = UdaPairedImageListDataset._rng_state()

@@ -67,13 +67,17 @@ def feature_norms(branches, source_count, names=("RGB", "NIR", "AIS")):
 def gradient_diagnostics(model, classification, transfer):
     parameters = [(name, p) for name, p in model.named_parameters() if p.requires_grad]
     ce = torch.autograd.grad(classification, [p for _, p in parameters], retain_graph=True, allow_unused=True)
-    da = torch.autograd.grad(transfer, [p for _, p in parameters], retain_graph=True, allow_unused=True)
+    da = (torch.autograd.grad(transfer, [p for _, p in parameters], retain_graph=True, allow_unused=True)
+          if transfer.requires_grad else (None,)*len(parameters))
     result = {}
-    for group, prefix in (("RGB", "rgb_encoder."), ("NIR", "nir_encoder."),
+    groups=(("RGB", "rgb_encoder."), ("NIR", "nir_encoder."),
                           ("AIS", "ais_encoder."), ("head", "head."),
                           ("gate", "modality_logits"), ("bottleneck", "bottleneck."),
                           ("auxiliary_heads", "auxiliary_heads."),
-                          ("domain_discriminator", "discriminator."), ("adversarial_head", "adv_head.")):
+                          ("calibration_adapter","feature_adapter."),
+                          ("domain_discriminator", "discriminator."), ("adversarial_head", "adv_head."))
+    if hasattr(model,"crossmodal_projectors"):groups += (("crossmodal_projection","crossmodal_projectors."),)
+    for group,prefix in groups:
         norm_ce = classification.new_zeros(())
         norm_da = classification.new_zeros(())
         dot = classification.new_zeros(())
@@ -96,7 +100,8 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
              normalization_domain_override=None):
     """Deterministic evaluation; every sample receives a probability record."""
     model.eval()
-    if getattr(model, "domain_running_stats", False):
+    if (getattr(model, "domain_running_stats", False) or getattr(model,"feature_calibrator",None) is not None
+            or getattr(model,"prediction_teacher",None) is not None):
         model.set_bn_domain(normalization_domain_override or ("source" if dataset.partition == "source_train" else "target"))
     truth, predicted, records = [], [], []
     num_classes = getattr(model, "num_classes", 3)
@@ -105,15 +110,20 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
     normalized_sums = [0.0]*len(names)
     branch_probabilities = [[] for _ in getattr(model, "auxiliary_heads", ())]
     losses = []
+    unblended_predictions=[]
     labelled = dataset.labelled
     with torch.no_grad():
         for batch in DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0,
                                 generator=torch.Generator().manual_seed(0)):
             labels = batch["label"] if labelled else None
             logits = model(move(batch, device))
+            if getattr(model,"last_unblended_logits",None) is not None:
+                unblended_predictions.extend(model.last_unblended_logits.argmax(1).cpu().tolist())
             probabilities = logits.softmax(1).cpu()
-            for rows, branch in zip(branch_probabilities, getattr(model, "last_branch_logits", ())):
-                rows.extend(branch.softmax(1).cpu().tolist())
+            batch_branch_probabilities=[branch.softmax(1).cpu().tolist()
+                for branch in getattr(model,"last_branch_logits",())]
+            for rows, branch_rows in zip(branch_probabilities,batch_branch_probabilities):
+                rows.extend(branch_rows)
             guesses = probabilities.argmax(1)
             if labelled:
                 truth.extend(labels.tolist())
@@ -128,6 +138,11 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
                 row = {"epoch": epoch, "partition": dataset.partition, "sample_index": len(records),
                        "sample_id": path, "y_pred": guess, "labels_used": labelled,
                        "probabilities": scores, "logits": raw_logits}
+                if branch_probabilities:
+                    row["auxiliary_probabilities"]={name:branch_rows[index]
+                        for name,branch_rows in zip(names,batch_branch_probabilities)}
+                if getattr(model,"last_unblended_logits",None) is not None:
+                    row["unblended_student_probabilities"]=model.last_unblended_logits[index].softmax(0).cpu().tolist()
                 if labelled:
                     label = int(labels[index])
                     row.update(y_true=label, correct=label == guess)
@@ -147,6 +162,9 @@ def evaluate(model, dataset, device, epoch, directory, batch_size=64, event_pref
                "feature_norms": dict(zip(names, (x/len(dataset) for x in feature_sums))),
                "normalized_feature_norms": dict(zip(names, (x/len(dataset) for x in normalized_sums))),
                "modality_weights": model.modality_weights().detach().cpu().tolist()}
+    if unblended_predictions:
+        details["unblended_student_metrics"]=(classification_metrics(truth,unblended_predictions,num_classes)
+            if labelled else {"prediction_samples":len(unblended_predictions)})
     if labelled:
         details.update(cross_entropy=statistics.mean(losses),
                        cross_entropy_by_class=[statistics.mean([loss for loss, label in zip(losses, truth) if label == c])
@@ -228,6 +246,11 @@ def validate_diagnostics(directory, datasets, epochs, selected_epoch, num_classe
             if (len(probabilities) != num_classes or any(not math.isfinite(v) or not 0 <= v <= 1 for v in probabilities)
                     or abs(sum(probabilities)-1) > 1e-5):
                 raise RuntimeError("Invalid prediction probabilities")
+            for branch,scores in row.get("auxiliary_probabilities",{}).items():
+                if (branch not in modalities or len(scores)!=num_classes
+                        or any(not math.isfinite(v) or not 0<=v<=1 for v in scores)
+                        or abs(sum(scores)-1)>1e-5):
+                    raise RuntimeError("Invalid auxiliary branch probabilities")
             key = (row["partition"], row["epoch"])
             ids = groups.setdefault(key, set())
             if row["sample_id"] in ids:
@@ -257,12 +280,40 @@ def make_optimizer(model, args):
         for group in groups:
             if group["role"] == "pretrained_RGB_NIR":
                 group["lr"] = image_lr
+    infrared_lr = getattr(args, "ir_lr_override", None)
+    if infrared_lr is not None:
+        if infrared_lr <= 0:
+            raise ValueError("Infrared learning-rate override must be positive")
+        nir_ids = {id(p) for p in model.nir_encoder.parameters()}
+        for group in groups:
+            if group["role"] == "pretrained_RGB_NIR":
+                infrared = [p for p in group["params"] if id(p) in nir_ids]
+                group["params"] = [p for p in group["params"] if id(p) not in nir_ids]
+                group["role"] = "pretrained_RGB"
+                groups.append({"params": infrared, "lr": infrared_lr, "role": "pretrained_NIR"})
+                break
+    adversarial_lr = getattr(args, "adversarial_lr_override", None)
+    if adversarial_lr is not None:
+        if adversarial_lr <= 0:
+            raise ValueError("Adversarial learning-rate override must be positive")
+        adversarial = getattr(model, "discriminator", None) or getattr(model, "adv_head", None)
+        if adversarial is None:
+            raise ValueError("An adversarial LR requires a DANN/CDAN discriminator or MDD adversarial head")
+        adversarial_ids = {id(p) for p in adversarial.parameters() if p.requires_grad}
+        selected_parameters = []
+        for group in groups:
+            selected_parameters.extend(p for p in group["params"] if id(p) in adversarial_ids)
+            group["params"] = [p for p in group["params"] if id(p) not in adversarial_ids]
+        if {id(p) for p in selected_parameters} != adversarial_ids or not selected_parameters:
+            raise ValueError("Adversarial parameter group is incomplete or frozen")
+        groups.append({"params": selected_parameters, "lr": adversarial_lr, "role": "adversarial"})
     choice = getattr(args, "optimizer", "reference")
-    if choice not in {"reference", "adam", "sgd"}:
+    if choice not in {"reference", "adam", "adamw", "sgd"}:
         raise ValueError("Unknown optimizer selection")
     selected = ("adam" if args.method == "dann" else "sgd") if choice == "reference" else choice
     decay = args.weight_decay*(2 if args.method == "cdan" else 1)
     optimizer = (torch.optim.Adam(groups, weight_decay=decay) if selected == "adam"
+                 else torch.optim.AdamW(groups, weight_decay=decay) if selected == "adamw"
                  else torch.optim.SGD(groups, momentum=0.9, nesterov=args.method != "deepcoral", weight_decay=decay))
     # The released MDD example uses gamma=.0002; CDAN/MCC use .001.
     # These clocks must not be collapsed into a single shared constant.
