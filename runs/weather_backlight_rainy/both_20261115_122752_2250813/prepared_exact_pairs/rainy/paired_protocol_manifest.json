@@ -1,0 +1,101 @@
+{
+  "data_root": "/mnt/data/lixiang/data/Data",
+  "modality": "paired",
+  "label_map": {
+    "1": 0,
+    "2": 1,
+    "3": 2,
+    "4": 3,
+    "5": 4,
+    "6": 5,
+    "7": 6,
+    "8": 7,
+    "9": 8,
+    "10": 9,
+    "11": 10,
+    "12": 11,
+    "13": 12,
+    "14": 13
+  },
+  "cohort_rule": "exact VIS/IR stem match over train+val union; stable hash split",
+  "lists": {
+    "sunny_train.txt": {
+      "rows": 760,
+      "sha256": "ff9110283d7fcbe95c15b469f7f873198a1378b039f29667bc34831200d6efe8"
+    },
+    "rainy_train.txt": {
+      "rows": 96,
+      "sha256": "ee98687cc8628212a1fd8a756984f606cbe2a9d7060be9f014463fd76bf6acdd"
+    },
+    "rainy_val.txt": {
+      "rows": 26,
+      "sha256": "fb713ee0fe84aa3a5000f1e205e31670cb0564714700ed51b805fa415b42e480"
+    },
+    "rainy_sda_10shot_seed42.txt": {
+      "rows": 53,
+      "sha256": "60ed8c297ea87f4fd7da3508a7db49a35cb2d63bb51fb78e80cb95c0e62df585"
+    }
+  },
+  "unlabeled_pair_lists": {
+    "rainy_train_pairs.tsv": {
+      "rows": 96,
+      "sha256": "30e53c1fca28f6ed593e7c62f7aaae2e1025e2dae52d368eabad15ca2125ad9a"
+    }
+  },
+  "target_class_support": {
+    "rainy": {
+      "original_labels": [
+        1,
+        5,
+        6,
+        7,
+        9,
+        11
+      ],
+      "compact_label_map": {
+        "1": 0,
+        "5": 1,
+        "6": 2,
+        "7": 3,
+        "9": 4,
+        "11": 5
+      },
+      "train_samples": 96,
+      "val_samples": 26
+    }
+  },
+  "pairing_stats": {
+    "sunny_train": {
+      "union_vis_files": 1136,
+      "union_ir_files": 966,
+      "matched_pairs_all": 958,
+      "selected_phase_pairs": 760,
+      "dropped_unpaired_vis": 178,
+      "dropped_unpaired_ir": 8
+    },
+    "sunny_val": {
+      "union_vis_files": 1136,
+      "union_ir_files": 966,
+      "matched_pairs_all": 958,
+      "selected_phase_pairs": 198,
+      "dropped_unpaired_vis": 178,
+      "dropped_unpaired_ir": 8
+    },
+    "rainy_train": {
+      "union_vis_files": 122,
+      "union_ir_files": 122,
+      "matched_pairs_all": 122,
+      "selected_phase_pairs": 96,
+      "dropped_unpaired_vis": 0,
+      "dropped_unpaired_ir": 0
+    },
+    "rainy_val": {
+      "union_vis_files": 122,
+      "union_ir_files": 122,
+      "matched_pairs_all": 122,
+      "selected_phase_pairs": 26,
+      "dropped_unpaired_vis": 0,
+      "dropped_unpaired_ir": 0
+    }
+  }
+}

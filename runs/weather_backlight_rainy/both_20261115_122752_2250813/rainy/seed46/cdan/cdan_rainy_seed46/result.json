@@ -1,0 +1,605 @@
+{
+  "method": "cdan",
+  "target": "rainy",
+  "seed": 46,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "optimizer": "AdamW",
+  "selected_feature_cache": {
+    "epoch": 21,
+    "kind": "selected-state image embeddings only; not a model checkpoint",
+    "file": "/home/lixiang/lx/JMDA_Com/runs/weather_backlight_rainy/both_20261115_122752_2250813/rainy/seed46/cdan/cdan_rainy_seed46/selected_feature_cache.npz",
+    "sha256": "ca9d3e70d24cc91cc48439fd2e89533c9cd2a03b5dedec535d0e0930b6a00aef",
+    "modality_widths": [
+      768,
+      192
+    ],
+    "modality_weights": [
+      0.505408525466919,
+      0.4945913851261139
+    ],
+    "target_training_labels_used": false,
+    "statistics_or_models_fitted": false,
+    "partitions": [
+      {
+        "partition": "source_train",
+        "samples": 401,
+        "labels_in_cache": true,
+        "cohort_sha256": "504d0a53aa806ff0b4e2d8979b9e46499d10083977ea5beafa22499e8924d946"
+      },
+      {
+        "partition": "target_train",
+        "samples": 96,
+        "labels_in_cache": false,
+        "cohort_sha256": "4f28c419605206b825fea10ca2cf8cfdccbacf2c851f53a34bca5a9c5ced6253"
+      },
+      {
+        "partition": "target_val",
+        "samples": 26,
+        "labels_in_cache": true,
+        "cohort_sha256": "8738eded5e1a5f63fd4335c1d87b7d37da6dfeb438b83c3f28505150762e5044"
+      }
+    ]
+  },
+  "enhancement": {
+    "enabled": true,
+    "variant_family": "core_plus_cached_ensemble_target_distillation",
+    "prediction_teacher": {
+      "calibration": {
+        "strategy": "coral",
+        "components": 16,
+        "shrinkage": 0.1,
+        "fit_partitions": [
+          "source_train",
+          "target_train"
+        ],
+        "fit_samples": {
+          "source_train": 401,
+          "target_train": 96
+        },
+        "target_instance_labels_used": false,
+        "validation_statistics_fitted": false,
+        "explained_variance_ratio_sum": 0.6547891746533788,
+        "transform_sha256": "7cf73af7e8bf48cfae7f78d816ff8ef485593cb8fce6c73ff4e41c37a6f60983"
+      },
+      "cluster_initialization": {
+        "fit_partitions": [
+          "source_train",
+          "target_train"
+        ],
+        "cluster_fit_samples": 96,
+        "association_label_source": "source_train labels only",
+        "matching": "source_votes",
+        "initialization": "kmeans++",
+        "neighbors": 3,
+        "source_view_trim_fraction": 0.25,
+        "auxiliary_paired_modalities_for_source_association": true,
+        "cluster_to_source_class": [
+          0,
+          1,
+          2,
+          5,
+          3,
+          4
+        ],
+        "source_cluster_class_votes": [
+          [
+            26,
+            11,
+            6,
+            2,
+            10,
+            15
+          ],
+          [
+            9,
+            6,
+            3,
+            6,
+            4,
+            2
+          ],
+          [
+            41,
+            12,
+            22,
+            28,
+            9,
+            0
+          ],
+          [
+            9,
+            13,
+            2,
+            10,
+            9,
+            18
+          ],
+          [
+            27,
+            10,
+            14,
+            35,
+            3,
+            6
+          ],
+          [
+            8,
+            1,
+            6,
+            2,
+            10,
+            6
+          ]
+        ],
+        "source_association_reliability_by_class": [
+          0.19645375091543693,
+          0.25238975702840155,
+          0.2729940011586547,
+          0.3259179741012,
+          0.38801176460873593,
+          0.36079709173357866
+        ],
+        "target_cluster_sizes": [
+          22,
+          11,
+          18,
+          17,
+          17,
+          11
+        ],
+        "target_instance_labels_used": false,
+        "validation_used_for_fitting": false
+      },
+      "association_calibrations": [
+        {
+          "strategy": "coral",
+          "components": 32,
+          "shrinkage": 0.1,
+          "fit_partitions": [
+            "source_train",
+            "target_train"
+          ],
+          "fit_samples": {
+            "source_train": 401,
+            "target_train": 96
+          },
+          "target_instance_labels_used": false,
+          "validation_statistics_fitted": false,
+          "explained_variance_ratio_sum": 0.7816057022159041,
+          "transform_sha256": "f270b4250d26674a9462d197aeea999b5a8d4c66f954d0cbd5068f9fcd1dde35"
+        },
+        {
+          "strategy": "coral",
+          "components": 32,
+          "shrinkage": 0.1,
+          "fit_partitions": [
+            "source_train",
+            "target_train"
+          ],
+          "fit_samples": {
+            "source_train": 401,
+            "target_train": 96
+          },
+          "target_instance_labels_used": false,
+          "validation_statistics_fitted": false,
+          "explained_variance_ratio_sum": 0.8274545638162101,
+          "transform_sha256": "5656bee481f5e7ba68dd0907eb13b376b05d3477cb474cab28ba37f628e37151"
+        }
+      ],
+      "teacher_VIS_weight": 0.94,
+      "association_VIS_weight": 0.75,
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "validation_used_for_fitting": false,
+      "target_training_labels_used": false,
+      "probability_weight": 0.5,
+      "teacher_temperature": 2.0,
+      "student_temperature": 0.25,
+      "student_objective_changed": true,
+      "teacher_frozen": true,
+      "inference": "student only; ensemble prepares training pseudo-probabilities",
+      "extra_inference_image_encoders": 0,
+      "weights_sha256": "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec",
+      "source_samples": 401,
+      "target_samples": 96,
+      "source_cohort_sha256": "504d0a53aa806ff0b4e2d8979b9e46499d10083977ea5beafa22499e8924d946",
+      "target_cohort_sha256": "4f28c419605206b825fea10ca2cf8cfdccbacf2c851f53a34bca5a9c5ced6253",
+      "preparation_time_s": 1.0068059330806136,
+      "training_only": true
+    },
+    "prediction_distillation_weight": 4.0,
+    "prediction_distillation_start_epoch": 2,
+    "prediction_distillation_encoder_lr_scale": 1.0,
+    "prediction_distillation_sharpening": 0.5,
+    "prediction_distillation": {
+      "prepared_before_epoch": 2,
+      "samples": 96,
+      "target_training_labels_used": false,
+      "validation_used": false,
+      "teacher_training_source": "source_train labels and label-free target_train statistics",
+      "current_source_supervised_student_epoch": 1,
+      "sharpening_temperature": 0.5,
+      "mean_confidence": 0.6518283486366272,
+      "pseudo_class_counts": [
+        16,
+        0,
+        6,
+        8,
+        50,
+        16
+      ],
+      "cohort_sha256": "4f28c419605206b825fea10ca2cf8cfdccbacf2c851f53a34bca5a9c5ced6253",
+      "probability_file_sha256": "47a0b57be1b2f1ef70e6ce278b22e562f45f653a438333d771db05fde4ff71d5",
+      "probability_values_sha256": "e4cabbef4a4bbd7a46c649c5e14702bee47d2085eb10aae18dd638e6bf607802",
+      "inference_includes_teacher": false,
+      "pseudo_predictions_are_ground_truth": false,
+      "preparation_time_s": 0.12573396903462708,
+      "encoder_LR_phase": {
+        "encoder_LR_scale_after_cache": 1.0,
+        "changes": [],
+        "source_bootstrap_and_pseudo_probabilities_changed": false,
+        "head_learning_rates_changed": false
+      }
+    }
+  },
+  "mcc_temperature": null,
+  "weather_profile": "baseline",
+  "domain_forward": "reference",
+  "image_backbone": "convnext_small",
+  "freeze_image_encoders": false,
+  "ir_backbone": "unip_tiny",
+  "encoder_precision": "bf16",
+  "ir_training_scope": "all_used_layers",
+  "infrared_pretraining": {
+    "source": "official UNIP iBOT-L attention-distilled encoder",
+    "scale": "tiny",
+    "sha256": "d5ebe70319a1d5a5fd7c2ed4fdfc6518f34c1c2020c25a57175fcf4191805f59",
+    "last_attention_heads": 16,
+    "normalization": {
+      "mean": 0.3801,
+      "std": 0.1871
+    },
+    "feature_mode": "cls",
+    "output_dim": 192,
+    "classification_benefit_verified": false
+  },
+  "image_adaptation_lr_scale": 0.1,
+  "encoder_training_scope": "last_stages",
+  "unit_method_features": false,
+  "classifier_layout": "reference",
+  "selected_epoch": 21,
+  "completed_epochs": 36,
+  "optimizer_updates": 1836,
+  "per_domain_batch_sizes": {
+    "source": 8,
+    "target": 8
+  },
+  "stop_reason": "validation_accuracy_f1_patience",
+  "planned_optimizer_updates": 2040,
+  "freeze_bn_after_epochs": -1,
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 21,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.4230769230769231,
+      "precision_macro": 0.37878787878787873,
+      "recall_macro": 0.32916666666666666,
+      "f1_macro": 0.32007575757575757,
+      "val_present_classes": 6,
+      "val_total_classes": 6,
+      "val_class_coverage": 1.0,
+      "val_samples": 26,
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0
+        ],
+        [
+          0,
+          3,
+          1,
+          1,
+          3,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          4,
+          0
+        ],
+        [
+          0,
+          0,
+          2,
+          0,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0,
+          0,
+          3,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          5
+        ]
+      ]
+    },
+    "zeroed": {
+      "VIS": {
+        "metrics": {
+          "accuracy": 0.19230769230769232,
+          "precision_macro": 0.032051282051282055,
+          "recall_macro": 0.16666666666666666,
+          "f1_macro": 0.05376344086021506,
+          "val_present_classes": 6,
+          "val_total_classes": 6,
+          "val_class_coverage": 1.0,
+          "val_samples": 26,
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              0,
+              0,
+              2,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              8,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              4,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              2,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              5,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              5,
+              0
+            ]
+          ]
+        },
+        "ACC_drop": 0.23076923076923075
+      },
+      "IR": {
+        "metrics": {
+          "accuracy": 0.4230769230769231,
+          "precision_macro": 0.38888888888888884,
+          "recall_macro": 0.31666666666666665,
+          "f1_macro": 0.3383838383838384,
+          "val_present_classes": 6,
+          "val_total_classes": 6,
+          "val_class_coverage": 1.0,
+          "val_samples": 26,
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              0,
+              2,
+              0,
+              0
+            ],
+            [
+              0,
+              4,
+              3,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              4,
+              0
+            ],
+            [
+              0,
+              0,
+              2,
+              0,
+              0,
+              0
+            ],
+            [
+              3,
+              0,
+              0,
+              0,
+              2,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              5
+            ]
+          ]
+        },
+        "ACC_drop": 0.0
+      }
+    }
+  },
+  "freeze_bn_scope": "all",
+  "feature_normalization": "unit",
+  "domain_running_stats": false,
+  "auxiliary_source_weight": 0.5,
+  "screening_only": false,
+  "planned_epochs": 40,
+  "input_augmentation": {
+    "FDA_beta": 0.0,
+    "FDA_probability": 0.5,
+    "source_zoom_min_area": 1.0,
+    "source_zoom_probability": 0.5,
+    "source_weather_probability": 0.75,
+    "source_ir_inversion_probability": 0.0,
+    "source_ir_statistics_probability": 0.0,
+    "source_ir_statistics_strength": 1.0
+  },
+  "source_aspect": {
+    "minimum": 0.5,
+    "maximum": 2.0,
+    "probability": 0.75
+  },
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.4230769230769231,
+    "precision_macro": 0.37878787878787873,
+    "recall_macro": 0.32916666666666666,
+    "f1_macro": 0.32007575757575757,
+    "val_present_classes": 6,
+    "val_total_classes": 6,
+    "val_class_coverage": 1.0,
+    "val_samples": 26,
+    "confusion_matrix": [
+      [
+        0,
+        0,
+        0,
+        1,
+        1,
+        0
+      ],
+      [
+        0,
+        3,
+        1,
+        1,
+        3,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        2,
+        0,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        3,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        5
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 12.1524,
+    "latency_std_ms": 0.8136,
+    "latency_p50_ms": 11.7948,
+    "latency_p95_ms": 13.3593,
+    "throughput_samples_s": 82.29,
+    "total_params": 80209973,
+    "trainable_params": 22210517,
+    "inference_GFLOPs": 19.384993536,
+    "total_train_time_s": 143.0185661893338,
+    "train_epoch_mean_s": 3.9727379497037165,
+    "peak_train_reserved_gb": 1.458984375,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head",
+    "teacher_preparation_time_s": 1.0068059330806136,
+    "pseudo_probability_preparation_time_s": 0.12573396903462708,
+    "optimizer_and_teacher_preparation_time_s": 144.15110609144904
+  },
+  "modality_weights_at_selected_epoch": [
+    0.505408525466919,
+    0.4945913851261139
+  ],
+  "smoke": false
+}

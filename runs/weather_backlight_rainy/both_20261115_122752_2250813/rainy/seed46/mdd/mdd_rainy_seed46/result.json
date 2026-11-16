@@ -1,0 +1,599 @@
+{
+  "method": "mdd",
+  "target": "rainy",
+  "seed": 46,
+  "protocol": "UDA",
+  "core": "vds2raw.adaptation.AdaptationModel",
+  "modalities": [
+    "VIS",
+    "IR"
+  ],
+  "optimizer": "SGD",
+  "selected_feature_cache": {
+    "epoch": 17,
+    "kind": "selected-state image embeddings only; not a model checkpoint",
+    "file": "/home/lixiang/lx/JMDA_Com/runs/weather_backlight_rainy/both_20261115_122752_2250813/rainy/seed46/mdd/mdd_rainy_seed46/selected_feature_cache.npz",
+    "sha256": "dc40dc38f5557857dc397be24f496c5bc09118aa58efc88f570ec9f5c37f7280",
+    "modality_widths": [
+      512,
+      512
+    ],
+    "modality_weights": [
+      0.5255573987960815,
+      0.47444260120391846
+    ],
+    "target_training_labels_used": false,
+    "statistics_or_models_fitted": false,
+    "partitions": [
+      {
+        "partition": "source_train",
+        "samples": 401,
+        "labels_in_cache": true,
+        "cohort_sha256": "504d0a53aa806ff0b4e2d8979b9e46499d10083977ea5beafa22499e8924d946"
+      },
+      {
+        "partition": "target_train",
+        "samples": 96,
+        "labels_in_cache": false,
+        "cohort_sha256": "4f28c419605206b825fea10ca2cf8cfdccbacf2c851f53a34bca5a9c5ced6253"
+      },
+      {
+        "partition": "target_val",
+        "samples": 26,
+        "labels_in_cache": true,
+        "cohort_sha256": "8738eded5e1a5f63fd4335c1d87b7d37da6dfeb438b83c3f28505150762e5044"
+      }
+    ]
+  },
+  "enhancement": {
+    "enabled": true,
+    "variant_family": "core_plus_cached_ensemble_target_distillation",
+    "prediction_teacher": {
+      "calibration": {
+        "strategy": "coral",
+        "components": 16,
+        "shrinkage": 0.1,
+        "fit_partitions": [
+          "source_train",
+          "target_train"
+        ],
+        "fit_samples": {
+          "source_train": 401,
+          "target_train": 96
+        },
+        "target_instance_labels_used": false,
+        "validation_statistics_fitted": false,
+        "explained_variance_ratio_sum": 0.6547891746533788,
+        "transform_sha256": "7cf73af7e8bf48cfae7f78d816ff8ef485593cb8fce6c73ff4e41c37a6f60983"
+      },
+      "cluster_initialization": {
+        "fit_partitions": [
+          "source_train",
+          "target_train"
+        ],
+        "cluster_fit_samples": 96,
+        "association_label_source": "source_train labels only",
+        "matching": "source_votes",
+        "initialization": "kmeans++",
+        "neighbors": 3,
+        "source_view_trim_fraction": 0.25,
+        "auxiliary_paired_modalities_for_source_association": true,
+        "cluster_to_source_class": [
+          0,
+          1,
+          2,
+          5,
+          3,
+          4
+        ],
+        "source_cluster_class_votes": [
+          [
+            26,
+            11,
+            6,
+            2,
+            10,
+            15
+          ],
+          [
+            9,
+            6,
+            3,
+            6,
+            4,
+            2
+          ],
+          [
+            41,
+            12,
+            22,
+            28,
+            9,
+            0
+          ],
+          [
+            9,
+            13,
+            2,
+            10,
+            9,
+            18
+          ],
+          [
+            27,
+            10,
+            14,
+            35,
+            3,
+            6
+          ],
+          [
+            8,
+            1,
+            6,
+            2,
+            10,
+            6
+          ]
+        ],
+        "source_association_reliability_by_class": [
+          0.19645375091543693,
+          0.25238975702840155,
+          0.2729940011586547,
+          0.3259179741012,
+          0.38801176460873593,
+          0.36079709173357866
+        ],
+        "target_cluster_sizes": [
+          22,
+          11,
+          18,
+          17,
+          17,
+          11
+        ],
+        "target_instance_labels_used": false,
+        "validation_used_for_fitting": false
+      },
+      "association_calibrations": [
+        {
+          "strategy": "coral",
+          "components": 32,
+          "shrinkage": 0.1,
+          "fit_partitions": [
+            "source_train",
+            "target_train"
+          ],
+          "fit_samples": {
+            "source_train": 401,
+            "target_train": 96
+          },
+          "target_instance_labels_used": false,
+          "validation_statistics_fitted": false,
+          "explained_variance_ratio_sum": 0.7816057022159041,
+          "transform_sha256": "f270b4250d26674a9462d197aeea999b5a8d4c66f954d0cbd5068f9fcd1dde35"
+        },
+        {
+          "strategy": "coral",
+          "components": 32,
+          "shrinkage": 0.1,
+          "fit_partitions": [
+            "source_train",
+            "target_train"
+          ],
+          "fit_samples": {
+            "source_train": 401,
+            "target_train": 96
+          },
+          "target_instance_labels_used": false,
+          "validation_statistics_fitted": false,
+          "explained_variance_ratio_sum": 0.8274545638162101,
+          "transform_sha256": "5656bee481f5e7ba68dd0907eb13b376b05d3477cb474cab28ba37f628e37151"
+        }
+      ],
+      "teacher_VIS_weight": 0.94,
+      "association_VIS_weight": 0.75,
+      "fit_partitions": [
+        "source_train",
+        "target_train"
+      ],
+      "validation_used_for_fitting": false,
+      "target_training_labels_used": false,
+      "probability_weight": 0.25,
+      "teacher_temperature": 4.0,
+      "student_temperature": 0.25,
+      "student_objective_changed": true,
+      "teacher_frozen": true,
+      "inference": "student only; ensemble prepares training pseudo-probabilities",
+      "extra_inference_image_encoders": 0,
+      "weights_sha256": "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec",
+      "source_samples": 401,
+      "target_samples": 96,
+      "source_cohort_sha256": "504d0a53aa806ff0b4e2d8979b9e46499d10083977ea5beafa22499e8924d946",
+      "target_cohort_sha256": "4f28c419605206b825fea10ca2cf8cfdccbacf2c851f53a34bca5a9c5ced6253",
+      "preparation_time_s": 0.807556628016755,
+      "training_only": true
+    },
+    "prediction_distillation_weight": 4.0,
+    "prediction_distillation_start_epoch": 2,
+    "prediction_distillation_encoder_lr_scale": 30.0,
+    "prediction_distillation_sharpening": 0.5,
+    "prediction_distillation": {
+      "prepared_before_epoch": 2,
+      "samples": 96,
+      "target_training_labels_used": false,
+      "validation_used": false,
+      "teacher_training_source": "source_train labels and label-free target_train statistics",
+      "current_source_supervised_student_epoch": 1,
+      "sharpening_temperature": 0.5,
+      "mean_confidence": 0.5495571494102478,
+      "pseudo_class_counts": [
+        22,
+        11,
+        12,
+        16,
+        6,
+        29
+      ],
+      "cohort_sha256": "4f28c419605206b825fea10ca2cf8cfdccbacf2c851f53a34bca5a9c5ced6253",
+      "probability_file_sha256": "31e29c0a4f525d6c93d0d611aedec1264043d446c2a3e3a957daca51f389cd37",
+      "probability_values_sha256": "f95188d474912f6c3ad2db747baaf7576dd62991b802087a98fa6503132a108b",
+      "inference_includes_teacher": false,
+      "pseudo_predictions_are_ground_truth": false,
+      "preparation_time_s": 0.09260134515352547,
+      "encoder_LR_phase": {
+        "encoder_LR_scale_after_cache": 30.0,
+        "changes": [
+          {
+            "role": "pretrained_RGB_NIR",
+            "before": 9.961176608258225e-06,
+            "after": 0.00029883529824774677
+          }
+        ],
+        "source_bootstrap_and_pseudo_probabilities_changed": false,
+        "head_learning_rates_changed": false
+      }
+    }
+  },
+  "mcc_temperature": null,
+  "weather_profile": "baseline",
+  "domain_forward": "reference",
+  "image_backbone": "resnet18",
+  "freeze_image_encoders": false,
+  "ir_backbone": "resnet18",
+  "encoder_precision": "fp32",
+  "ir_training_scope": "inherit",
+  "infrared_pretraining": null,
+  "image_adaptation_lr_scale": 1.0,
+  "encoder_training_scope": "all",
+  "unit_method_features": false,
+  "classifier_layout": "linear",
+  "selected_epoch": 17,
+  "completed_epochs": 20,
+  "optimizer_updates": 520,
+  "per_domain_batch_sizes": {
+    "source": 16,
+    "target": 16
+  },
+  "stop_reason": "max_epochs",
+  "planned_optimizer_updates": 520,
+  "freeze_bn_after_epochs": 0,
+  "modality_diagnostics": {
+    "partition": "target_val",
+    "selected_epoch": 17,
+    "kind": "zeroed_feature_sensitivity",
+    "independent_single_modality_models": false,
+    "inference_independent_of_label_and_path": true,
+    "full": {
+      "accuracy": 0.34615384615384615,
+      "precision_macro": 0.3273809523809524,
+      "recall_macro": 0.2625,
+      "f1_macro": 0.2668350168350168,
+      "val_present_classes": 6,
+      "val_total_classes": 6,
+      "val_class_coverage": 1.0,
+      "val_samples": 26,
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          0,
+          2,
+          0,
+          0
+        ],
+        [
+          0,
+          3,
+          3,
+          2,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          3,
+          1
+        ],
+        [
+          2,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          5
+        ]
+      ]
+    },
+    "zeroed": {
+      "VIS": {
+        "metrics": {
+          "accuracy": 0.3076923076923077,
+          "precision_macro": 0.2625,
+          "recall_macro": 0.32916666666666666,
+          "f1_macro": 0.2233877233877234,
+          "val_present_classes": 6,
+          "val_total_classes": 6,
+          "val_class_coverage": 1.0,
+          "val_samples": 26,
+          "confusion_matrix": [
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              3,
+              3,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              4
+            ],
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              2,
+              0,
+              3
+            ]
+          ]
+        },
+        "ACC_drop": 0.038461538461538436
+      },
+      "IR": {
+        "metrics": {
+          "accuracy": 0.2692307692307692,
+          "precision_macro": 0.18571428571428572,
+          "recall_macro": 0.2333333333333333,
+          "f1_macro": 0.20555555555555557,
+          "val_present_classes": 6,
+          "val_total_classes": 6,
+          "val_class_coverage": 1.0,
+          "val_samples": 26,
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              0,
+              2,
+              0,
+              0
+            ],
+            [
+              6,
+              0,
+              0,
+              2,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              3,
+              1
+            ],
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              0,
+              0,
+              0,
+              2,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              5
+            ]
+          ]
+        },
+        "ACC_drop": 0.07692307692307693
+      }
+    }
+  },
+  "freeze_bn_scope": "encoders",
+  "feature_normalization": "unit",
+  "domain_running_stats": false,
+  "auxiliary_source_weight": 0.0,
+  "screening_only": false,
+  "planned_epochs": 20,
+  "input_augmentation": {
+    "FDA_beta": 0.0,
+    "FDA_probability": 0.5,
+    "source_zoom_min_area": 1.0,
+    "source_zoom_probability": 0.5,
+    "source_weather_probability": 0.0,
+    "source_ir_inversion_probability": 0.0,
+    "source_ir_statistics_probability": 0.0,
+    "source_ir_statistics_strength": 1.0
+  },
+  "source_aspect": {
+    "minimum": 1.0,
+    "maximum": 1.0,
+    "probability": 0.75
+  },
+  "evaluation_protocol": "best_target_val_within_budget",
+  "target_test_available": false,
+  "target_training_labels_used": false,
+  "target_val": {
+    "accuracy": 0.34615384615384615,
+    "precision_macro": 0.3273809523809524,
+    "recall_macro": 0.2625,
+    "f1_macro": 0.2668350168350168,
+    "val_present_classes": 6,
+    "val_total_classes": 6,
+    "val_class_coverage": 1.0,
+    "val_samples": 26,
+    "confusion_matrix": [
+      [
+        0,
+        0,
+        0,
+        2,
+        0,
+        0
+      ],
+      [
+        0,
+        3,
+        3,
+        2,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        3,
+        1
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        3,
+        0,
+        0,
+        0,
+        1,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        5
+      ]
+    ]
+  },
+  "complexity": {
+    "latency_mean_ms": 2.4307,
+    "latency_std_ms": 0.6722,
+    "latency_p50_ms": 2.5785,
+    "latency_p95_ms": 3.434,
+    "throughput_samples_s": 411.4,
+    "total_params": 44718350,
+    "trainable_params": 22365326,
+    "inference_GFLOPs": 7.254257664,
+    "total_train_time_s": 27.212815864477307,
+    "train_epoch_mean_s": 1.3606407932238653,
+    "peak_train_reserved_gb": 2.251953125,
+    "inference_input": {
+      "rgb": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "nir": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    "inference_batch_size": 1,
+    "flops_scope": "executed Conv2d/Linear only; 1 MAC=2 FLOPs",
+    "training_time_scope": "optimizer windows including gradient diagnostics, excluding evaluation and GPU queue",
+    "total_parameter_scope": "all training modules, including any discriminator/adversarial head",
+    "teacher_preparation_time_s": 0.807556628016755,
+    "pseudo_probability_preparation_time_s": 0.09260134515352547,
+    "optimizer_and_teacher_preparation_time_s": 28.112973837647587
+  },
+  "modality_weights_at_selected_epoch": [
+    0.5255573987960815,
+    0.47444260120391846
+  ],
+  "smoke": false
+}
