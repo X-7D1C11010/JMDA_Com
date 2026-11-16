@@ -262,6 +262,8 @@ class WeatherTests(unittest.TestCase):
             datasets, audit = weather.prepare_datasets(lists, "backlight")
             source, target, _, target_eval, validation = datasets
             self.assertEqual(audit["compact_label_map"], {0: 0, 2: 1, 5: 2, 7: 3})
+            self.assertEqual(audit["source_train_class_ids_compact"], [0, 1, 2, 3])
+            self.assertEqual(audit["target_train_class_ids_compact"], [0, 1, 2, 3])
             self.assertEqual(audit["source_samples_excluded_outside_target_support"], 2)
             self.assertEqual(len(source), 8)
             self.assertEqual({source[i]["label"] for i in range(len(source))}, {0, 1, 2, 3})
@@ -274,6 +276,14 @@ class WeatherTests(unittest.TestCase):
             # even with the labelled target metadata physically removed.
             (lists/"backlight_train.txt").unlink()
             self.assertNotIn("label", target[0])
+
+    def test_missing_source_class_and_target_support_mismatch_fail_before_training(self):
+        for filename in ('sunny_train.txt','backlight_train.txt','backlight_val.txt'):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"JMDA_DATA_ROOT": ""}):
+                lists=fixture(Path(temporary));path=lists/filename
+                path.write_text(''.join(line for line in path.read_text(encoding='utf-8').splitlines(True)
+                                        if int(line.split()[-1])!=5),encoding='utf-8')
+                with self.assertRaises(ValueError):weather.prepare_datasets(lists,'backlight')
 
     def test_corrupt_target_pair_cohort_fails_before_training(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"JMDA_DATA_ROOT": ""}):

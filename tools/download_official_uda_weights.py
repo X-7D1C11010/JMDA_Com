@@ -57,6 +57,12 @@ OPTIONAL_WEIGHTS = ({
     "url": "https://huggingface.co/casiatao/UNIP/resolve/main/unip_vit_tiny_by_ibot_large.pth",
     "relative_path": os.path.join("unip", "unip_vit_tiny_by_ibot_large.pth"),
     "sha256": "d5ebe70319a1d5a5fd7c2ed4fdfc6518f34c1c2020c25a57175fcf4191805f59",
+}, {
+    "id": "unip_small",
+    "method": "Label-guided foggy DANN/DeepCORAL infrared UNIP-small",
+    "url": "https://huggingface.co/casiatao/UNIP/resolve/main/unip_vit_small_by_ibot_large.pth",
+    "relative_path": os.path.join("unip", "unip_vit_small_by_ibot_large.pth"),
+    "sha256": "54a8aa79e92c3e1a7f1936c02faf411ec34651fd5aa5cc8eeeb7e6c09ca14af4",
 })
 
 WEIGHTS_BY_ID = {spec["id"]: spec for spec in WEIGHTS+OPTIONAL_WEIGHTS}

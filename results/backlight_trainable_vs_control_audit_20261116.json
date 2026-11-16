@@ -1,0 +1,863 @@
+[
+  {
+    "comparison": {
+      "method": "deepcoral",
+      "changed_prediction_classes": 0,
+      "max_probability_difference": 0.0058609843254089355
+    },
+    "runs": [
+      {
+        "method": "deepcoral",
+        "variant": "backlight_last_stage_v9",
+        "selected_epoch": 18,
+        "source_ACC": 97.66990291262137,
+        "val_ACC": 86.11111111111111,
+        "modality_weights": [
+          0.8461945652961731,
+          0.1538054347038269
+        ],
+        "gradients": {
+          "VIS": {
+            "CE_norm": 0.9708086252212524,
+            "weighted_DA_norm": 0.012663318775594234,
+            "DA_to_CE_ratio": 0.013044093806550387,
+            "cosine": -0.5858943927374202
+          },
+          "IR": {
+            "CE_norm": 0.03407522290945053,
+            "weighted_DA_norm": 0.0004440124030224979,
+            "DA_to_CE_ratio": 0.013030359455091168,
+            "cosine": -0.28514591079829615
+          },
+          "head": {
+            "CE_norm": 0.18593353033065796,
+            "weighted_DA_norm": 0.0016125414986163378,
+            "DA_to_CE_ratio": 0.008672677250567168,
+            "cosine": -0.25436367656957265
+          },
+          "gate": {
+            "CE_norm": 0.010061397217214108,
+            "weighted_DA_norm": 2.912706258939579e-05,
+            "DA_to_CE_ratio": 0.0028949321809462127,
+            "cosine": -1.0000000953338344
+          }
+        },
+        "sampled_updates": {
+          "VIS_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "VIS_last_conv": {
+            "weight_L2_before": 8.348329544067383,
+            "update_L2": 9.159197361441329e-06,
+            "relative_update_L2": 1.0971293494217867e-06,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "VIS_last_trainable_matrix": {
+            "weight_L2_before": 71.50115203857422,
+            "update_L2": 1.8077114873449318e-05,
+            "relative_update_L2": 2.528227078592647e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "IR_last_conv": {
+            "weight_L2_before": 8.348206520080566,
+            "update_L2": 1.7082392105294275e-06,
+            "relative_update_L2": 2.0462349684575625e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_last_trainable_matrix": {
+            "weight_L2_before": 71.5011215209961,
+            "update_L2": 1.4484111488854978e-05,
+            "relative_update_L2": 2.0257180839606497e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "classifier_last_weight": {
+            "weight_L2_before": 18.243013381958008,
+            "update_L2": 0.01933136023581028,
+            "relative_update_L2": 0.0010596582829308576,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.1,
+            "optimizer_role": "new_layers",
+            "momentum_buffer_present": true
+          },
+          "modality_gate": {
+            "weight_L2_before": 2.1806399822235107,
+            "update_L2": 7.410473335767165e-05,
+            "relative_update_L2": 3.3983020563582456e-05,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.001,
+            "optimizer_role": "modality_gate",
+            "momentum_buffer_present": true
+          }
+        },
+        "selected_training": {
+          "epoch": 18,
+          "classification": 0.3867202030889916,
+          "source_ce": 0.3867202030889916,
+          "transfer": 0.06019879448594469,
+          "weighted_transfer": 0.0030099397990852594,
+          "updates": 33,
+          "source_sample_exposures": 528,
+          "target_sample_exposures": 528,
+          "source_unique_samples": 515,
+          "target_unique_samples": 113,
+          "source_train_accuracy": 0.9696969696969697,
+          "protocol": "UDA",
+          "target_training_labels_used": false,
+          "target_true_labels_used_for_sampling": false,
+          "target_true_labels_used_in_classification_loss": false,
+          "target_true_labels_used_in_alignment_loss": false,
+          "strict_unsupervised": true,
+          "training_time_s": 7.378269999999986
+        }
+      },
+      {
+        "method": "deepcoral",
+        "variant": "backlight_last_stage_source_control",
+        "selected_epoch": 18,
+        "source_ACC": 97.66990291262137,
+        "val_ACC": 86.11111111111111,
+        "modality_weights": [
+          0.8461984992027283,
+          0.15380148589611053
+        ],
+        "gradients": {
+          "VIS": {
+            "CE_norm": 0.968670129776001,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "IR": {
+            "CE_norm": 0.03402184322476387,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "head": {
+            "CE_norm": 0.18495213985443115,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "gate": {
+            "CE_norm": 0.01003343053162098,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          }
+        },
+        "sampled_updates": {
+          "VIS_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "VIS_last_conv": {
+            "weight_L2_before": 8.348329544067383,
+            "update_L2": 9.214906640409026e-06,
+            "relative_update_L2": 1.1038024543433917e-06,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "VIS_last_trainable_matrix": {
+            "weight_L2_before": 71.50115203857422,
+            "update_L2": 1.8129043382941745e-05,
+            "relative_update_L2": 2.535489690174683e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "IR_last_conv": {
+            "weight_L2_before": 8.348206520080566,
+            "update_L2": 1.7084613546103355e-06,
+            "relative_update_L2": 2.0465010664276757e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_last_trainable_matrix": {
+            "weight_L2_before": 71.5011215209961,
+            "update_L2": 1.4484093298960943e-05,
+            "relative_update_L2": 2.02571553995943e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 1e-05,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "classifier_last_weight": {
+            "weight_L2_before": 18.322904586791992,
+            "update_L2": 0.019242987036705017,
+            "relative_update_L2": 0.0010502148797181569,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.1,
+            "optimizer_role": "new_layers",
+            "momentum_buffer_present": true
+          },
+          "modality_gate": {
+            "weight_L2_before": 2.1806602478027344,
+            "update_L2": 7.37780865165405e-05,
+            "relative_update_L2": 3.383291211498003e-05,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.001,
+            "optimizer_role": "modality_gate",
+            "momentum_buffer_present": true
+          }
+        },
+        "selected_training": {
+          "epoch": 18,
+          "classification": 0.3837260766462846,
+          "source_ce": 0.3837260766462846,
+          "transfer": 0.06217332895506512,
+          "weighted_transfer": 0.0,
+          "updates": 33,
+          "source_sample_exposures": 528,
+          "target_sample_exposures": 528,
+          "source_unique_samples": 515,
+          "target_unique_samples": 113,
+          "source_train_accuracy": 0.9696969696969697,
+          "protocol": "UDA",
+          "target_training_labels_used": false,
+          "target_true_labels_used_for_sampling": false,
+          "target_true_labels_used_in_classification_loss": false,
+          "target_true_labels_used_in_alignment_loss": false,
+          "strict_unsupervised": true,
+          "training_time_s": 7.245045299999987
+        }
+      }
+    ]
+  },
+  {
+    "comparison": {
+      "method": "mdd",
+      "changed_prediction_classes": 0,
+      "max_probability_difference": 0.0002646446228027344
+    },
+    "runs": [
+      {
+        "method": "mdd",
+        "variant": "backlight_last_stage_v9",
+        "selected_epoch": 26,
+        "source_ACC": 98.05825242718447,
+        "val_ACC": 86.11111111111111,
+        "modality_weights": [
+          0.8443995714187622,
+          0.1556004285812378
+        ],
+        "gradients": {
+          "VIS": {
+            "CE_norm": 0.7795714139938354,
+            "weighted_DA_norm": 0.025819281116127968,
+            "DA_to_CE_ratio": 0.033119840790278306,
+            "cosine": -0.8290214352921066
+          },
+          "IR": {
+            "CE_norm": 0.02790939435362816,
+            "weighted_DA_norm": 0.0011702531483024359,
+            "DA_to_CE_ratio": 0.04193043867146137,
+            "cosine": -0.8749260376403489
+          },
+          "head": {
+            "CE_norm": 0.1356697380542755,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "gate": {
+            "CE_norm": 0.00460166297852993,
+            "weighted_DA_norm": 0.000437868875451386,
+            "DA_to_CE_ratio": 0.09515448599655374,
+            "cosine": -1.000000018246376
+          }
+        },
+        "sampled_updates": {
+          "VIS_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "VIS_last_conv": {
+            "weight_L2_before": 8.348003387451172,
+            "update_L2": 8.143777449731715e-06,
+            "relative_update_L2": 9.755359541388721e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "VIS_last_trainable_matrix": {
+            "weight_L2_before": 71.49800109863281,
+            "update_L2": 1.6197054719668813e-05,
+            "relative_update_L2": 2.2653856710378065e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "IR_last_conv": {
+            "weight_L2_before": 8.347833633422852,
+            "update_L2": 1.5438300806636107e-06,
+            "relative_update_L2": 1.8493781122834813e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_last_trainable_matrix": {
+            "weight_L2_before": 71.49774169921875,
+            "update_L2": 1.3473236322170123e-05,
+            "relative_update_L2": 1.8844282353490536e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "classifier_last_weight": {
+            "weight_L2_before": 18.54121971130371,
+            "update_L2": 0.017646629363298416,
+            "relative_update_L2": 0.000951751267611596,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.08881188445385169,
+            "optimizer_role": "new_layers",
+            "momentum_buffer_present": true
+          },
+          "modality_gate": {
+            "weight_L2_before": 2.171583414077759,
+            "update_L2": 4.7562723921146244e-05,
+            "relative_update_L2": 2.1902324180968875e-05,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.0008881188445385167,
+            "optimizer_role": "modality_gate",
+            "momentum_buffer_present": true
+          }
+        },
+        "selected_training": {
+          "epoch": 26,
+          "classification": 0.37322038412094116,
+          "source_ce": 0.37322038412094116,
+          "transfer": 2.4862091288422095,
+          "weighted_transfer": 0.49724183389634796,
+          "updates": 33,
+          "source_sample_exposures": 528,
+          "target_sample_exposures": 528,
+          "source_unique_samples": 515,
+          "target_unique_samples": 113,
+          "source_train_accuracy": 0.9715909090909091,
+          "protocol": "UDA",
+          "target_training_labels_used": false,
+          "target_true_labels_used_for_sampling": false,
+          "target_true_labels_used_in_classification_loss": false,
+          "target_true_labels_used_in_alignment_loss": false,
+          "strict_unsupervised": true,
+          "training_time_s": 7.841619900000012
+        }
+      },
+      {
+        "method": "mdd",
+        "variant": "backlight_last_stage_source_control",
+        "selected_epoch": 26,
+        "source_ACC": 98.05825242718447,
+        "val_ACC": 86.11111111111111,
+        "modality_weights": [
+          0.844325602054596,
+          0.15567433834075928
+        ],
+        "gradients": {
+          "VIS": {
+            "CE_norm": 0.7785788774490356,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "IR": {
+            "CE_norm": 0.02790437452495098,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "head": {
+            "CE_norm": 0.13560472428798676,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "gate": {
+            "CE_norm": 0.0045782094821333885,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          }
+        },
+        "sampled_updates": {
+          "VIS_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "VIS_last_conv": {
+            "weight_L2_before": 8.348004341125488,
+            "update_L2": 8.381488441955298e-06,
+            "relative_update_L2": 1.0040110305962413e-06,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "VIS_last_trainable_matrix": {
+            "weight_L2_before": 71.49800109863281,
+            "update_L2": 1.6374349797843024e-05,
+            "relative_update_L2": 2.2901828787149317e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "IR_last_conv": {
+            "weight_L2_before": 8.347833633422852,
+            "update_L2": 1.544136239317595e-06,
+            "relative_update_L2": 1.849744864506188e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_last_trainable_matrix": {
+            "weight_L2_before": 71.49774169921875,
+            "update_L2": 1.3472327736963052e-05,
+            "relative_update_L2": 1.8843011564811792e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 8.881188445385168e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "classifier_last_weight": {
+            "weight_L2_before": 18.53965187072754,
+            "update_L2": 0.0176398865878582,
+            "relative_update_L2": 0.0009514680594251078,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.08881188445385169,
+            "optimizer_role": "new_layers",
+            "momentum_buffer_present": true
+          },
+          "modality_gate": {
+            "weight_L2_before": 2.171215772628784,
+            "update_L2": 4.925913890474476e-05,
+            "relative_update_L2": 2.268735310682853e-05,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.0008881188445385167,
+            "optimizer_role": "modality_gate",
+            "momentum_buffer_present": true
+          }
+        },
+        "selected_training": {
+          "epoch": 26,
+          "classification": 0.3729823918053598,
+          "source_ce": 0.3729823918053598,
+          "transfer": 8.905437642877752,
+          "weighted_transfer": 0.0,
+          "updates": 33,
+          "source_sample_exposures": 528,
+          "target_sample_exposures": 528,
+          "source_unique_samples": 515,
+          "target_unique_samples": 113,
+          "source_train_accuracy": 0.9715909090909091,
+          "protocol": "UDA",
+          "target_training_labels_used": false,
+          "target_true_labels_used_for_sampling": false,
+          "target_true_labels_used_in_classification_loss": false,
+          "target_true_labels_used_in_alignment_loss": false,
+          "strict_unsupervised": true,
+          "training_time_s": 7.975441999999987
+        }
+      }
+    ]
+  },
+  {
+    "comparison": {
+      "method": "mcc",
+      "changed_prediction_classes": 0,
+      "max_probability_difference": 0.0006408095359802246
+    },
+    "runs": [
+      {
+        "method": "mcc",
+        "variant": "backlight_last_stage_v9",
+        "selected_epoch": 12,
+        "source_ACC": 97.47572815533981,
+        "val_ACC": 86.11111111111111,
+        "modality_weights": [
+          0.8481362462043762,
+          0.15186373889446259
+        ],
+        "gradients": {
+          "VIS": {
+            "CE_norm": 0.7274554371833801,
+            "weighted_DA_norm": 0.0006275271880440414,
+            "DA_to_CE_ratio": 0.000862633167570719,
+            "cosine": 0.5302606502662087
+          },
+          "IR": {
+            "CE_norm": 0.0196603424847126,
+            "weighted_DA_norm": 2.0866349586867727e-05,
+            "DA_to_CE_ratio": 0.0010613421207231201,
+            "cosine": 0.2514049964192932
+          },
+          "head": {
+            "CE_norm": 0.1241806373000145,
+            "weighted_DA_norm": 0.00010304062743671238,
+            "DA_to_CE_ratio": 0.0008297640411344576,
+            "cosine": 0.3339265107281064
+          },
+          "gate": {
+            "CE_norm": 0.009058710187673569,
+            "weighted_DA_norm": 2.391361476838938e-06,
+            "DA_to_CE_ratio": 0.0002639847646404372,
+            "cosine": 0.9999999892696873
+          }
+        },
+        "sampled_updates": {
+          "VIS_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "VIS_last_conv": {
+            "weight_L2_before": 8.34869384765625,
+            "update_L2": 8.50578180688899e-06,
+            "relative_update_L2": 1.0188158725303886e-06,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "VIS_last_trainable_matrix": {
+            "weight_L2_before": 71.50464630126953,
+            "update_L2": 1.4578023183275945e-05,
+            "relative_update_L2": 2.0387518766059709e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "IR_last_conv": {
+            "weight_L2_before": 8.348615646362305,
+            "update_L2": 1.3143336445864406e-06,
+            "relative_update_L2": 1.574313275709522e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_last_trainable_matrix": {
+            "weight_L2_before": 71.50455474853516,
+            "update_L2": 1.1210938282602001e-05,
+            "relative_update_L2": 1.5678635189084466e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "classifier_last_weight": {
+            "weight_L2_before": 17.11974334716797,
+            "update_L2": 0.016743356361985207,
+            "relative_update_L2": 0.0009780144493086091,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.07790571975700739,
+            "optimizer_role": "new_layers",
+            "momentum_buffer_present": true
+          },
+          "modality_gate": {
+            "weight_L2_before": 2.1906092166900635,
+            "update_L2": 4.621402331395075e-05,
+            "relative_update_L2": 2.109642512313473e-05,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.0007790571975700739,
+            "optimizer_role": "modality_gate",
+            "momentum_buffer_present": true
+          }
+        },
+        "selected_training": {
+          "epoch": 12,
+          "classification": 0.447347006111434,
+          "source_ce": 0.447347006111434,
+          "transfer": 0.8673331791704352,
+          "weighted_transfer": 0.01477090029441046,
+          "updates": 33,
+          "source_sample_exposures": 528,
+          "target_sample_exposures": 528,
+          "source_unique_samples": 515,
+          "target_unique_samples": 113,
+          "source_train_accuracy": 0.9621212121212122,
+          "protocol": "UDA",
+          "target_training_labels_used": false,
+          "target_true_labels_used_for_sampling": false,
+          "target_true_labels_used_in_classification_loss": false,
+          "target_true_labels_used_in_alignment_loss": false,
+          "strict_unsupervised": true,
+          "training_time_s": 7.509230800000012
+        }
+      },
+      {
+        "method": "mcc",
+        "variant": "backlight_last_stage_source_control",
+        "selected_epoch": 12,
+        "source_ACC": 97.47572815533981,
+        "val_ACC": 86.11111111111111,
+        "modality_weights": [
+          0.8481366634368896,
+          0.15186332166194916
+        ],
+        "gradients": {
+          "VIS": {
+            "CE_norm": 0.7275908589363098,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "IR": {
+            "CE_norm": 0.01966383308172226,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "head": {
+            "CE_norm": 0.12423304468393326,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          },
+          "gate": {
+            "CE_norm": 0.009058970026671886,
+            "weighted_DA_norm": 0.0,
+            "DA_to_CE_ratio": 0.0,
+            "cosine": 0.0
+          }
+        },
+        "sampled_updates": {
+          "VIS_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "VIS_last_conv": {
+            "weight_L2_before": 8.34869384765625,
+            "update_L2": 8.503300705342554e-06,
+            "relative_update_L2": 1.0185186881334385e-06,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "VIS_last_trainable_matrix": {
+            "weight_L2_before": 71.50464630126953,
+            "update_L2": 1.4574278793588746e-05,
+            "relative_update_L2": 2.0382282197695435e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_first_conv": {
+            "weight_L2_before": 2.8976171016693115,
+            "update_L2": 0.0,
+            "relative_update_L2": 0.0,
+            "requires_grad": false,
+            "gradient_present": false,
+            "lr": null,
+            "optimizer_role": null,
+            "momentum_buffer_present": false
+          },
+          "IR_last_conv": {
+            "weight_L2_before": 8.348615646362305,
+            "update_L2": 1.3143319392838748e-06,
+            "relative_update_L2": 1.5743112330923526e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "IR_last_trainable_matrix": {
+            "weight_L2_before": 71.50455474853516,
+            "update_L2": 1.1210971024411265e-05,
+            "relative_update_L2": 1.5678680978907756e-07,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 7.790571975700739e-06,
+            "optimizer_role": "pretrained_RGB_NIR",
+            "momentum_buffer_present": true
+          },
+          "classifier_last_weight": {
+            "weight_L2_before": 17.116273880004883,
+            "update_L2": 0.016739243641495705,
+            "relative_update_L2": 0.0009779724114516756,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.07790571975700739,
+            "optimizer_role": "new_layers",
+            "momentum_buffer_present": true
+          },
+          "modality_gate": {
+            "weight_L2_before": 2.190610885620117,
+            "update_L2": 4.62034840893466e-05,
+            "relative_update_L2": 2.1091597961391186e-05,
+            "requires_grad": true,
+            "gradient_present": true,
+            "lr": 0.0007790571975700739,
+            "optimizer_role": "modality_gate",
+            "momentum_buffer_present": true
+          }
+        },
+        "selected_training": {
+          "epoch": 12,
+          "classification": 0.44747280713283655,
+          "source_ce": 0.44747280713283655,
+          "transfer": 0.8673638755624945,
+          "weighted_transfer": 0.0,
+          "updates": 33,
+          "source_sample_exposures": 528,
+          "target_sample_exposures": 528,
+          "source_unique_samples": 515,
+          "target_unique_samples": 113,
+          "source_train_accuracy": 0.9621212121212122,
+          "protocol": "UDA",
+          "target_training_labels_used": false,
+          "target_true_labels_used_for_sampling": false,
+          "target_true_labels_used_in_classification_loss": false,
+          "target_true_labels_used_in_alignment_loss": false,
+          "strict_unsupervised": true,
+          "training_time_s": 7.5307492999999965
+        }
+      }
+    ]
+  }
+]

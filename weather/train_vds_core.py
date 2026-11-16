@@ -1,8 +1,8 @@
-"""Weather VIS+IR UDA using the same five audited method cores as VDS2Raw.
+"""Weather VIS+IR training with five method cores shared with VDS2Raw.
 
-Only data/metadata and the number of modalities/classes change. No target
-training label enters a batch, loss, gradient diagnostic, or prediction log.
-Weather has no separate test partition: report the best target_val epoch.
+Default UDA keeps target instance labels out of training. Explicit label-guided
+modes separately declare supervised sampling/alignment. Optional locked
+holdouts are evaluated once after validation-only model selection.
 """
 
 import argparse
@@ -225,6 +225,10 @@ def prepare_datasets(data_dir, target_name, augment=True):
     audit = {"status": "PASS", "source": "sunny", "target": target_name,
              "original_class_ids": class_ids, "compact_label_map": label_map,
              "source_classes_equal_target_classes": True,
+             "source_train_class_ids_compact": sorted({label for _,label in source.samples}),
+             "target_train_class_ids_compact": sorted({label_map[label] for _,label in read_image_list(target_path)}),
+             "class_support_check": "exact source_train == target_train; shared mapping; fail before training on mismatch",
+             "target_label_metadata_usage": "known class support and cohort audit only; no target labels in training batches",
              "source_samples_excluded_outside_target_support": source.skipped,
              "counts": {ds.partition: len(ds) for ds in datasets},
              "pairing": "exact VIS/IR filename stem", "cross_partition_path_overlap": 0,
@@ -296,12 +300,49 @@ def run(args):
     args.seed = seed_everything(args.seed)
     torch.set_num_threads(args.cpu_threads)
     resolve_weather_settings(args)
+    if not 1<=args.selection_min_epoch<=args.epochs:
+        raise ValueError('Selection minimum epoch must lie inside the planned budget')
+    if args.stop_after_epochs and args.stop_after_epochs<args.selection_min_epoch:
+        raise ValueError('Observed prefix ends before any model is eligible for selection')
     if object_enabled and args.domain_running_stats:
         raise ValueError("Source object screening does not combine separate domain BN")
     if args.target_feature_style_probability and (args.domain_forward!="joint" or args.domain_running_stats or args.feature_calibration):
         raise ValueError("Feature-style screening requires joint domain forward and no separate calibration/domain BN")
+    split_manifest=Path(args.data_dir)/'holdout_protocol_manifest.json'
+    split_info=None
+    if split_manifest.is_file():
+        split_info=json.loads(split_manifest.read_text(encoding='utf-8'))
+        for name,expected in split_info['output_list_sha256'].items():
+            if hashlib.sha256((Path(args.data_dir)/name).read_bytes()).hexdigest()!=expected:
+                raise ValueError('Locked retraining split list changed: '+name)
+    from weather.class_matching import protocol_metadata,make_matched_samplers
+    guided=getattr(args,"target_class_matching","none")=="target_truth"
+    alignment_weight=getattr(args,'matched_alignment_weight',0.)
+    if (not math.isfinite(alignment_weight) or alignment_weight<0 or args.matched_alignment_ramp_epochs<0
+            or not 0<=args.matched_alignment_margin<2):
+        raise ValueError('Invalid label-guided alignment settings')
+    supervision=protocol_metadata(guided,alignment_weight)
     datasets, audit = prepare_datasets(args.data_dir, args.target, args.augment)
     source, target, source_eval, target_eval, validation = datasets
+    from weather.generalization import validate_holdout,selection_improved,labelled_training_diagnostic
+    heldout=None
+    if args.holdout_list:
+        heldout=WeatherView(paired_dataset(str(args.holdout_list),jmda_val_transform(),audit['compact_label_map']),'target_test')
+        audit['heldout_evaluation']=validate_holdout(heldout,(source,target,validation),audit['compact_label_map'])
+        audit['counts']['target_test']=len(heldout)
+        if split_info is not None:
+            audit['heldout_evaluation'].update(grouping=split_info['grouping'],
+                historically_unseen_test=split_info['historically_unseen_test'],
+                split_seed=split_info['split_seed'])
+    matching_plan=None
+    if guided:
+        matching_plan,matched_samplers=make_matched_samplers(source,target,args.batch_size,args.target_batch_size,
+                                                           audit["compact_label_map"],args.seed)
+        audit.update(supervision)
+        audit["target_label_metadata_usage"]=("true target_train classes used for supervised sampling"
+            +(" and cross-domain class feature alignment" if alignment_weight else "")+"; no target classification CE")
+        audit['category_support_policy']='shared class support; per-instance target_train truth guides sampling'+(
+            ' and cross-domain class alignment' if alignment_weight else '')
     training_cache={"enabled":args.cache_training_images}
     if args.cache_training_images:
         from weather.training_image_cache import cache_training_resizes
@@ -323,9 +364,13 @@ def run(args):
     if any(output.iterdir()):
         raise FileExistsError(f"Use a new output directory: {output}")
     write_json(output/"dataset_audit.json", audit)
+    if guided:write_json(output/"label_guided_sampling.json",matching_plan.metadata(alignment_weight))
     write_json(output/"evaluation_cache.json", cache_record)
-    args.steps_per_epoch, samplers = paired_epoch_samplers(
-        source, target, args.batch_size, args.target_batch_size, args.seed, args.method)
+    if guided:
+        args.steps_per_epoch, samplers = matching_plan.steps, matched_samplers
+    else:
+        args.steps_per_epoch, samplers = paired_epoch_samplers(
+            source, target, args.batch_size, args.target_batch_size, args.seed, args.method)
     loader_args = {"num_workers": args.num_workers, "pin_memory": torch.cuda.is_available()}
     if args.num_workers:
         loader_args.update(persistent_workers=True, prefetch_factor=2, timeout=300)
@@ -396,8 +441,9 @@ def run(args):
     if args.source_crossmodal_weight or args.target_crossmodal_weight or args.source_prototype_weight:
         if model.image_feature_dim!=model.ir_feature_dim and not args.crossmodal_projection_dim:
             raise ValueError("Unequal encoder widths require a declared train-only contrastive projection")
-        if not any(p.requires_grad for encoder in (model.rgb_encoder,model.nir_encoder) for p in encoder.parameters()):
-            raise ValueError("Crossmodal losses require at least one trainable image encoder")
+        if (not args.crossmodal_projection_dim and
+                not any(p.requires_grad for encoder in (model.rgb_encoder,model.nir_encoder) for p in encoder.parameters())):
+            raise ValueError("Frozen crossmodal encoders require a trainable contrastive projection")
         if args.feature_calibration:raise ValueError("Screen contrastive and cluster enhancements separately")
         model.crossmodal_alignment_enabled=True
         model.crossmodal_stop_gradient=args.crossmodal_stop_gradient
@@ -426,6 +472,13 @@ def run(args):
         from weather.prepare_calibrated_initialization import prepare_calibrated_initialization
         enhancement=prepare_calibrated_initialization(model,source_eval,target_eval,device,args)
         write_json(output/"calibration_audit.json",enhancement)
+    if args.source_feature_mixup_weight:
+        family=(enhancement["variant_family"]+"_and_source_feature_mixup" if enhancement["enabled"] else "core_plus_source_feature_mixup")
+        enhancement.update(enabled=True,variant_family=family,source_feature_mixup={
+            "fraction":args.source_feature_mixup_weight,"alpha":args.source_feature_mixup_alpha,
+            "source_main_CE_formula":"(1-fraction)*original_CE + fraction*mixed_feature_CE",
+            "source_auxiliary_losses_unchanged":True,"target_labels_used":False,
+            "extra_encoder_forwards":0,"extra_inference_parameters":0})
     if args.domain_confusion_weight:
         family=enhancement["variant_family"]+"_and_domain_confusion" if enhancement["enabled"] else "core_plus_encoder_domain_confusion"
         enhancement.update(enabled=True,variant_family=family,domain_confusion_weight=args.domain_confusion_weight,
@@ -473,12 +526,21 @@ def run(args):
     if args.ir_backbone:
         inputs.append(Path(args.ir_weights))
     if args.prediction_teacher_weight:inputs.append(Path(args.prediction_teacher_weights))
-    config = {"method": args.method, "protocol": "UDA", "source": "sunny", "target": args.target,
+    if args.holdout_list:
+        inputs.append(Path(args.holdout_list))
+        holdout_manifest=Path(args.data_dir)/'holdout_protocol_manifest.json'
+        if holdout_manifest.is_file():inputs.append(holdout_manifest)
+    evaluation_protocol=('minimum_target_val_CE_within_budget' if args.selection_metric=='cross_entropy'
+                         else 'best_target_val_within_budget')
+    config = {"method": args.method, **supervision, "source": "sunny", "target": args.target,
+              'configuration_tag':args.configuration_tag,
               "modalities": ["VIS", "IR"], "core": "vds2raw.adaptation.AdaptationModel",
               "enhancement":enhancement,
               "weather_profile": args.weather_profile, "domain_forward": args.domain_forward,
-              "target_training_labels_used": False, "target_test_available": False,
-              "selection_partition": "target_val", "evaluation_protocol": "best_target_val_within_budget",
+              "target_test_available": heldout is not None,
+              "selection_partition": "target_val", "evaluation_protocol": evaluation_protocol,
+              'selection_metric':args.selection_metric,
+              'selection_min_epoch':args.selection_min_epoch,
               "architecture": (f"ImageNet {args.image_backbone} VIS; official {args.ir_backbone} IR; learned global weights; feature concatenation"
                                if args.ir_backbone else f"two independent ImageNet {args.image_backbone} encoders; learned global weights; feature concatenation"),
               "image_backbone": args.image_backbone, "freeze_image_encoders": getattr(model, "freeze_image_encoders", args.freeze_image_encoders),
@@ -510,7 +572,7 @@ def run(args):
                                                "weather_augmentation_scope": "source_train only; validation unchanged"},
               "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
               "per_domain_batch_sizes": {"source":args.batch_size,"target":args.target_batch_size or args.batch_size},
-              "sampler": "complete larger-domain coverage; cycle shorter domain; fixed full per-domain batches",
+              "sampler": (matching_plan.metadata(alignment_weight) if guided else "complete larger-domain coverage; cycle shorter domain; fixed full per-domain batches"),
               "optimizer": type(optimizer).__name__, "dataset_audit": audit,
               "optimizer_groups": [{"lr": g["lr"], "role": g["role"], "weight_decay": g["weight_decay"],
                                     "parameters": sum(p.numel() for p in g["params"])} for g in optimizer.param_groups],
@@ -519,8 +581,16 @@ def run(args):
               "code_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
                               (Path(__file__), ROOT/"vds2raw/adaptation.py", ROOT/"vds2raw/train_adaptation.py",
                                ROOT/"tools/uda_multimodal.py", ROOT/"tools/uda_data.py")}}
+    if alignment_weight:
+        family=(enhancement['variant_family']+'_and_true_class_cross_domain_alignment'
+                if enhancement['enabled'] else 'core_plus_true_class_cross_domain_alignment')
+        enhancement.update(enabled=True,variant_family=family,matched_class_alignment={
+            'weight':alignment_weight,'margin':args.matched_alignment_margin,
+            'ramp_epochs':args.matched_alignment_ramp_epochs,'source_centroids_detached':True,
+            'target_true_classes_used':True,'target_classifier_CE_used':False,
+            'not_an_original_UDA_method':True})
     write_json(output/"run_config.json", config)
-    print("WEATHER_PROTOCOL: "+json.dumps({**audit, "arguments": vars(args)}), flush=True)
+    print("WEATHER_PROTOCOL: "+json.dumps({**audit, "arguments": vars(args)},default=str), flush=True)
     if args.feature_calibration:
         initial_dir=output/"initialization_diagnostic"
         initial_dir.mkdir()
@@ -529,6 +599,7 @@ def run(args):
         write_json(output/"initialization_diagnostic.json",{"target_val":initial_metrics,
             "student_optimizer_updates":0,"formal_method_result":False,"used_for_best_epoch_selection":False})
     best_state = best_metrics = best_records = None
+    peak_metrics=None;peak_epoch=0;best_validation_ce=math.inf
     best_epoch = update = stale = 0
     screening = bool(args.stop_after_epochs and args.stop_after_epochs < args.epochs)
     epoch_limit = min(args.epochs, args.stop_after_epochs) if screening else args.epochs
@@ -559,6 +630,9 @@ def run(args):
             torch.cuda.reset_peak_memory_stats(device)
         started = time.perf_counter()
         totals = {key: 0.0 for key in ("classification", "source_ce", "transfer", "weighted_transfer")}
+        if args.source_feature_mixup_weight:
+            totals.update(source_feature_mixup_loss=0.,source_feature_mixup_correction=0.)
+        if alignment_weight:totals.update(matched_alignment_loss=0.,weighted_matched_alignment=0.)
         if args.prediction_distillation_weight:
             totals.update(prediction_distillation_loss=0.,weighted_prediction_distillation=0.)
         if args.source_crossmodal_weight or args.target_crossmodal_weight or args.source_prototype_weight:
@@ -570,11 +644,13 @@ def run(args):
         if object_enabled:totals.update(source_object_ce=0.,source_object_consistency=0.,weighted_source_object=0.)
         seen_source, seen_target = set(), set()
         source_correct = source_seen = target_seen = steps = 0
+        target_matched_correct=0
         for step, (sb, tb) in enumerate(zip(*loaders), 1):
             seen_source.update(sb["path"])
             seen_target.update(tb["path"])
             if "label" in tb:
                 raise RuntimeError("Target batch must not contain labels")
+            matched_truth=(matching_plan.assert_batch(sb["path"],tb["path"],sb["label"].tolist()) if guided else None)
             sb, tb = move(sb, device), move(tb, device)
             from weather.fourier_style import augment_source_style
             sb, input_augmentation = augment_source_style(sb, tb, args.fda_beta, args.fda_probability, fda_generator)
@@ -628,6 +704,11 @@ def run(args):
                 if args.target_representation_anchor_weight:
                     if "core" not in separate:separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
                     separate["target_representation_anchor"]=gradient_diagnostics(model,details["source_ce"],details["weighted_target_representation_anchor"])
+                if args.source_feature_mixup_weight:
+                    if "core" not in separate:separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
+                    separate["source_feature_mixup_correction"]=gradient_diagnostics(model,details["source_ce"],details["source_feature_mixup_correction"])
+                if alignment_weight:
+                    separate['matched_class_alignment']=gradient_diagnostics(model,details['source_ce'],details['weighted_matched_alignment'])
                 event(output, "gradients.jsonl", {"epoch": epoch, "update": update+1, "gradients": gradients,"enhancement_components":separate})
             norms = feature_norms(model.last_features, len(sb["label"]), names=("VIS", "IR"))
             target_diagnostics = None
@@ -649,6 +730,9 @@ def run(args):
                 event(output, "parameter_updates.jsonl", {"epoch": epoch, "update": update+1,
                       "sampled_parameters": parameter_update_record(sampled, optimizer)})
             source_correct += int((details["source_logits"].argmax(1) == sb["label"]).sum())
+            if guided:
+                target_matched_correct+=int((details["target_logits"].detach().argmax(1).cpu()
+                                             ==torch.tensor(matched_truth)).sum())
             source_seen += len(sb["label"])
             target_seen += len(tb["rgb"])
             update += 1
@@ -658,6 +742,9 @@ def run(args):
                 totals[key] += values[key]
             event(output, "updates.jsonl", {"epoch": epoch, "update": update, **values,
                   "transfer_weight": details["transfer_weight"], "grl_coefficient": details["grl_coefficient"],
+                  **({**supervision,
+                      "same_true_class_at_every_position":True,"source_true_classes":sb["label"].detach().cpu().tolist(),
+                      "target_true_classes_for_sampling":matched_truth,"target_classification_CE_used":False} if guided else {}),
                   "adaptation_graph_in_loss": details["adaptation_graph_in_loss"],
                   "core_adaptation_graph_in_loss":details["core_adaptation_graph_in_loss"],
                   "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
@@ -671,6 +758,10 @@ def run(args):
                   "prediction_distillation_loss":float(details["prediction_distillation_loss"].detach()),
                   "weighted_prediction_distillation":float(details["weighted_prediction_distillation"].detach()),
                   "prediction_distillation_ready":details["prediction_distillation_ready"],
+                  **({"source_feature_mixup_details":details["source_feature_mixup_details"]} if args.source_feature_mixup_weight else {}),
+                  **({"matched_alignment_loss":float(details['matched_alignment_loss'].detach()),
+                      "weighted_matched_alignment":float(details['weighted_matched_alignment'].detach()),
+                      "matched_alignment_details":details['matched_alignment_details']} if alignment_weight else {}),
                   "target_representation_anchor_loss":float(details["target_representation_anchor_loss"].detach()),
                   "weighted_target_representation_anchor":float(details["weighted_target_representation_anchor"].detach()),
                   "target_representation_cosines":details["target_representation_cosines"],
@@ -710,7 +801,8 @@ def run(args):
             if step == 1 or step % 5 == 0 or step == len(loaders[0]):
                 print(f"Epoch [{epoch}/{args.epochs}] batch [{step}/{len(loaders[0])}] "
                       f"source_CE={values['source_ce']:.4f} DA={values['transfer']:.4f} "
-                      f"weight={details['transfer_weight']:.4f} target_labels_used=False", flush=True)
+                      f"weight={details['transfer_weight']:.4f} protocol={supervision['protocol']} "
+                      f"target_labels_used={guided}", flush=True)
             if args.max_train_batches and step >= args.max_train_batches:
                 break
         synchronize(device)
@@ -722,7 +814,9 @@ def run(args):
         event(output, "training.jsonl", {"epoch": epoch, **{k: v/steps for k, v in totals.items()},
               "updates": steps, "source_sample_exposures": source_seen, "target_sample_exposures": target_seen,
               "source_unique_samples": len(seen_source), "target_unique_samples": len(seen_target),
-              "source_train_accuracy": source_correct/source_seen, "target_training_labels_used": False,
+              "source_train_accuracy": source_correct/source_seen, **supervision,
+              **({"matched_target_train_accuracy":target_matched_correct/target_seen,
+                  "label_guided_batch_checks":steps,"all_batch_positions_class_matched":True} if guided else {}),
               "training_time_s": times[-1]})
         normalization_record = {"epoch": epoch, **bn_policy}
         if args.domain_running_stats:
@@ -730,7 +824,10 @@ def run(args):
             normalization_record["domain_running_statistics"] = statistics_summary(model)
         event(output, "normalization_policy.jsonl", normalization_record)
         for ds in (source_eval, target_eval):
-            evaluate(model, ds, device, epoch, output, args.eval_batch_size, event_prefix="WEATHER_EVALUATION")
+            _,diagnostic_records=evaluate(model, ds, device, epoch, output, args.eval_batch_size, event_prefix="WEATHER_EVALUATION")
+            if guided and ds.partition=='target_train':
+                fit=labelled_training_diagnostic(diagnostic_records,matching_plan.target_lookup,classes)
+                event(output,'target_train_fit.jsonl',{'epoch':epoch,**fit})
         metrics, records, val_details = evaluate(model, validation, device, epoch, output, args.eval_batch_size,
                                                event_prefix="WEATHER_EVALUATION", return_details=True)
         if args.domain_running_stats:
@@ -742,18 +839,22 @@ def run(args):
                   "selected_protocol": "target_training_running_statistics", "target_statistics": metrics, "pooled_statistics": pooled})
             model.set_bn_domain("target")
         history.append({"epoch": epoch, **metrics})
-        if better_metrics(metrics, best_metrics):
-            best_metrics, best_records, best_epoch, stale = dict(metrics), records, epoch, 0
-            best_state = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
+        if better_metrics(metrics,peak_metrics):
+            peak_metrics,peak_epoch,stale=dict(metrics),epoch,0
         else:
-            stale += 1
+            stale+=1
+        if epoch>=args.selection_min_epoch and selection_improved(args.selection_metric,metrics,val_details['cross_entropy'],best_metrics,best_validation_ce):
+            best_metrics, best_records, best_epoch = dict(metrics), records, epoch
+            best_validation_ce=val_details['cross_entropy']
+            best_state = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
         control = validation_control.observe(val_details["cross_entropy"], epoch, optimizer)
         if scheduler is not None and not schedule_per_update:
             step_scaled_scheduler(scheduler, optimizer, validation_control.lr_scale)
         stopping_stale = validation_control.bad_epochs if args.early_stopping_monitor == "cross_entropy" else stale
         stop = bool(args.early_stopping_patience and epoch >= args.early_stopping_min_epochs
                     and stopping_stale >= args.early_stopping_patience)
-        control.update(epoch=epoch, selected_ACC_epoch=best_epoch, ACC_F1_bad_epochs=stale,
+        control.update(epoch=epoch, selected_ACC_epoch=peak_epoch,selected_model_epoch=best_epoch,
+                       selection_metric=args.selection_metric,ACC_F1_bad_epochs=stale,
                        early_stop=stop, next_learning_rates=[g["lr"] for g in optimizer.param_groups])
         event(output, "validation_control.jsonl", control)
         print("WEATHER_VALIDATION_CONTROL: "+json.dumps(control), flush=True)
@@ -798,15 +899,24 @@ def run(args):
             raise RuntimeError(f"Invalid complexity metric: {key}")
     if device.type == "cuda" and not peak_reserved:
         raise RuntimeError("Missing GPU training memory measurement")
-    checked = validate_diagnostics(output, (source_eval, target_eval, validation), len(history), best_epoch,
+    test_metrics=None
+    if heldout is not None:
+        test_metrics,test_records=evaluate(model,heldout,device,best_epoch,output,args.eval_batch_size,
+                                            event_prefix='FINAL_HELDOUT_TEST_ONCE')
+        write_json(output/'heldout_test_predictions.json',test_records)
+    diagnostic_datasets=(source_eval,target_eval,validation)+((heldout,) if heldout is not None else ())
+    checked = validate_diagnostics(output, diagnostic_datasets, len(history), best_epoch,
                                    num_classes=classes, modalities=("VIS", "IR"))
     completeness = {"status": "PASS", "epochs": len(history), "selected_epoch": best_epoch,
-                    "protocol": "UDA", "target_training_labels_used": False,
-                    "target_test_available": False, "selection_partition": "target_val",
+                    **supervision,
+                    "target_test_available": heldout is not None, "selection_partition": "target_val",
+                    'test_evaluations':int(heldout is not None),'selection_metric':args.selection_metric,
                     "prediction_rows_checked": checked, "partial_training_smoke": bool(args.max_train_batches)}
     write_json(output/"completeness.json", completeness)
-    result = {"method": args.method, "target": args.target, "seed": args.seed, "protocol": "UDA",
+    result = {"method": args.method, "target": args.target, "seed": args.seed, **supervision,
+              'configuration_tag':args.configuration_tag,
               "core": "vds2raw.adaptation.AdaptationModel", "modalities": ["VIS", "IR"],
+              **({"label_guided_sampling":matching_plan.metadata(alignment_weight)} if guided else {}),
               "optimizer": type(optimizer).__name__,
               "selected_feature_cache":selected_features,
               "enhancement":enhancement,
@@ -822,6 +932,11 @@ def run(args):
               "unit_method_features": args.unit_method_features,
               "classifier_layout": args.classifier_layout,
               "selected_epoch": best_epoch, "completed_epochs": len(history), "optimizer_updates": update,
+              'selection_metric':args.selection_metric,'selected_validation_CE':best_validation_ce,
+              'selection_min_epoch':args.selection_min_epoch,
+              'peak_target_val':peak_metrics,'peak_target_val_epoch':peak_epoch,
+              'target_test':test_metrics,'test_evaluations':int(heldout is not None),
+              'heldout_evaluation':audit.get('heldout_evaluation'),
               "per_domain_batch_sizes": {"source":args.batch_size,"target":args.target_batch_size or args.batch_size},
               "stop_reason": stop_reason, "planned_optimizer_updates": args.epochs*args.steps_per_epoch,
               "freeze_bn_after_epochs": args.freeze_bn_after_epochs, "modality_diagnostics": sensitivity,
@@ -838,8 +953,8 @@ def run(args):
                                      "source_ir_statistics_strength":args.source_ir_statistics_strength},
               "source_aspect": {"minimum": args.source_aspect_min, "maximum": args.source_aspect_max,
                                 "probability": args.source_aspect_probability},
-              "evaluation_protocol": "best_target_val_within_budget", "target_test_available": False,
-              "target_training_labels_used": False, "target_val": best_metrics, "complexity": complexity,
+              "evaluation_protocol": evaluation_protocol, "target_test_available": heldout is not None,
+              "target_val": best_metrics, "complexity": complexity,
               "modality_weights_at_selected_epoch": model.modality_weights().detach().cpu().tolist(),
               "smoke": bool(args.max_train_batches)}
     write_json(output/"result.json", result)
@@ -900,6 +1015,17 @@ def parser():
     p.add_argument("--cluster-association-vis-weight",type=float,default=.75)
     p.add_argument("--cluster-initialization",choices=("kmeans++","source_prototypes"),default="kmeans++")
     p.add_argument("--auxiliary-source-weight", type=float, default=None)
+    p.add_argument("--source-feature-mixup-weight",type=float,default=0.,help="Opt-in convex source main CE mixture; target DA loss unchanged")
+    p.add_argument("--source-feature-mixup-alpha",type=float,default=.4)
+    p.add_argument("--target-class-matching",choices=("none","target_truth"),default="none",
+                   help="Explicit label-guided protocol, not strict UDA; sampling and optional class feature alignment")
+    p.add_argument('--matched-alignment-weight',type=float,default=0.,help='Explicit supervised class feature alignment; default off')
+    p.add_argument('--matched-alignment-margin',type=float,default=.2)
+    p.add_argument('--matched-alignment-ramp-epochs',type=int,default=3)
+    p.add_argument('--selection-metric',choices=('accuracy_f1','cross_entropy'),default='accuracy_f1')
+    p.add_argument('--configuration-tag',default='reference',help='Recorded experiment label; does not transform optimizer settings')
+    p.add_argument('--selection-min-epoch',type=int,default=1)
+    p.add_argument('--holdout-list',type=Path,default=None,help='Optional fixed target_test metadata; evaluate once after validation selection')
     p.add_argument("--source-class-balance", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--gradient-clip-norm", type=float, default=None)
     p.add_argument("--modality-diagnostics", action=argparse.BooleanOptionalAction, default=None)
@@ -1002,6 +1128,9 @@ if __name__ == "__main__":
     if min(args.auxiliary_source_weight or 0., args.gradient_clip_norm or 0., args.val_plateau_patience or 0,
            args.validation_control_start_epoch or 0) < 0:
         raise ValueError("Negative auxiliary/gradient/validation control argument")
+    if (not math.isfinite(args.source_feature_mixup_weight) or not 0<=args.source_feature_mixup_weight<1
+            or not math.isfinite(args.source_feature_mixup_alpha) or args.source_feature_mixup_alpha<=0):
+        raise ValueError("Invalid source feature mixup fraction/alpha")
     if not 0 <= args.fda_beta <= .25 or not 0 <= args.fda_probability <= 1:
         raise ValueError("Invalid FDA beta/probability")
     if not .1 <= args.source_zoom_min_area <= 1 or not 0 <= args.source_zoom_probability <= 1:

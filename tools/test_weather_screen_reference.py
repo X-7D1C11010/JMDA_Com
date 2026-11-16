@@ -24,6 +24,7 @@ class ScreenReferenceChecks(unittest.TestCase):
             for explicit,expected,label in (([], 'vis','preserve'),(['--stop-gradient','ir'],'ir','override'),
                     (['--target-representation-anchor-weight','1'],'vis','new_option'),
                     (['--auxiliary-source-weight','.5'],'vis','auxiliary_source'),
+                    (['--source-feature-mixup-weight','.5','--source-feature-mixup-alpha','.4'],'vis','source_mixup'),
                     (['--adaptation-warmup-epochs','12','--adaptation-ramp-epochs','8',
                       '--image-adaptation-lr-scale','.2'],'vis','phased_adaptation'),
                     (['--ir-backbone','unip_tiny','--ir-weights',str(root/'thermal weights.pth'),
@@ -50,6 +51,9 @@ class ScreenReferenceChecks(unittest.TestCase):
                     self.assertEqual(changes['ir_training_scope'],{'reference':'inherit','candidate':'all_used_layers'})
                 if '--auxiliary-source-weight' in explicit:
                     self.assertEqual(changes['auxiliary_source_weight'],{'reference':0.,'candidate':.5})
+                if '--source-feature-mixup-weight' in explicit:
+                    self.assertEqual(changes['source_feature_mixup_weight']['candidate'],.5)
+                    self.assertIn('source_feature_mixup',plan['variant_family'])
                 for key,value in (('adaptation_warmup_epochs',12),('adaptation_ramp_epochs',8),
                                   ('image_adaptation_lr_scale',.2)):
                     if '--'+key.replace('_','-') in explicit:

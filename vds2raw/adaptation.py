@@ -599,6 +599,20 @@ class AdaptationModel(nn.Module):
             if source_crossmodal_weight:
                 weighted_source_crossmodal=source_crossmodal_weight*source_crossmodal_loss
                 classification=classification+weighted_source_crossmodal
+        mixup_loss=ce_source.new_zeros(())
+        mixup_correction=ce_source.new_zeros(())
+        mixup_details=None
+        mixup_weight=getattr(args,"source_feature_mixup_weight",0.)
+        if mixup_weight:
+            if not 0<mixup_weight<1:raise ValueError("Source mixup fraction must lie in (0,1)")
+            from vds2raw.source_feature_mixup import source_feature_mixup
+            mixup_loss,mixup_details=source_feature_mixup(self.head,features[:source_count],source["label"],
+                getattr(args,"source_feature_mixup_alpha",.4),args.seed,update,
+                getattr(self,"source_class_weights",None),args.label_smoothing)
+            # Convex replacement of source main CE, not an unreported increase
+            # in total source loss scale. Existing auxiliary losses stay fixed.
+            mixup_correction=mixup_weight*(mixup_loss-ce_source)
+            classification=classification+mixup_correction
         progress = update/max(planned_updates, 1)
         coefficient = 2/(1+math.exp(-10*progress))-1
         domain_accuracy = None
@@ -635,6 +649,21 @@ class AdaptationModel(nn.Module):
         # graph so source-supervision warm-up actually preserves them.
         total = classification+weighted_transfer if weight > 0 else classification
         weighted_core_transfer=weighted_transfer
+        matched_alignment=ce_source.new_zeros(())
+        weighted_matched_alignment=ce_source.new_zeros(())
+        matched_alignment_details=None
+        matched_weight=getattr(args,'matched_alignment_weight',0.)
+        if matched_weight:
+            if getattr(args,'target_class_matching','none')!='target_truth':
+                raise ValueError('Matched alignment is supervised and requires target_truth sampling')
+            from weather.matched_alignment import matched_class_alignment
+            matched_alignment,matched_alignment_details=matched_class_alignment(
+                features[:source_count],features[source_count:],source['label'],
+                getattr(args,'matched_alignment_margin',.2))
+            matched_ramp=max(getattr(args,'matched_alignment_ramp_epochs',3)*args.steps_per_epoch,1)
+            weighted_matched_alignment=matched_weight*min((update+1)/matched_ramp,1)*matched_alignment
+            total=total+weighted_matched_alignment
+            weighted_transfer=weighted_transfer+weighted_matched_alignment
         weighted_target_crossmodal=ce_source.new_zeros(())
         ramp_fraction=min(max((update+1-warmup)/ramp,0),1)
         domain_confusion=ce_source.new_zeros(())
@@ -687,11 +716,15 @@ class AdaptationModel(nn.Module):
             weighted_transfer=weighted_transfer+weighted_representation_anchor
         return total, {
             "classification": classification, "source_ce": ce_source,
+            "source_feature_mixup_loss":mixup_loss,"source_feature_mixup_correction":mixup_correction,
+            "source_feature_mixup_details":mixup_details,
             "source_object_ce":object_ce,"source_object_consistency":object_consistency,
             "weighted_source_object":weighted_object,"source_object_correct":object_correct,
             "auxiliary_source_ce": auxiliary_ce, "auxiliary_source_weight": getattr(self, "auxiliary_source_weight", 0.),
             "transfer": transfer, "weighted_transfer": weighted_transfer,
             "weighted_core_transfer":weighted_core_transfer,"cluster_teacher_loss":teacher_loss,
+            "matched_alignment_loss":matched_alignment,"weighted_matched_alignment":weighted_matched_alignment,
+            "matched_alignment_details":matched_alignment_details,
             "weighted_cluster_teacher":weighted_teacher,"cluster_teacher_selected":teacher_selected,
             "prediction_distillation_loss":prediction_distillation,
             "weighted_prediction_distillation":weighted_prediction_distillation,
@@ -708,7 +741,7 @@ class AdaptationModel(nn.Module):
             "source_prototype_loss":source_prototype_loss,"weighted_source_prototype":weighted_source_prototype,
             "source_prototype_classes_seen":source_prototype_classes_seen,
             "domain_confusion_loss":domain_confusion,"weighted_domain_confusion":weighted_domain_confusion,
-            "adaptation_graph_in_loss": weight > 0 or teacher_selected>0 or (target_crossmodal_weight>0 and ramp_fraction>0) or (domain_confusion_weight>0 and ramp_fraction>0) or (distillation_weight>0 and distillation_ready) or representation_weight>0,
+            "adaptation_graph_in_loss": weight > 0 or matched_weight>0 or teacher_selected>0 or (target_crossmodal_weight>0 and ramp_fraction>0) or (domain_confusion_weight>0 and ramp_fraction>0) or (distillation_weight>0 and distillation_ready) or representation_weight>0,
             "core_adaptation_graph_in_loss":weight>0,
             "transfer_weight": weight, "grl_coefficient": coefficient,
             "entropy_grl_coefficient": entropy_coefficient if self.method == "cdan" else None,

@@ -64,6 +64,8 @@ def main():
     p.add_argument("--reference-config",type=Path,default=None)
     p.add_argument("--classifier-layout",choices=("reference","linear"),default=None)
     p.add_argument("--auxiliary-source-weight",type=float,default=None)
+    p.add_argument("--source-feature-mixup-weight",type=float,default=None)
+    p.add_argument("--source-feature-mixup-alpha",type=float,default=None)
     p.add_argument("--ir-backbone",choices=("unip_tiny","unip_small"),default=None)
     p.add_argument("--ir-weights",type=Path,default=None)
     p.add_argument("--ir-feature-mode",choices=("patch_mean","cls","qk_mean","last4","cls_attention"),default=None)
@@ -85,6 +87,7 @@ def main():
         help="Explicit override; otherwise preserve a reference run's encoder scope")
     p.add_argument("--checkpoint-vis-blocks",action=argparse.BooleanOptionalAction,default=None)
     p.add_argument("--epochs",type=int,default=60)
+    p.add_argument("--stop-after-epochs",type=int,default=0,help="Observe an explicit prefix while preserving full LR/GRL clocks")
     p.add_argument("--minimum-epochs",type=int,default=30)
     p.add_argument("--parallel",type=int,choices=(1,2),default=2)
     p.add_argument("--plan-only",action="store_true",help="Write exact commands and reference differences without launching training")
@@ -93,7 +96,8 @@ def main():
     values=args.source_weights+[args.target_weight,args.source_prototype_weight,args.domain_confusion_weight,
         args.source_object_ce_weight,args.source_object_consistency_weight]+([] if args.trade_off is None else [args.trade_off])
     if (not all(math.isfinite(x) and x>=0 for x in values) or args.epochs<1 or args.minimum_epochs>args.epochs
-            or args.projection_dim<0 or args.projection_dim==1):p.error("Invalid trial settings")
+            or args.projection_dim<0 or args.projection_dim==1 or args.stop_after_epochs<0
+            or args.stop_after_epochs>args.epochs):p.error("Invalid trial settings")
     if args.learning_rate is not None and (not math.isfinite(args.learning_rate) or args.learning_rate<=0):
         p.error("Learning rate must be finite and positive")
     if any(value is not None and value<0 for value in
@@ -104,6 +108,10 @@ def main():
         p.error("Post-warmup image LR factor must lie in (0,1]")
     if args.auxiliary_source_weight is not None and (not math.isfinite(args.auxiliary_source_weight) or args.auxiliary_source_weight<0):
         p.error("Auxiliary source weight must be finite and nonnegative")
+    if args.source_feature_mixup_weight is not None and (not math.isfinite(args.source_feature_mixup_weight) or not 0<=args.source_feature_mixup_weight<1):
+        p.error("Source mixup fraction must lie in [0,1)")
+    if args.source_feature_mixup_alpha is not None and (not math.isfinite(args.source_feature_mixup_alpha) or args.source_feature_mixup_alpha<=0):
+        p.error("Source mixup alpha must be positive")
     if (not math.isfinite(args.prediction_teacher_weight) or not 0<=args.prediction_teacher_weight<1
             or not all(math.isfinite(x) and x>0 for x in
                 (args.prediction_teacher_temperature,args.prediction_student_temperature))):
@@ -194,6 +202,9 @@ def main():
                         if option in cmd:cmd[cmd.index(option)+1]=str(value)
                         else:cmd += [option,str(value)]
                 if args.auxiliary_source_weight is not None:cmd[cmd.index("--auxiliary-source-weight")+1]=str(args.auxiliary_source_weight)
+                if args.stop_after_epochs:cmd += ["--stop-after-epochs",str(args.stop_after_epochs)]
+                for key in ("source_feature_mixup_weight","source_feature_mixup_alpha"):
+                    if getattr(args,key) is not None:cmd += ["--"+key.replace("_","-"),str(getattr(args,key))]
                 if args.fda_beta is not None:cmd += ["--fda-beta",str(args.fda_beta)]
                 if args.source_weather_probability is not None:cmd += ["--source-weather-probability",str(args.source_weather_probability)]
                 for key in ("ir_backbone","ir_weights","ir_feature_mode","ir_training_scope"):
@@ -205,7 +216,7 @@ def main():
                     values=dict(reference["arguments"])
                     values.update(method=method,target=target,data_dir=str(data),save_dir=str(args.output.resolve()/name),seed=42,
                         epochs=args.epochs,early_stopping_min_epochs=args.minimum_epochs,early_stopping_patience=15,
-                        stop_after_epochs=0,max_train_batches=0,source_crossmodal_weight=source_weight,target_crossmodal_weight=args.target_weight,
+                        stop_after_epochs=args.stop_after_epochs,max_train_batches=0,source_crossmodal_weight=source_weight,target_crossmodal_weight=args.target_weight,
                         crossmodal_temperature=.2,crossmodal_projection_dim=args.projection_dim,cache_training_images=True,
                         target_crossmodal_objective=args.target_objective,
                         prediction_teacher_weight=args.prediction_teacher_weight,
@@ -241,6 +252,8 @@ def main():
                         values["freeze_image_encoders"]=False
                     if args.classifier_layout is not None:values["classifier_layout"]=args.classifier_layout
                     if args.auxiliary_source_weight is not None:values["auxiliary_source_weight"]=args.auxiliary_source_weight
+                    for key in ("source_feature_mixup_weight","source_feature_mixup_alpha"):
+                        if getattr(args,key) is not None:values[key]=getattr(args,key)
                     for key in ("ir_backbone","ir_weights","ir_feature_mode","ir_training_scope"):
                         value=getattr(args,key)
                         if value is not None:values[key]=str(value.resolve()) if key=="ir_weights" else value
@@ -276,6 +289,11 @@ def main():
     if args.prediction_distillation_weight:family="core_plus_cached_ensemble_target_distillation"
     if args.source_ir_statistics_probability:family += "_and_source_IR_statistics"
     if args.target_representation_anchor_weight:family += "_and_initial_target_anchor"
+    effective_mixup=(args.source_feature_mixup_weight if args.source_feature_mixup_weight is not None
+                    else reference["arguments"].get("source_feature_mixup_weight",0.) if reference else 0.)
+    if effective_mixup:
+        family=("core_plus_source_feature_mixup" if family=="original_method_with_reference_config_overrides"
+                else family+"_and_source_feature_mixup")
     (args.output/"plan.json").write_text(json.dumps({"created_UTC":datetime.now(timezone.utc).isoformat(),"launcher_pid":os.getpid(),
         "target_training_labels_used":False,"variant_family":family,
         "reference_config":str(args.reference_config.resolve()) if args.reference_config else None,"jobs":jobs},indent=2),encoding="utf-8")

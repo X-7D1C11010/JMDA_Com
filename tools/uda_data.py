@@ -7,7 +7,7 @@
 
 因此本项目统一口径为 **以目标域类别为准**：
 
-* 目标域类别集 ``T`` = 目标域 train 与 val 列表中出现的原始类别 id；
+* 目标域类别集 ``T`` = 目标域 train 列表中出现的原始类别 id；val 必须与其完全一致；
 * 源域与目标域的 train/val 都只保留标签属于 ``T`` 的图像；
 * 标签重映射到 ``0..|T|-1``，分类头输出维度即 ``|T|``。
 
@@ -52,8 +52,8 @@ def read_image_list(list_path):
 def uda_label_space(data_dir, target):
     """目标域类别集 ``T`` 与 ``原始标签 -> 新标签`` 映射。
 
-    类别集取目标域 train 与 val 两个列表中出现过的类别（本数据集中两者一致），
-    这样 val 的标签一定落在 ``0..|T|-1`` 内。
+    类别集以目标域 train 为准；val 类别集合必须与 train 完全相同，否则报错。
+    不使用 train/val 并集扩大训练类别空间。
 
     返回 ``(class_ids, label_map)``：``class_ids`` 为升序原始类别 id，
     ``label_map`` 把原始 id 压到连续下标。

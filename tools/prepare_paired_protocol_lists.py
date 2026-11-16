@@ -148,6 +148,32 @@ def exact_ir_split(domain_root, domain_type, phase):
         domain_root, domain_type, phase, modality='红外')
 
 
+def shared_training_cohort(source_train,target_train,target_val):
+    """Define a closed-set task before creating label-free target pair lists.
+
+    Known class-support metadata is used for cohort construction only. It is
+    not returned as target instance labels or used to construct minibatches.
+    """
+    source_support={row[-1] for row in source_train}
+    target_support={row[-1] for row in target_train}
+    common=source_support & target_support
+    if not common:raise ValueError('Source and target training sets have no shared class')
+    filtered_train=[row for row in target_train if row[-1] in common]
+    filtered_val=[row for row in target_val if row[-1] in common]
+    selected_source=[row for row in source_train if row[-1] in common]
+    return filtered_train,filtered_val,{
+        'policy':'intersection of source_train and target_train class supports',
+        'source_original_support':sorted(source_support),'target_original_support':sorted(target_support),
+        'shared_original_support':sorted(common),
+        'source_classes_excluded':sorted(source_support-common),
+        'target_classes_excluded':sorted(target_support-common),
+        'selected_source_train_samples':len(selected_source),
+        'target_train_samples_excluded':len(target_train)-len(filtered_train),
+        'target_val_samples_excluded':len(target_val)-len(filtered_val),
+        'target_class_metadata_usage':'protocol cohort preparation only; never true-label minibatch matching',
+    }
+
+
 def write_list(path, samples, label_map):
     lines = [
         f'{vis} {label_map[original_label]}'
@@ -244,6 +270,7 @@ def main():
         root = data_root / TARGET_DIRS[target]
         target_train, train_stats = split_fn(root, 'target', 'train')
         target_val, val_stats = split_fn(root, 'target', 'val')
+        target_train,target_val,common_audit=shared_training_cohort(source_train,target_train,target_val)
         train_support = sorted({sample[-1] for sample in target_train})
         val_support = sorted({sample[-1] for sample in target_val})
         if train_support != val_support:
@@ -257,6 +284,7 @@ def main():
                 f'{target} contains classes absent from source: {unknown}'
             )
         manifest['target_class_support'][target] = {
+            'shared_training_cohort':common_audit,
             'original_labels': train_support,
             'compact_label_map': {
                 str(label): index for index, label in enumerate(train_support)

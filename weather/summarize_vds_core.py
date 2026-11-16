@@ -19,8 +19,12 @@ def summarize(root):
         complete = json.loads((path.parent/"completeness.json").read_text(encoding="utf-8"))
         if complete["status"] != "PASS":
             raise ValueError(f"Incomplete run: {path}")
-        metrics = result["target_val"]
+        metrics = result.get('target_test') or result["target_val"]
         rows.append({"method": result["method"], "target": result["target"], "seed": result["seed"],
+                     'selection_metric':result.get('selection_metric','accuracy_f1'),
+                     'reporting_partition':'target_test' if result.get('target_test') is not None else 'target_val',
+                     'selected_validation_ACC_percent':100*result['target_val']['accuracy'],
+                     'peak_validation_ACC_percent':100*result.get('peak_target_val',result['target_val'])['accuracy'],
                      "enhancement_family":(result.get("enhancement") or {}).get("variant_family","none"),
                      "calibration_components":((result.get("enhancement") or {}).get("calibration") or {}).get("components"),
                      "cluster_teacher_weight":(result.get("enhancement") or {}).get("cluster_teacher_weight",0.),
@@ -72,6 +76,8 @@ def summarize(root):
                      "result_file": str(path.resolve())})
     if not rows:
         raise FileNotFoundError(f"No completed weather results: {root}")
+    if len({(row['selection_metric'],row['reporting_partition']) for row in rows})!=1:
+        raise ValueError('Do not merge peak-validation and CE-selected heldout evaluation')
     if len({row["weather_profile"] for row in rows}) != 1:
         raise ValueError("Do not merge different weather profiles")
     if len({row["screening_only"] for row in rows}) != 1:
@@ -101,7 +107,10 @@ def summarize(root):
         writer.writeheader()
         writer.writerows(rows)
     signature = rows[0]
-    lines = ["Weather VIS+IR UDA; peak target_val within each run (no separate target_test).",
+    caption=("Weather VIS+IR UDA; peak target_val within each run (no separate target_test)."
+             if signature['selection_metric']=='accuracy_f1' and signature['reporting_partition']=='target_val'
+             else f"Weather VIS+IR UDA; selection={signature['selection_metric']}; report={signature['reporting_partition']}.")
+    lines = [caption,
              f"Encoder={signature['image_backbone']}; frozen={signature['freeze_image_encoders']}; fusion normalization={signature['feature_normalization']}.", "",
              "| Method | Target | Seed | Best epoch | ACC | Precision | Recall | F1 |",
              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
