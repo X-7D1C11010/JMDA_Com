@@ -26,7 +26,7 @@ def write(path,value):
 
 
 def build_jobs(project_root,output,scope='both',backlight_seeds=(42,),rainy_seeds=(42,46),
-               rainy_weights=(1.,.5),source_controls=False,backlight_image_lr=1e-5):
+               rainy_weights=(1.,.5),source_controls=False,backlight_image_lr=1e-5,backlight_methods=None):
     if scope not in ('both','backlight','rainy'):raise ValueError('Unknown scope')
     for seeds in (backlight_seeds,rainy_seeds):
         if not seeds or len(set(seeds))!=len(seeds) or min(seeds)<0:raise ValueError('Invalid seeds')
@@ -34,6 +34,9 @@ def build_jobs(project_root,output,scope='both',backlight_seeds=(42,),rainy_seed
         raise ValueError('Distillation weights must be unique and positive')
     if not math.isfinite(backlight_image_lr) or backlight_image_lr<=0:
         raise ValueError('Backlight encoder learning rate must be finite and positive')
+    backlight_methods=tuple(backlight_methods if backlight_methods is not None else ('deepcoral','mdd','mcc'))
+    if not backlight_methods or len(set(backlight_methods))!=len(backlight_methods) or not set(backlight_methods)<=set(METHODS):
+        raise ValueError('Unknown or repeated backlight methods')
     root,output=Path(project_root),Path(output);jobs=[]
     def append(method,target,seed,variant,values,role='adaptation'):
         parent=output/target/variant/f'seed{seed}'/method
@@ -46,7 +49,7 @@ def build_jobs(project_root,output,scope='both',backlight_seeds=(42,),rainy_seed
                      'result_file':str(parent/f'{method}_{target}_seed{seed}'/'result.json')})
     if scope in ('both','backlight'):
         for seed in backlight_seeds:
-            for method in ('deepcoral','mdd','mcc'):
+            for method in backlight_methods:
                 argv=training_argv(method,output/'lists/backlight',output,
                     root/'pretrained_weights/torch/hub/checkpoints/convnext_small-0c510722.pth',seed)
                 values=vars(training_parser().parse_args(argv[4:]))
@@ -181,6 +184,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--scope',choices=('both','backlight','rainy'),default='both')
     p.add_argument('--backlight-seeds',nargs='+',type=int,default=[42])
+    p.add_argument('--backlight-methods',nargs='+',choices=METHODS,default=['cdan','mcc'])
     p.add_argument('--rainy-seeds',nargs='+',type=int,default=[42,46])
     p.add_argument('--rainy-weights',nargs='+',type=float,default=[1.,.5])
     p.add_argument('--backlight-image-lr',type=float,default=1e-5,
@@ -194,12 +198,12 @@ def main():
     p.add_argument('--check-environment',action='store_true',help='Verify offline weights/imports/CUDA, then exit without creating a run')
     args=p.parse_args()
     if args.resume and args.output:p.error('--resume and --output cannot be combined')
-    if args.resume and any(option in sys.argv for option in ('--scope','--backlight-seeds','--rainy-seeds','--rainy-weights','--backlight-image-lr','--source-controls','--data-root')):
+    if args.resume and any(option in sys.argv for option in ('--scope','--backlight-seeds','--backlight-methods','--rainy-seeds','--rainy-weights','--backlight-image-lr','--source-controls','--data-root')):
         p.error('Resume uses the stored plan; do not supply new trial/data overrides')
     if args.check_environment:
         if args.resume:p.error('--check-environment cannot be combined with --resume')
         build_jobs(ROOT,ROOT/'runs/weather_stability/_environment_check',args.scope,args.backlight_seeds,
-                   args.rainy_seeds,args.rainy_weights,args.source_controls,args.backlight_image_lr)
+                   args.rainy_seeds,args.rainy_weights,args.source_controls,args.backlight_image_lr,args.backlight_methods)
         if not args.data_root.is_dir():raise FileNotFoundError(args.data_root)
         check_environment(args.scope)
         print('[PREFLIGHT PASS] imports, CUDA, weights and data root; no training or run creation',flush=True)
@@ -218,7 +222,7 @@ def main():
     else:
         if output.exists():raise FileExistsError(output)
         jobs=build_jobs(ROOT,output,args.scope,args.backlight_seeds,args.rainy_seeds,args.rainy_weights,
-                        args.source_controls,args.backlight_image_lr)
+                        args.source_controls,args.backlight_image_lr,args.backlight_methods)
         from tools.prepare_mcc_weather_v2_snapshot import prepare_snapshot
         snapshot=prepare_snapshot(ROOT)
         output.mkdir(parents=True)
