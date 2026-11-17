@@ -317,11 +317,13 @@ def run(args):
                 raise ValueError('Locked retraining split list changed: '+name)
     from weather.class_matching import protocol_metadata,make_matched_samplers
     guided=getattr(args,"target_class_matching","none")=="target_truth"
+    fewshot=getattr(args,'target_labels_per_class',0)
     alignment_weight=getattr(args,'matched_alignment_weight',0.)
     if (not math.isfinite(alignment_weight) or alignment_weight<0 or args.matched_alignment_ramp_epochs<0
             or not 0<=args.matched_alignment_margin<2):
         raise ValueError('Invalid label-guided alignment settings')
-    supervision=protocol_metadata(guided,alignment_weight)
+    if fewshot<0:raise ValueError('Target labels per class must be nonnegative')
+    supervision=protocol_metadata(guided,alignment_weight,fewshot)
     datasets, audit = prepare_datasets(args.data_dir, args.target, args.augment)
     source, target, source_eval, target_eval, validation = datasets
     from weather.generalization import validate_holdout,selection_improved,labelled_training_diagnostic
@@ -335,7 +337,13 @@ def run(args):
                 historically_unseen_test=split_info['historically_unseen_test'],
                 split_seed=split_info['split_seed'])
     matching_plan=None
-    if guided:
+    if fewshot:
+        from weather.fewshot import TargetLabelBudget
+        matching_plan=TargetLabelBudget.from_dataset(target,audit['compact_label_map'],fewshot,args.seed)
+        audit.update(supervision)
+        audit.update(target_label_metadata_usage='fixed per-class labelled subset only; all other target truth excluded from pairing and losses',
+                     target_label_budget=fewshot,category_support_policy='shared class support; independent native domain batches')
+    elif guided:
         matching_plan,matched_samplers=make_matched_samplers(source,target,args.batch_size,args.target_batch_size,
                                                            audit["compact_label_map"],args.seed)
         audit.update(supervision)
@@ -364,13 +372,17 @@ def run(args):
     if any(output.iterdir()):
         raise FileExistsError(f"Use a new output directory: {output}")
     write_json(output/"dataset_audit.json", audit)
-    if guided:write_json(output/"label_guided_sampling.json",matching_plan.metadata(alignment_weight))
     write_json(output/"evaluation_cache.json", cache_record)
-    if guided:
+    if guided and not fewshot:
         args.steps_per_epoch, samplers = matching_plan.steps, matched_samplers
     else:
         args.steps_per_epoch, samplers = paired_epoch_samplers(
             source, target, args.batch_size, args.target_batch_size, args.seed, args.method)
+    if fewshot:
+        matching_plan.steps=args.steps_per_epoch
+        matching_plan.source_samples=len(source)
+        matching_plan.batch_sizes=(args.batch_size,args.target_batch_size or args.batch_size)
+    if guided:write_json(output/"label_guided_sampling.json",matching_plan.metadata(alignment_weight))
     loader_args = {"num_workers": args.num_workers, "pin_memory": torch.cuda.is_available()}
     if args.num_workers:
         loader_args.update(persistent_workers=True, prefetch_factor=2, timeout=300)
@@ -588,7 +600,8 @@ def run(args):
             'weight':alignment_weight,'margin':args.matched_alignment_margin,
             'ramp_epochs':args.matched_alignment_ramp_epochs,'source_centroids_detached':True,
             'target_true_classes_used':True,'target_classifier_CE_used':False,
-            'not_an_original_UDA_method':True})
+            'not_an_original_UDA_method':True,
+            **({'target_label_scope':'fixed labelled subset only','labels_per_class':fewshot} if fewshot else {})})
     write_json(output/"run_config.json", config)
     print("WEATHER_PROTOCOL: "+json.dumps({**audit, "arguments": vars(args)},default=str), flush=True)
     if args.feature_calibration:
@@ -650,7 +663,9 @@ def run(args):
             seen_target.update(tb["path"])
             if "label" in tb:
                 raise RuntimeError("Target batch must not contain labels")
-            matched_truth=(matching_plan.assert_batch(sb["path"],tb["path"],sb["label"].tolist()) if guided else None)
+            matched_truth=(matching_plan.assert_batch(sb["path"],tb["path"],sb["label"].tolist()) if guided and not fewshot else None)
+            if fewshot:
+                tb['alignment_labels']=torch.tensor(matching_plan.labels_for(tb['path']),dtype=torch.long)
             sb, tb = move(sb, device), move(tb, device)
             from weather.fourier_style import augment_source_style
             sb, input_augmentation = augment_source_style(sb, tb, args.fda_beta, args.fda_probability, fda_generator)
@@ -730,7 +745,7 @@ def run(args):
                 event(output, "parameter_updates.jsonl", {"epoch": epoch, "update": update+1,
                       "sampled_parameters": parameter_update_record(sampled, optimizer)})
             source_correct += int((details["source_logits"].argmax(1) == sb["label"]).sum())
-            if guided:
+            if guided and not fewshot:
                 target_matched_correct+=int((details["target_logits"].detach().argmax(1).cpu()
                                              ==torch.tensor(matched_truth)).sum())
             source_seen += len(sb["label"])
@@ -744,7 +759,13 @@ def run(args):
                   "transfer_weight": details["transfer_weight"], "grl_coefficient": details["grl_coefficient"],
                   **({**supervision,
                       "same_true_class_at_every_position":True,"source_true_classes":sb["label"].detach().cpu().tolist(),
-                      "target_true_classes_for_sampling":matched_truth,"target_classification_CE_used":False} if guided else {}),
+                      "target_true_classes_for_sampling":matched_truth,"target_classification_CE_used":False} if guided and not fewshot else {}),
+                  **({**supervision,'restricted_target_labels_only':True,
+                      'native_batches_true_class_matched':False,
+                      'source_true_classes':sb['label'].detach().cpu().tolist(),
+                      'target_known_alignment_labels':tb['alignment_labels'].detach().cpu().tolist(),
+                      'target_batch_paths':tb['path'],
+                      'target_classification_CE_used':False} if fewshot else {}),
                   "adaptation_graph_in_loss": details["adaptation_graph_in_loss"],
                   "core_adaptation_graph_in_loss":details["core_adaptation_graph_in_loss"],
                   "domain_accuracy": details["domain_accuracy"], "feature_norms": norms,
@@ -816,7 +837,9 @@ def run(args):
               "source_unique_samples": len(seen_source), "target_unique_samples": len(seen_target),
               "source_train_accuracy": source_correct/source_seen, **supervision,
               **({"matched_target_train_accuracy":target_matched_correct/target_seen,
-                  "label_guided_batch_checks":steps,"all_batch_positions_class_matched":True} if guided else {}),
+                  "label_guided_batch_checks":steps,"all_batch_positions_class_matched":True} if guided and not fewshot else {}),
+              **({'restricted_target_labels_only':True,'all_batch_positions_class_matched':False,
+                  'labelled_target_samples':len(matching_plan.target_lookup)} if fewshot else {}),
               "training_time_s": times[-1]})
         normalization_record = {"epoch": epoch, **bn_policy}
         if args.domain_running_stats:
@@ -826,6 +849,8 @@ def run(args):
         for ds in (source_eval, target_eval):
             _,diagnostic_records=evaluate(model, ds, device, epoch, output, args.eval_batch_size, event_prefix="WEATHER_EVALUATION")
             if guided and ds.partition=='target_train':
+                if fewshot:
+                    diagnostic_records=[r for r in diagnostic_records if r['sample_id'] in matching_plan.target_lookup]
                 fit=labelled_training_diagnostic(diagnostic_records,matching_plan.target_lookup,classes)
                 event(output,'target_train_fit.jsonl',{'epoch':epoch,**fit})
         metrics, records, val_details = evaluate(model, validation, device, epoch, output, args.eval_batch_size,
@@ -1022,6 +1047,8 @@ def parser():
     p.add_argument('--matched-alignment-weight',type=float,default=0.,help='Explicit supervised class feature alignment; default off')
     p.add_argument('--matched-alignment-margin',type=float,default=.2)
     p.add_argument('--matched-alignment-ramp-epochs',type=int,default=3)
+    p.add_argument('--target-labels-per-class',type=int,default=0,
+                   help='Positive fixed label budget; only selected targets enter extra alignment, all targets enter native DA')
     p.add_argument('--selection-metric',choices=('accuracy_f1','cross_entropy'),default='accuracy_f1')
     p.add_argument('--configuration-tag',default='reference',help='Recorded experiment label; does not transform optimizer settings')
     p.add_argument('--selection-min-epoch',type=int,default=1)

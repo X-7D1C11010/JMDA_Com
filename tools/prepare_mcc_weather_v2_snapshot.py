@@ -20,6 +20,7 @@ EXTRA_FILES = (
     "scripts/run_server_label_guided_dark_foggy_background.sh",
     "scripts/run_server_weather_stability_background.sh",
     "scripts/run_server_weather_all_background.sh",
+    "scripts/run_server_weather_fewshot_background.sh",
 )
 REQUIRED_FILES = EXTRA_FILES + (
     "vds2raw/__init__.py", "vds2raw/adaptation.py", "vds2raw/train_adaptation.py",
@@ -28,6 +29,7 @@ REQUIRED_FILES = EXTRA_FILES + (
     "weather/class_matching.py", "weather/matched_alignment.py", "weather/generalization.py",
     "weather/label_guided_presets.py", "weather/summarize_class_matching.py",
     "tools/run_label_guided_matrix.py", "tools/prepare_weather_generalization_split.py",
+    "tools/run_weather_fewshot_suite.py", "weather/fewshot.py", "weather/fewshot_presets.py",
     "tools/run_on_available_gpu.py", "tools/prepare_paired_protocol_lists.py",
     "tools/uda_multimodal.py", "tools/uda_data.py", "tools/data_paths.py",
     "tools/reproducibility.py", "tools/efficiency_common.py", "tools/classification_metrics.py",

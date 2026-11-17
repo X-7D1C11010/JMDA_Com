@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from weather.class_matching import PROTOCOL,ALIGNMENT_PROTOCOL
+from weather.class_matching import PROTOCOL,ALIGNMENT_PROTOCOL,FEWSHOT_PROTOCOL
 
 
 def summarize(paths, output):
@@ -13,12 +13,12 @@ def summarize(paths, output):
         result=json.loads(path.read_text(encoding='utf-8'))
         complete=json.loads((path.parent/'completeness.json').read_text(encoding='utf-8'))
         for record in (result,complete):
-            if (record.get('protocol') not in (PROTOCOL,ALIGNMENT_PROTOCOL) or record.get('target_training_labels_used') is not True
+            if (record.get('protocol') not in (PROTOCOL,ALIGNMENT_PROTOCOL,FEWSHOT_PROTOCOL) or record.get('target_training_labels_used') is not True
                     or record.get('target_true_labels_used_for_sampling') is not True
                     or record.get('strict_unsupervised') is not False
                     or record.get('target_true_labels_used_in_classification_loss') is not False):
                 raise ValueError(f'Unexpected supervision; do not mix with UDA: {path}')
-            if (record.get('protocol')==ALIGNMENT_PROTOCOL)!=(record.get('target_true_labels_used_in_alignment_loss') is True):
+            if (record.get('protocol') in (ALIGNMENT_PROTOCOL,FEWSHOT_PROTOCOL))!=(record.get('target_true_labels_used_in_alignment_loss') is True):
                 raise ValueError(f'Inconsistent feature alignment supervision: {path}')
         if complete.get('status')!='PASS':raise ValueError(f'Incomplete run: {path}')
         if result.get('smoke') or complete.get('partial_training_smoke'):
@@ -44,10 +44,26 @@ def summarize(paths, output):
             if len(tests)!=1 or tests[0]['epoch']!=result['selected_epoch'] or tests[0]['metrics']!=test or result.get('test_evaluations')!=1:
                 raise ValueError(f'Heldout must be evaluated once at the selected epoch: {path}')
         training=[json.loads(line) for line in (path.parent/'training.jsonl').read_text(encoding='utf-8').splitlines()]
+        fewshot=result['protocol']==FEWSHOT_PROTOCOL
         if len(training)!=result['completed_epochs'] or not all(
-                x.get('all_batch_positions_class_matched') is True for x in training):
+                (x.get('restricted_target_labels_only') is True and x.get('all_batch_positions_class_matched') is False)
+                if fewshot else x.get('all_batch_positions_class_matched') is True for x in training):
             raise ValueError(f'Missing class-matching checks: {path}')
         sampling=result['label_guided_sampling']
+        if fewshot:
+            known={x['path']:x['label'] for x in sampling['selected_labelled_samples']}
+            if len(known)!=sampling['labelled_target_samples'] or sampling['unselected_truth_used_for_pairing_or_alignment']:
+                raise ValueError('Invalid fixed target label budget')
+            updates=[json.loads(s) for s in (path.parent/'updates.jsonl').read_text().splitlines()]
+            for row in updates:
+                if row['target_known_alignment_labels']!=[known.get(p,-1) for p in row['target_batch_paths']]:
+                    raise ValueError('Unselected target truth entered the loss')
+                if row['matched_alignment_details']['unlabelled_targets_in_loss']!=0:
+                    raise ValueError('Unlabelled targets entered class alignment')
+                for i in row['matched_alignment_details']['aligned_target_positions']:
+                    label=row['target_known_alignment_labels'][i]
+                    if label<0 or label not in row['source_true_classes']:
+                        raise ValueError('Few-shot alignment used an unavailable true-class source anchor')
         reported=test if test is not None else metrics
         rows.append({'protocol':result['protocol'],'method':result['method'],'target':result['target'],'seed':result['seed'],
             'configuration_tag':result.get('configuration_tag','reference'),
@@ -55,6 +71,10 @@ def summarize(paths, output):
             'selection_metric':selection,'target_test_available':test is not None,
             'reporting_partition':'target_test' if test is not None else 'target_val',
             'peak_validation_ACC_percent':100*peak['accuracy'],
+            'peak_validation_Precision_macro_percent':100*peak['precision_macro'],
+            'peak_validation_Recall_macro_percent':100*peak['recall_macro'],
+            'peak_validation_F1_macro_percent':100*peak['f1_macro'],
+            'peak_validation_epoch':result.get('peak_target_val_epoch',result['selected_epoch']),
             'selected_validation_ACC_percent':100*metrics['accuracy'],
             'selected_epoch':result['selected_epoch'],'completed_epochs':result['completed_epochs'],
             'screening_only':result.get('screening_only',False),

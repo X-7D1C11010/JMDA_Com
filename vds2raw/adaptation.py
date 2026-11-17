@@ -656,10 +656,17 @@ class AdaptationModel(nn.Module):
         if matched_weight:
             if getattr(args,'target_class_matching','none')!='target_truth':
                 raise ValueError('Matched alignment is supervised and requires target_truth sampling')
-            from weather.matched_alignment import matched_class_alignment
-            matched_alignment,matched_alignment_details=matched_class_alignment(
-                features[:source_count],features[source_count:],source['label'],
-                getattr(args,'matched_alignment_margin',.2))
+            if getattr(args,'target_labels_per_class',0):
+                from weather.matched_alignment import fewshot_class_alignment
+                if 'alignment_labels' not in target:raise ValueError('Missing restricted target label budget')
+                matched_alignment,matched_alignment_details=fewshot_class_alignment(
+                    features[:source_count],features[source_count:],source['label'],target['alignment_labels'],
+                    getattr(args,'matched_alignment_margin',.2))
+            else:
+                from weather.matched_alignment import matched_class_alignment
+                matched_alignment,matched_alignment_details=matched_class_alignment(
+                    features[:source_count],features[source_count:],source['label'],
+                    getattr(args,'matched_alignment_margin',.2))
             matched_ramp=max(getattr(args,'matched_alignment_ramp_epochs',3)*args.steps_per_epoch,1)
             weighted_matched_alignment=matched_weight*min((update+1)/matched_ramp,1)*matched_alignment
             total=total+weighted_matched_alignment

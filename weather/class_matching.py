@@ -14,11 +14,14 @@ import random
 
 PROTOCOL = "LABEL_GUIDED_CLASS_MATCHING"
 ALIGNMENT_PROTOCOL = "LABEL_GUIDED_CLASS_ALIGNMENT"
+FEWSHOT_PROTOCOL = "FEWSHOT_TARGET_CLASS_ALIGNMENT"
 
 
-def protocol_metadata(enabled,alignment_weight=0.):
+def protocol_metadata(enabled,alignment_weight=0.,labels_per_class=0):
     if alignment_weight and not enabled:raise ValueError('True-class alignment requires label-guided matching')
-    return {"protocol":(ALIGNMENT_PROTOCOL if alignment_weight else PROTOCOL) if enabled else "UDA",
+    if labels_per_class and (not enabled or alignment_weight<=0):
+        raise ValueError('Few-shot target guidance requires a positive alignment coefficient')
+    return {"protocol":FEWSHOT_PROTOCOL if labels_per_class else ((ALIGNMENT_PROTOCOL if alignment_weight else PROTOCOL) if enabled else "UDA"),
             "target_training_labels_used":bool(enabled),
             "target_true_labels_used_for_sampling":bool(enabled),
             "target_true_labels_used_in_classification_loss":False,
