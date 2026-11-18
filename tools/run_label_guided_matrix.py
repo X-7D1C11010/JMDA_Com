@@ -19,6 +19,7 @@ from weather.class_matching import ALIGNMENT_PROTOCOL,protocol_metadata
 from tools.prepare_mcc_weather_v2_snapshot import prepare_snapshot
 from tools.run_weather_crossmodal_screen import recorded_arguments_to_cli
 from weather.fewshot_presets import PAIRS as SUITE_PAIRS,ALLOCATION,build_fewshot_preset
+from weather.server_adaptive_presets import RECIPE as SERVER_RECIPE,PAIRS as SERVER_PAIRS,build_server_adaptive_preset
 
 
 def write(path,value):
@@ -64,13 +65,24 @@ def preflight_command(command,save_dir):
     return command+['--max-train-batches','1','--stop-after-epochs','1','--selection-min-epoch','1']
 
 
-def build_jobs(output,data_dir,pairs,seeds,snapshot,complete_budget=False,overrides=None,evaluation_mode='validation_peak',parameter_profile='reference',unified_fewshot=False):
+def build_jobs(output,data_dir,pairs,seeds,snapshot,complete_budget=False,overrides=None,evaluation_mode='validation_peak',parameter_profile='reference',unified_fewshot=False,fewshot_alignment_variant=False,fewshot_recipe='baseline'):
+    if fewshot_recipe not in {'baseline',SERVER_RECIPE}:raise ValueError('Unknown few-shot recipe')
+    adaptive=fewshot_recipe==SERVER_RECIPE
+    if adaptive and (not unified_fewshot or set(pairs)-set(SERVER_PAIRS)):
+        raise ValueError('The server adaptive recipe requires its declared method/weather pairs and few-shot protocol')
+    if fewshot_alignment_variant and not unified_fewshot:
+        raise ValueError('A coefficient variant requires the unified few-shot training preset')
+    if fewshot_alignment_variant:
+        coefficient=(overrides or {}).get('matched_alignment_weight')
+        if coefficient is None or not math.isfinite(coefficient) or coefficient<=0:
+            raise ValueError('A few-shot coefficient variant needs an explicit positive finite weight')
     jobs=[]
     for pair in pairs:
         method,target=pair.rsplit('_',1)
         for seed in seeds:
             parent=output/pair/f'seed{seed}'
-            values=(build_fewshot_preset(ROOT,data_dir,parent,method,target,seed) if unified_fewshot else
+            values=(build_server_adaptive_preset(ROOT,data_dir,parent,method,target,seed) if adaptive else
+                    build_fewshot_preset(ROOT,data_dir,parent,method,target,seed) if unified_fewshot else
                     build_preset(ROOT,data_dir,parent,method,target,seed,parameter_profile))
             if complete_budget:values['stop_after_epochs']=0
             if evaluation_mode in ('holdout_ce','validation_ce'):
@@ -84,18 +96,45 @@ def build_jobs(output,data_dir,pairs,seeds,snapshot,complete_budget=False,overri
                               early_stopping_monitor='cross_entropy',validation_control_start_epoch=1,val_plateau_patience=3)
             values.update(overrides or {})
             if unified_fewshot:
+                coefficient=(.2 if adaptive else overrides['matched_alignment_weight'] if fewshot_alignment_variant else .1)
+                tag=format(coefficient,'.12g').replace('.','p')
                 values.update(epochs=40,stop_after_epochs=0,early_stopping_patience=0,
-                    target_labels_per_class=3,matched_alignment_weight=.1,
-                    configuration_tag='fewshot3_alignment0p1_40epoch_v1')
+                    target_labels_per_class=3,matched_alignment_weight=coefficient,
+                    configuration_tag=(f'fewshot3_alignment{tag}_40epoch_variant_v1' if fewshot_alignment_variant else
+                                       'fewshot3_alignment0p1_40epoch_v1'))
+                if adaptive:
+                    values.update(source_anchor_ema_momentum=.9,classifier_layout='reference',
+                        validation_control_start_epoch=values['adaptation_warmup_epochs']+values['adaptation_ramp_epochs']+1,
+                        val_plateau_patience=8,
+                        configuration_tag=SERVER_RECIPE+'_fewshot3_alignment0p2_source_ema0p9_reference')
+                if overrides and 'image_adaptation_lr_scale' in overrides:
+                    phase_tag=format(values['image_adaptation_lr_scale'],'.12g').replace('.','p')
+                    values['configuration_tag']+='_encoder_phase_lr'+phase_tag
+                if overrides and overrides.get('adversarial_lr_override') is not None:
+                    adversarial_tag=format(values['adversarial_lr_override'],'.12g').replace('.','p')
+                    values['configuration_tag']+='_discriminator_lr'+adversarial_tag
+                if overrides and overrides.get('source_anchor_ema_momentum') is not None:
+                    ema_tag=format(values['source_anchor_ema_momentum'],'.12g').replace('.','p')
+                    values['configuration_tag']+='_source_ema'+ema_tag
+                if overrides and overrides.get('domain_confusion_weight',0)>0:
+                    confusion_tag=format(values['domain_confusion_weight'],'.12g').replace('.','p')
+                    values['configuration_tag']+='_domain_confusion'+confusion_tag
+                if overrides and overrides.get('classifier_layout') is not None:
+                    values['configuration_tag']+='_classifier_'+values['classifier_layout']
             if values.get('early_stopping_min_epochs',0)>values['epochs']:
                 raise ValueError('Early-stopping minimum exceeds the planned epoch budget')
             name=f'{pair}_seed{seed}'
             jobs.append({'name':name,'pair':pair,'values':values,
-                'required_free_MiB':4096 if target=='rainy' else max(2048,math.ceil(RECORDED_PEAK_RESERVED_GIB[pair]*1280+512)),
+                'required_free_MiB':6144 if adaptive else 4096 if target=='rainy' else max(2048,math.ceil(RECORDED_PEAK_RESERVED_GIB[pair]*1280+512)),
                 'source_reference':('weather/rainy_presets.py; teacher losses removed; effective encoder LR preserved' if target=='rainy' else REFERENCE_PARAMETERS[pair]['reference']),
                 'result_file':str(parent/f'{method}_{target}_seed{seed}'/'result.json'),
                 'command':[sys.executable,'-B','-u',str(snapshot/'weather/train_vds_core.py'),
                            *recorded_arguments_to_cli(values)]})
+            if adaptive:
+                previous=build_jobs(output,data_dir,[pair],[seed],snapshot,complete_budget,
+                    evaluation_mode=evaluation_mode,parameter_profile=parameter_profile,unified_fewshot=True)[0]['values']
+                jobs[-1]['changes_from_previous_server_preset']={key:{'previous':previous.get(key),'candidate':values.get(key)}
+                    for key in sorted(set(previous)|set(values)) if previous.get(key)!=values.get(key)}
     return jobs
 
 
@@ -159,12 +198,25 @@ def main():
     p.add_argument('--output',type=Path)
     p.add_argument('--pairs',nargs='+',choices=sorted(SUITE_PAIRS),default=sorted(REFERENCE_PARAMETERS))
     p.add_argument('--unified-fewshot',action='store_true',help='Fixed 3 labels/class, alignment .1, 40 epochs, no teacher losses')
+    p.add_argument('--fewshot-recipe',choices=('baseline',SERVER_RECIPE),default='baseline')
+    p.add_argument('--export-compact-diagnostics',action='store_true')
+    p.add_argument('--fewshot-alignment-variant',action='store_true',help='Independent coefficient test with the otherwise unchanged unified few-shot preset')
     p.add_argument('--machine-split',choices=('local','server'))
     p.add_argument('--seeds',nargs='+',type=int,default=[42])
     p.add_argument('--local',action='store_true',help='Use the shared local GPU lease and memory headroom guard')
     p.add_argument('--local-lease-timeout-seconds',type=float,default=120.,help='0 waits indefinitely for the existing local training queue')
     p.add_argument('--matched-alignment-weight',type=float,help='Nonnegative independent variant; zero keeps truth-guided sampling without extra alignment')
     p.add_argument('--target-labels-per-class',type=int,default=0)
+    p.add_argument('--image-adaptation-lr-scale',type=float,
+                   help='Independent CDAN/foggy encoder phase-LR test; other preset settings stay fixed')
+    p.add_argument('--adversarial-lr-override',type=float,
+                   help='Independent CDAN/foggy discriminator-LR test; classifier and encoder LRs stay fixed')
+    p.add_argument('--source-anchor-ema-momentum',type=float,
+                   help='Opt-in source-only cross-batch EMA class anchors for the controlled CDAN/foggy few-shot variant')
+    p.add_argument('--domain-confusion-weight',type=float,
+                   help='Declared encoder-only uniform-domain BCE enhancement; no target class labels')
+    p.add_argument('--classifier-layout',choices=('linear','reference'),
+                   help='Controlled CDAN/foggy method bottleneck/classifier layout')
     p.add_argument('--complete-budget',action='store_true',help='Remove local reference prefixes; train each preset full planned budget')
     p.add_argument('--early-stopping-patience',type=int)
     p.add_argument('--early-stopping-min-epochs',type=int)
@@ -173,7 +225,38 @@ def main():
     p.add_argument('--gpus',default=os.environ.get('JMDA_GPU_CANDIDATES','0,1'))
     p.add_argument('--execute',action='store_true',help='Otherwise write exact commands only')
     args=p.parse_args()
-    if args.unified_fewshot and (args.target_labels_per_class!=3 or args.matched_alignment_weight!=.1 or args.evaluation_mode!='validation_ce' or args.parameter_profile!='reference'):
+    adaptive=args.fewshot_recipe==SERVER_RECIPE
+    if adaptive and (not args.unified_fewshot or args.parameter_profile!='reference' or
+            args.evaluation_mode!='validation_ce' or args.machine_split!='server' or set(args.pairs)!=set(SERVER_PAIRS) or
+            args.target_labels_per_class!=3 or args.matched_alignment_weight!=.2):
+        p.error('The adaptive recipe requires the full server allocation, 3 labels/class, alignment .2 and reference/validation_ce')
+    if args.classifier_layout is not None and (not args.fewshot_alignment_variant or args.pairs!=['cdan_foggy']):
+        p.error('Classifier-layout tests require the controlled cdan_foggy few-shot variant')
+    if args.domain_confusion_weight is not None:
+        if (not args.fewshot_alignment_variant or args.pairs!=['cdan_foggy'] or
+                not math.isfinite(args.domain_confusion_weight) or args.domain_confusion_weight<0):
+            p.error('The domain-confusion enhancement requires controlled cdan_foggy few-shot and a finite nonnegative weight')
+    if args.source_anchor_ema_momentum is not None:
+        if (not args.fewshot_alignment_variant or args.pairs!=['cdan_foggy'] or
+                not math.isfinite(args.source_anchor_ema_momentum) or not 0<=args.source_anchor_ema_momentum<1):
+            p.error('Source EMA anchors require cdan_foggy few-shot and a finite momentum in [0,1)')
+    if args.adversarial_lr_override is not None:
+        if (not args.fewshot_alignment_variant or args.pairs!=['cdan_foggy'] or
+                not math.isfinite(args.adversarial_lr_override) or args.adversarial_lr_override<=0):
+            p.error('A discriminator-LR test requires the explicit cdan_foggy few-shot coefficient variant and a positive finite LR')
+        if args.image_adaptation_lr_scale is not None:
+            p.error('Keep discriminator and encoder LR tests separate for this controlled comparison')
+    if args.image_adaptation_lr_scale is not None:
+        if (not args.fewshot_alignment_variant or args.pairs!=['cdan_foggy'] or
+                not math.isfinite(args.image_adaptation_lr_scale) or not 0<args.image_adaptation_lr_scale<=1):
+            p.error('An encoder phase-LR test requires the explicit cdan_foggy few-shot coefficient variant and a factor in (0,1]')
+    if args.fewshot_alignment_variant and (not args.unified_fewshot or args.machine_split):
+        p.error('A coefficient test requires --unified-fewshot and must stay separate from machine allocation queues')
+    if args.fewshot_alignment_variant and (args.matched_alignment_weight is None or not math.isfinite(args.matched_alignment_weight) or args.matched_alignment_weight<=0):
+        p.error('A coefficient test requires an explicit positive finite --matched-alignment-weight')
+    if args.unified_fewshot and (args.target_labels_per_class!=3 or
+            (not args.fewshot_alignment_variant and not adaptive and args.matched_alignment_weight!=.1) or
+            args.evaluation_mode!='validation_ce' or args.parameter_profile!='reference'):
         p.error('Unified few-shot requires --target-labels-per-class 3 --matched-alignment-weight 0.1 and reference/validation_ce')
     if not args.unified_fewshot and any(pair not in REFERENCE_PARAMETERS for pair in args.pairs):
         p.error('Rainy is available only through the explicit unified few-shot variant')
@@ -191,11 +274,11 @@ def main():
     if output.exists():raise FileExistsError(output)
     if not args.data_dir.is_dir():raise FileNotFoundError(args.data_dir)
     snapshot=prepare_snapshot(ROOT)
-    overrides={key:getattr(args,key) for key in ('early_stopping_patience','early_stopping_min_epochs') if getattr(args,key) is not None}
+    overrides={key:getattr(args,key) for key in ('early_stopping_patience','early_stopping_min_epochs','image_adaptation_lr_scale','adversarial_lr_override','source_anchor_ema_momentum','domain_confusion_weight','classifier_layout') if getattr(args,key) is not None}
     overrides.update(variant_overrides)
     if args.evaluation_mode in ('holdout_ce','validation_ce') and not (args.data_dir/'holdout_protocol_manifest.json').is_file():
         raise FileNotFoundError('Prepare the locked retraining split before CE-based evaluation')
-    jobs=build_jobs(output,args.data_dir.resolve(),args.pairs,args.seeds,snapshot,args.complete_budget,overrides,args.evaluation_mode,args.parameter_profile,args.unified_fewshot)
+    jobs=build_jobs(output,args.data_dir.resolve(),args.pairs,args.seeds,snapshot,args.complete_budget,overrides,args.evaluation_mode,args.parameter_profile,args.unified_fewshot,args.fewshot_alignment_variant,args.fewshot_recipe)
     for job in jobs:
         a=job['values']
         for key in ('weights','ir_weights','holdout_list'):
@@ -207,6 +290,11 @@ def main():
         'matched_alignment_weight_override':args.matched_alignment_weight,
         'target_labels_per_class':args.target_labels_per_class,
         'unified_fewshot':args.unified_fewshot,
+        'fewshot_recipe':args.fewshot_recipe,
+        'fewshot_alignment_variant':args.fewshot_alignment_variant,
+        'image_adaptation_lr_scale_override':args.image_adaptation_lr_scale,
+        'adversarial_lr_override':args.adversarial_lr_override,
+        'source_anchor_ema_momentum':jobs[0]['values'].get('source_anchor_ema_momentum'),
         'machine_split':args.machine_split,
         'expected_by_weather':{t:sum(j['values']['target']==t for j in jobs) for t in sorted({j['values']['target'] for j in jobs})},
         'accuracy_cap_applied':False,'original_UDA_results_not_overwritten':True,'jobs':jobs})
@@ -271,6 +359,8 @@ def main():
                 if sampling['labelled_target_samples']!=expected or sampling['unselected_truth_used_for_pairing_or_alignment']:
                     raise RuntimeError('Few-shot label budget mismatch')
                 events=[json.loads(s) for s in (smoke_path.parent/'updates.jsonl').read_text().splitlines()]
+                from weather.summarize_class_matching import validate_fewshot_updates
+                validate_fewshot_updates(sampling,events,a.get('source_anchor_ema_momentum'))
                 known={x['path']:x['label'] for x in sampling['selected_labelled_samples']}
                 if not all(x['target_known_alignment_labels']==[known.get(p,-1) for p in x['target_batch_paths']] for x in events):
                     raise RuntimeError('Unselected target labels leaked into preflight')
@@ -290,6 +380,9 @@ def main():
             from weather.summarize_class_matching import summarize
             rows=summarize([job['result_file']],Path(job['result_file']).parent.parent/'summary')
             row=rows[0]
+            if args.export_compact_diagnostics:
+                from weather.compact_diagnostics import export_run_diagnostics
+                export_run_diagnostics(output,Path(job['result_file']))
             row['planned_epochs']=job['values']['epochs']
             completed.append(row)
             write_pair_summary(output,completed,args.seeds)

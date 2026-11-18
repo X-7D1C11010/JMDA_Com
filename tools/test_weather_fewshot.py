@@ -86,6 +86,8 @@ class FewShotChecks(unittest.TestCase):
                 rows=[json.loads(s) for s in (p/'training.jsonl').read_text().splitlines()]
                 self.assertTrue(all(r['target_unique_samples']==8 and r['source_unique_samples']==8 for r in rows))
                 updates=[json.loads(s) for s in (p/'updates.jsonl').read_text().splitlines()]
+                gradients=[json.loads(s) for s in (p/'gradients.jsonl').read_text().splitlines()]
+                self.assertTrue(all({'core','matched_class_alignment'}<=e['enhancement_components'].keys() for e in gradients))
                 self.assertTrue(any(e['weighted_matched_alignment']>0 for e in updates))
                 self.assertTrue(any(e['weighted_core_transfer']!=0 for e in updates))
                 self.assertEqual(summarize([p/'result.json'],root/'summary')[0]['protocol'],FEWSHOT_PROTOCOL)

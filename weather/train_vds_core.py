@@ -323,6 +323,9 @@ def run(args):
             or not 0<=args.matched_alignment_margin<2):
         raise ValueError('Invalid label-guided alignment settings')
     if fewshot<0:raise ValueError('Target labels per class must be nonnegative')
+    source_ema=getattr(args,'source_anchor_ema_momentum',None)
+    if source_ema is not None and (not guided or not fewshot or alignment_weight<=0 or not 0<=source_ema<1):
+        raise ValueError('Source EMA anchors require positive few-shot alignment and a finite momentum in [0,1)')
     supervision=protocol_metadata(guided,alignment_weight,fewshot)
     datasets, audit = prepare_datasets(args.data_dir, args.target, args.augment)
     source, target, source_eval, target_eval, validation = datasets
@@ -601,6 +604,8 @@ def run(args):
             'ramp_epochs':args.matched_alignment_ramp_epochs,'source_centroids_detached':True,
             'target_true_classes_used':True,'target_classifier_CE_used':False,
             'not_an_original_UDA_method':True,
+            'source_anchor_mode':'source_ema' if source_ema is not None else 'current_batch',
+            'source_anchor_ema_momentum':source_ema,'prototype_updates_from':'source_train_only',
             **({'target_label_scope':'fixed labelled subset only','labels_per_class':fewshot} if fewshot else {})})
     write_json(output/"run_config.json", config)
     print("WEATHER_PROTOCOL: "+json.dumps({**audit, "arguments": vars(args)},default=str), flush=True)
@@ -723,6 +728,8 @@ def run(args):
                     if "core" not in separate:separate["core"]=gradient_diagnostics(model,details["source_ce"],details["weighted_core_transfer"])
                     separate["source_feature_mixup_correction"]=gradient_diagnostics(model,details["source_ce"],details["source_feature_mixup_correction"])
                 if alignment_weight:
+                    if 'core' not in separate:
+                        separate['core']=gradient_diagnostics(model,details['source_ce'],details['weighted_core_transfer'])
                     separate['matched_class_alignment']=gradient_diagnostics(model,details['source_ce'],details['weighted_matched_alignment'])
                 event(output, "gradients.jsonl", {"epoch": epoch, "update": update+1, "gradients": gradients,"enhancement_components":separate})
             norms = feature_norms(model.last_features, len(sb["label"]), names=("VIS", "IR"))
@@ -1047,6 +1054,8 @@ def parser():
     p.add_argument('--matched-alignment-weight',type=float,default=0.,help='Explicit supervised class feature alignment; default off')
     p.add_argument('--matched-alignment-margin',type=float,default=.2)
     p.add_argument('--matched-alignment-ramp-epochs',type=int,default=3)
+    p.add_argument('--source-anchor-ema-momentum',type=float,default=None,
+                   help='Opt-in source-only cross-batch EMA anchors; target labels remain restricted to the fixed few-shot budget')
     p.add_argument('--target-labels-per-class',type=int,default=0,
                    help='Positive fixed label budget; only selected targets enter extra alignment, all targets enter native DA')
     p.add_argument('--selection-metric',choices=('accuracy_f1','cross_entropy'),default='accuracy_f1')

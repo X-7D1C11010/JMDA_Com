@@ -657,11 +657,21 @@ class AdaptationModel(nn.Module):
             if getattr(args,'target_class_matching','none')!='target_truth':
                 raise ValueError('Matched alignment is supervised and requires target_truth sampling')
             if getattr(args,'target_labels_per_class',0):
-                from weather.matched_alignment import fewshot_class_alignment
                 if 'alignment_labels' not in target:raise ValueError('Missing restricted target label budget')
-                matched_alignment,matched_alignment_details=fewshot_class_alignment(
-                    features[:source_count],features[source_count:],source['label'],target['alignment_labels'],
-                    getattr(args,'matched_alignment_margin',.2))
+                ema_momentum=getattr(args,'source_anchor_ema_momentum',None)
+                if ema_momentum is not None:
+                    from weather.matched_alignment import SourceClassPrototypeEMA,fewshot_ema_class_alignment
+                    if not hasattr(self,'source_alignment_memory'):
+                        self.source_alignment_memory=SourceClassPrototypeEMA(
+                            logits.shape[1],features.shape[1],ema_momentum).to(features.device)
+                    matched_alignment,matched_alignment_details=fewshot_ema_class_alignment(
+                        features[:source_count],features[source_count:],source['label'],target['alignment_labels'],
+                        self.source_alignment_memory,getattr(args,'matched_alignment_margin',.2))
+                else:
+                    from weather.matched_alignment import fewshot_class_alignment
+                    matched_alignment,matched_alignment_details=fewshot_class_alignment(
+                        features[:source_count],features[source_count:],source['label'],target['alignment_labels'],
+                        getattr(args,'matched_alignment_margin',.2))
             else:
                 from weather.matched_alignment import matched_class_alignment
                 matched_alignment,matched_alignment_details=matched_class_alignment(

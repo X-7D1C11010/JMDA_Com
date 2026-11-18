@@ -7,6 +7,40 @@ from pathlib import Path
 from weather.class_matching import PROTOCOL,ALIGNMENT_PROTOCOL,FEWSHOT_PROTOCOL
 
 
+def validate_fewshot_updates(sampling,updates,ema_momentum=None):
+    known={x['path']:x['label'] for x in sampling['selected_labelled_samples']}
+    if len(known)!=sampling['labelled_target_samples'] or sampling['unselected_truth_used_for_pairing_or_alignment']:
+        raise ValueError('Invalid fixed target label budget')
+    count=len(sampling['labelled_target_class_counts']);sample_counts=[0]*count;batch_counts=[0]*count
+    for row in updates:
+        if row['target_known_alignment_labels']!=[known.get(p,-1) for p in row['target_batch_paths']]:
+            raise ValueError('Unselected target truth entered the loss')
+        details=row['matched_alignment_details']
+        if details['unlabelled_targets_in_loss']!=0:raise ValueError('Unlabelled targets entered class alignment')
+        allowed=set(row['source_true_classes'])
+        if ema_momentum is not None:
+            for label in row['source_true_classes']:sample_counts[label]+=1
+            for label in set(row['source_true_classes']):batch_counts[label]+=1
+            available=[i for i,n in enumerate(sample_counts) if n]
+            if (details.get('source_anchor_mode')!='source_ema' or
+                    details.get('source_anchor_ema_momentum')!=ema_momentum or
+                    details.get('source_prototypes_updated_from')!='source_train_only' or
+                    details.get('target_samples_in_prototype_updates')!=0 or
+                    details.get('available_source_prototype_classes')!=available or
+                    details.get('source_prototype_sample_counts')!=sample_counts or
+                    details.get('source_prototype_batch_counts')!=batch_counts):
+                raise ValueError('EMA source prototype history does not match source-only training updates')
+            allowed=set(available)
+            expected=[i for i,y in enumerate(row['target_known_alignment_labels']) if y>=0 and y in allowed]
+            cached=sum(row['target_known_alignment_labels'][i] not in row['source_true_classes'] for i in expected)
+            if details['aligned_target_positions']!=expected or details['aligned_from_cache_not_current_batch']!=cached:
+                raise ValueError('EMA alignment did not use the available source-only anchors')
+        for i in details['aligned_target_positions']:
+            label=row['target_known_alignment_labels'][i]
+            if label<0 or label not in allowed:
+                raise ValueError('Few-shot alignment used an unavailable true-class source anchor')
+
+
 def summarize(paths, output):
     rows=[]
     for path in map(Path, paths):
@@ -51,19 +85,9 @@ def summarize(paths, output):
             raise ValueError(f'Missing class-matching checks: {path}')
         sampling=result['label_guided_sampling']
         if fewshot:
-            known={x['path']:x['label'] for x in sampling['selected_labelled_samples']}
-            if len(known)!=sampling['labelled_target_samples'] or sampling['unselected_truth_used_for_pairing_or_alignment']:
-                raise ValueError('Invalid fixed target label budget')
             updates=[json.loads(s) for s in (path.parent/'updates.jsonl').read_text().splitlines()]
-            for row in updates:
-                if row['target_known_alignment_labels']!=[known.get(p,-1) for p in row['target_batch_paths']]:
-                    raise ValueError('Unselected target truth entered the loss')
-                if row['matched_alignment_details']['unlabelled_targets_in_loss']!=0:
-                    raise ValueError('Unlabelled targets entered class alignment')
-                for i in row['matched_alignment_details']['aligned_target_positions']:
-                    label=row['target_known_alignment_labels'][i]
-                    if label<0 or label not in row['source_true_classes']:
-                        raise ValueError('Few-shot alignment used an unavailable true-class source anchor')
+            ema=result.get('enhancement',{}).get('matched_class_alignment',{}).get('source_anchor_ema_momentum')
+            validate_fewshot_updates(sampling,updates,ema)
         reported=test if test is not None else metrics
         rows.append({'protocol':result['protocol'],'method':result['method'],'target':result['target'],'seed':result['seed'],
             'configuration_tag':result.get('configuration_tag','reference'),

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.run_weather_fewshot_suite import build_plan,required_weights
-from tools.run_label_guided_matrix import write_peak_summary,main
+from tools.run_label_guided_matrix import write_peak_summary,main,build_jobs
 from weather.fewshot_presets import ALLOCATION,PAIRS
 from weather.rainy_presets import arguments_for
 from weather.train_vds_core import parser,resolve_weather_settings
@@ -16,6 +16,31 @@ from tools.run_weather_crossmodal_screen import recorded_arguments_to_cli
 
 
 class FewShotSuiteChecks(unittest.TestCase):
+    def test_coefficient_variants_preserve_every_other_training_setting(self):
+        for seed in (42,43,46):
+            original=build_jobs(Path('out'),Path('lists'),['cdan_foggy'],[seed],Path('snapshot'),True,
+                                evaluation_mode='validation_ce',unified_fewshot=True)[0]['values']
+            for coefficient in (.2,.3):
+                variant=build_jobs(Path('out'),Path('lists'),['cdan_foggy'],[seed],Path('snapshot'),True,
+                    overrides={'matched_alignment_weight':coefficient},evaluation_mode='validation_ce',
+                    unified_fewshot=True,fewshot_alignment_variant=True)[0]['values']
+                changed={k for k in set(original)|set(variant) if original.get(k)!=variant.get(k)}
+                self.assertEqual(changed,{'matched_alignment_weight','configuration_tag'})
+                args=parser().parse_args(recorded_arguments_to_cli(variant))
+                self.assertEqual(args.epochs,40)
+                self.assertEqual(args.target_labels_per_class,3)
+                self.assertEqual(args.early_stopping_patience,0)
+                self.assertEqual(args.matched_alignment_weight,coefficient)
+
+    def test_coefficient_variant_cannot_change_full_machine_queue_or_disable_guidance(self):
+        base=['runner','--data-dir','missing','--unified-fewshot','--fewshot-alignment-variant',
+              '--pairs','cdan_foggy','--target-labels-per-class','3']
+        for extra in (['--matched-alignment-weight','0'],['--matched-alignment-weight','nan'],
+                      ['--matched-alignment-weight','.2','--machine-split','local']):
+            with patch('sys.argv',base+extra),contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as e:main()
+                self.assertEqual(e.exception.code,2)
+
     def test_exact_split_disjoint_complete_and_default_seeds(self):
         local=build_plan('local',Path('out'),Path('lists'),Path('snapshot'))
         server=build_plan('server',Path('out'),Path('lists'),Path('snapshot'))

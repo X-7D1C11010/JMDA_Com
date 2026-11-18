@@ -10,19 +10,23 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from weather.fewshot_presets import ALLOCATION
+from weather.server_adaptive_presets import RECIPE as SERVER_RECIPE
 from weather.class_matching import FEWSHOT_PROTOCOL
 from tools.run_label_guided_matrix import build_jobs
 
 
-def build_plan(machine,output,lists,snapshot,seeds=tuple(range(42,47))):
+def build_plan(machine,output,lists,snapshot,seeds=tuple(range(42,47)),fewshot_recipe='baseline'):
     if machine not in ALLOCATION:raise ValueError('Unknown machine allocation')
+    if fewshot_recipe not in ('baseline',SERVER_RECIPE):raise ValueError('Unknown few-shot recipe')
+    if fewshot_recipe==SERVER_RECIPE and machine!='server':raise ValueError('The adaptive recipe is server-only')
     if not seeds or len(set(seeds))!=len(seeds) or any(seed<0 for seed in seeds):raise ValueError('Seeds must be unique nonnegative integers')
     pairs=ALLOCATION[machine]
     jobs=build_jobs(Path(output),Path(lists),pairs,seeds,Path(snapshot),True,
-                    evaluation_mode='validation_ce',unified_fewshot=True)
+                    evaluation_mode='validation_ce',unified_fewshot=True,fewshot_recipe=fewshot_recipe)
     targets=sorted({j['values']['target'] for j in jobs})
     return {'machine_split':machine,'protocol':FEWSHOT_PROTOCOL,'pairs':list(pairs),'seeds':list(seeds),
-        'epochs':40,'early_stopping_patience':0,'target_labels_per_class':3,'matched_alignment_weight':.1,
+        'epochs':40,'early_stopping_patience':0,'target_labels_per_class':3,
+        'fewshot_recipe':fewshot_recipe,'matched_alignment_weight':.2 if fewshot_recipe==SERVER_RECIPE else .1,
         'rainy_distillation_disabled':True,'target_classifier_CE_used':False,'heldout_evaluation':False,
         'total':len(jobs),'counts_by_weather':{t:sum(j['values']['target']==t for j in jobs) for t in targets},
         'jobs':jobs}
@@ -75,6 +79,7 @@ def prepare_data(machine,data_root,prepared,snapshot):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--machine',choices=tuple(ALLOCATION),required=True)
+    parser.add_argument('--fewshot-recipe',choices=('baseline',SERVER_RECIPE),default='baseline')
     parser.add_argument('--seeds',type=int,nargs='+',default=list(range(42,47)))
     parser.add_argument('--data-root',type=Path,default=Path(os.environ.get('JMDA_DATA_ROOT',r'D:\Code\JMDA-Net\Data')))
     parser.add_argument('--output',type=Path)
@@ -83,13 +88,15 @@ def main():
     mode.add_argument('--check-environment',action='store_true')
     mode.add_argument('--prepare-only',action='store_true')
     args=parser.parse_args()
+    if args.fewshot_recipe==SERVER_RECIPE and args.machine!='server':parser.error('The adaptive recipe is server-only')
     stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    output=(args.output or ROOT/'runs/weather_label_guided'/f'{args.machine}_fewshot_{stamp}').resolve()
+    suffix='v2_' if args.fewshot_recipe==SERVER_RECIPE else ''
+    output=(args.output or ROOT/'runs/weather_label_guided'/f'{args.machine}_fewshot_{suffix}{stamp}').resolve()
     if not output.is_relative_to(ROOT/'runs/weather_label_guided'):parser.error('Use runs/weather_label_guided for separate results')
     if args.execute and not output.name.startswith(args.machine+'_fewshot_'):
         parser.error('Actual outputs must have the machine_fewshot_ prefix')
     prepared=ROOT/'prepared_lists/weather_fewshot'/f'{args.machine}_{stamp}'
-    plan=build_plan(args.machine,output,prepared/'locked',ROOT,args.seeds)
+    plan=build_plan(args.machine,output,prepared/'locked',ROOT,args.seeds,args.fewshot_recipe)
     print('Allocation='+json.dumps(plan['counts_by_weather'])+'; total='+str(plan['total']),flush=True)
     if args.check_environment:
         check_environment(plan,args.data_root);return
@@ -105,10 +112,12 @@ def main():
     if args.prepare_only:print('DATA_PREPARATION_ONLY='+str(prepared),flush=True);return
     command=[sys.executable,'-B','-u',str(ROOT/'tools/run_label_guided_matrix.py'),
         '--unified-fewshot','--machine-split',args.machine,'--data-dir',str(lists),'--pairs',*plan['pairs'],
-        '--seeds',*[str(s) for s in args.seeds],'--matched-alignment-weight','0.1','--target-labels-per-class','3',
+        '--seeds',*[str(s) for s in args.seeds],'--matched-alignment-weight',str(plan['matched_alignment_weight']),
+        '--target-labels-per-class','3','--fewshot-recipe',args.fewshot_recipe,
         '--parameter-profile','reference','--evaluation-mode','validation_ce','--complete-budget',
         '--early-stopping-patience','0','--output',str(output),'--execute']
     if args.machine=='local':command+=['--local','--local-lease-timeout-seconds','0']
+    if args.fewshot_recipe==SERVER_RECIPE:command+=['--export-compact-diagnostics']
     env=dict(os.environ,JMDA_DATA_ROOT=str(args.data_root.resolve()),JMDA_DETERMINISTIC='1',
              CUBLAS_WORKSPACE_CONFIG=':4096:8',PYTHONUNBUFFERED='1',TORCH_HOME=str(ROOT/'pretrained_weights/torch'))
     print('Run directory='+str(output),flush=True)
