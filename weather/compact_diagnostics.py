@@ -55,7 +55,7 @@ def _replace_run(path,run_id,records):
     temporary.replace(path)
 
 
-def export_run_diagnostics(output,result_file):
+def export_run_diagnostics(output,result_file,run_namespace=None):
     output=Path(output);result_file=Path(result_file);folder=result_file.parent
     result=_load(result_file);config=_load(folder/'run_config.json');args=config['arguments']
     if (result.get('smoke') or result.get('screening_only') or result.get('simulated') or
@@ -63,8 +63,13 @@ def export_run_diagnostics(output,result_file):
         raise ValueError('Only complete real validation-only runs may be exported')
     if _load(folder/'completeness.json').get('status')!='PASS':raise ValueError('Run is incomplete')
     run_id=f"{result['method']}_{result['target']}_seed{result['seed']}"
+    if run_namespace is not None:
+        if not run_namespace or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789_-' for c in run_namespace):
+            raise ValueError('Diagnostic namespace must be a nonempty lowercase trial identifier')
+        run_id=run_namespace+':'+run_id
     identity={k:result[k] for k in ('method','target','seed','protocol','configuration_tag')}
     identity['run_id']=run_id
+    if run_namespace is not None:identity['trial']=run_namespace
     evaluations=list(_rows(folder/'evaluation.jsonl'))
     target={row['epoch']:row for row in evaluations if row['partition']=='target_val'}
     if len(target)!=result['completed_epochs'] or set(target)!=set(range(1,result['completed_epochs']+1)):

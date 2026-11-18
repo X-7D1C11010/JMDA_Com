@@ -22,6 +22,7 @@ EXTRA_FILES = (
     "scripts/run_server_weather_all_background.sh",
     "scripts/run_server_weather_fewshot_background.sh",
     "scripts/run_server_weather_fewshot_v2_background.sh",
+    "scripts/run_server_deepcoral_dark_tuning_background.sh",
 )
 REQUIRED_FILES = EXTRA_FILES + (
     "vds2raw/__init__.py", "vds2raw/adaptation.py", "vds2raw/train_adaptation.py",
