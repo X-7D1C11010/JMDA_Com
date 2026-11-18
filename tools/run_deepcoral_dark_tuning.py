@@ -1,4 +1,4 @@
-"""Four separate, single-setting server tests of the completed dark CORAL run."""
+"""Independent single-setting server tests of the completed dark CORAL run."""
 import argparse
 import copy
 import csv
@@ -17,11 +17,13 @@ from tools.run_label_guided_matrix import preflight_command
 from tools.run_weather_crossmodal_screen import recorded_arguments_to_cli
 
 DEFAULT_BASELINE=ROOT/'runs/weather_label_guided/server_fewshot_v2_20261118_150154_80507'
+DEFAULT_TRIALS=('phase_lr0p3','no_source_crossmodal','ir_prior0p3','coral0p1')
 TRIALS={
     'phase_lr0p3':{'image_adaptation_lr_scale':.3},
     'no_source_crossmodal':{'source_crossmodal_weight':0.},
     'ir_prior0p3':{'initial_vis_weight':.3},
     'coral0p1':{'trade_off':.1},
+    'phase_lr1':{'image_adaptation_lr_scale':1.},
 }
 
 
@@ -29,7 +31,7 @@ def write(path,value):
     Path(path).write_text(json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+'\n',encoding='utf-8')
 
 
-def build_trials(arguments,output,snapshot,trials=tuple(TRIALS)):
+def build_trials(arguments,output,snapshot,trials=DEFAULT_TRIALS):
     expected={'method':'deepcoral','target':'dark','seed':46,'epochs':40,'target_labels_per_class':3,
         'matched_alignment_weight':.2,'source_anchor_ema_momentum':.9,'image_adaptation_lr_scale':.1,
         'source_crossmodal_weight':.1,'initial_vis_weight':.4,'trade_off':.05,'early_stopping_patience':0,
@@ -97,7 +99,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--baseline',type=Path,default=DEFAULT_BASELINE)
     p.add_argument('--data-dir',type=Path,help='Optional relocation of the same locked cohort')
-    p.add_argument('--trials',nargs='+',choices=tuple(TRIALS),default=list(TRIALS))
+    p.add_argument('--trials',nargs='+',choices=tuple(TRIALS),default=list(DEFAULT_TRIALS))
     p.add_argument('--output',type=Path)
     p.add_argument('--gpus',default=os.environ.get('JMDA_GPU_CANDIDATES','0,1'))
     mode=p.add_mutually_exclusive_group()

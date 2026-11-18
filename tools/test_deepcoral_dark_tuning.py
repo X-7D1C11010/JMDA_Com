@@ -46,6 +46,22 @@ class DarkCoralTuningChecks(unittest.TestCase):
             self.assertEqual(args.classifier_layout,'reference')
         self.assertEqual(len({job['result_file'] for job in jobs}),4)
 
+    def test_phase_lr1_is_one_explicit_trial_and_other_training_settings_stay_fixed(self):
+        before=baseline_values()
+        jobs=build_trials(before,Path('output'),Path('snapshot'),('phase_lr1',))
+        self.assertEqual(len(jobs),1)
+        job=jobs[0];self.assertEqual(job['trial'],'phase_lr1')
+        self.assertEqual(set(job['changes']),{'image_adaptation_lr_scale','configuration_tag','save_dir'})
+        args=weather.parser().parse_args(recorded_arguments_to_cli(job['values']));weather.resolve_weather_settings(args)
+        self.assertEqual(args.image_adaptation_lr_scale,1.)
+        self.assertEqual((args.image_lr_override,args.ir_lr_override),(5e-5,1e-4))
+        self.assertEqual((args.seed,args.epochs,args.batch_size),(46,40,16))
+        self.assertEqual((args.source_crossmodal_weight,args.initial_vis_weight,args.trade_off),(.1,.4,.05))
+        self.assertEqual((args.target_labels_per_class,args.matched_alignment_weight),(3,.2))
+        previous=build_trials(before,Path('output'),Path('snapshot'),('phase_lr0p3',))[0]['values']
+        changed={k for k in set(previous)|set(job['values']) if previous.get(k)!=job['values'].get(k)}
+        self.assertEqual(changed,{'image_adaptation_lr_scale','configuration_tag','save_dir'})
+
     def test_rejects_wrong_baseline_unknown_or_repeated_trials_and_changed_label_pool(self):
         for key,value in (('method','mdd'),('target_labels_per_class',0),('seed',42),('matched_alignment_weight',.3)):
             baseline=baseline_values();baseline[key]=value
@@ -73,10 +89,10 @@ class DarkCoralTuningChecks(unittest.TestCase):
             (root/'dark_train_pairs.tsv').write_text('other cohort\n',encoding='utf-8')
             with self.assertRaises(ValueError):validate_locked_inputs(baseline,root)
 
-    def test_actual_coral_training_and_namespaced_diagnostics_keep_all_four_trials(self):
+    def test_actual_coral_training_and_namespaced_diagnostics_keep_all_selected_trials(self):
         with tempfile.TemporaryDirectory() as name,patch.dict(os.environ,{'JMDA_DATA_ROOT':''}):
             root=Path(name);lists=fixture(root)
-            for job in build_trials(baseline_values(),root/'trials',root):
+            for job in build_trials(baseline_values(),root/'trials',root,tuple(TRIALS)):
                 # Synthetic CPU plumbing check: native CORAL and enhancement
                 # losses stay real; small image encoders/fixture keep it short.
                 args=weather.parser().parse_args(['--method','deepcoral','--target','backlight',
@@ -98,8 +114,8 @@ class DarkCoralTuningChecks(unittest.TestCase):
                 export_run_diagnostics(root/'diagnostics',folder/'result.json',job['trial'])
             rows=[json.loads(s) for s in (root/'diagnostics/run_diagnostics.jsonl').read_text(encoding='utf-8').splitlines()]
             epochs=[json.loads(s) for s in (root/'diagnostics/epoch_diagnostics.jsonl').read_text(encoding='utf-8').splitlines()]
-            self.assertEqual(len(rows),4);self.assertEqual(len(epochs),8)
-            self.assertEqual(len({r['run_id'] for r in rows}),4)
+            self.assertEqual(len(rows),5);self.assertEqual(len(epochs),10)
+            self.assertEqual(len({r['run_id'] for r in rows}),5)
 
 
 if __name__=='__main__':unittest.main()
